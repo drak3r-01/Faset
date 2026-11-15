@@ -32,3 +32,14 @@ ENV RUSTC_WRAPPER=sccache
 
 RUN mkdir -p /cache && chmod -R a+rwX /cache
 WORKDIR /workspace
+
+# Builds the placeholder binary for the runtime image.
+FROM dev AS server-build
+COPY . /workspace
+RUN cargo build --release -p probe && cp /cache/target/release/probe /probe
+
+# Standalone server image. PLACEHOLDER: the entrypoint is the probe binary;
+# lot 1.x replaces it with the `dedicated` server binary.
+FROM debian:bookworm-slim AS server-runtime
+COPY --from=server-build /probe /usr/local/bin/probe
+ENTRYPOINT ["/usr/local/bin/probe"]
