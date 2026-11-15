@@ -1,0 +1,10 @@
+[package]
+name = "probe"
+description = "Placeholder binary proving the cross toolchain; removed once real binaries exist."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+ash = "0.38"

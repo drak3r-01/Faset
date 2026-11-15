@@ -23,6 +23,11 @@ RUN cd /tmp && rustup show active-toolchain || rustup toolchain install \
 RUN cargo install --locked cargo-xwin cargo-nextest cargo-deny sccache \
     && rm -rf /usr/local/cargo/registry
 
+# aarch64 Linux cross linker and sysroot (after cargo install to keep that layer cached).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV RUSTC_WRAPPER=sccache
 
 RUN mkdir -p /cache && chmod -R a+rwX /cache
