@@ -25,7 +25,7 @@ The reference plan is the source of truth for development. It fixes the architec
 | Hypothesis in the original plan | Status | Resolution |
 | --- | --- | --- |
 | `CLAUDE.md` had not been read yet | Resolved (lot 0.1) | `CLAUDE.md` exists at the repository root and is authoritative. It points to `docs/lots/` for lot work and states the coding rules repeated below. |
-| The Graphify rules of section 2 are a working hypothesis (Graphify assumed to be an MCP server) | Resolved, corrected (lot 0.1) | Graphify is a CLI, not an MCP server. Its subcommands are `query`, `path`, `explain` and `update`. Section 2 is rewritten accordingly. |
+| The Graphify rules of section 2 are a working hypothesis (Graphify assumed to be an MCP server) | Resolved, corrected (lot 0.1) | Graphify is used through the `graphify` MCP server, not a CLI. Its tools are `graph_stats`, `god_nodes`, `query_graph`, `get_node`, `get_neighbors`, `get_community`, `shortest_path`, `get_pr_impact`, `list_prs` and `triage_prs`. Section 2 is rewritten accordingly (corrected again after lot 0.1, which wrongly described a CLI). |
 | Capacity: 16 players including bots, headroom to 32 | Confirmed | Kept unchanged (decision table above). |
 | First modes: free-for-all and team deathmatch | Confirmed | Kept unchanged (decision table above). |
 | Crate prefix stays neutral (`core`, `sim`, ...) until the game is named | Resolved, decision (lot 0.1) | The game is now named Faset. Crates keep their neutral short names in the plan, the lot files and the directory layout (`crates/core`, `crates/sim`, ...). Their Cargo package names take the `faset-` prefix (`faset-core`, `faset-sim`, ...), because a package named `core` would shadow Rust's built-in `core` crate. `xtask` keeps its conventional unprefixed name. |
@@ -41,32 +41,35 @@ The reference plan is the source of truth for development. It fixes the architec
 
 ## 2. Session workflow and Graphify integration
 
-Each lot is executed by a single session that always follows the same seven steps. Graphify is a command-line tool that builds a knowledge graph of the code in `graphify-out/` and answers scoped questions about it. It is used only once the repository contains Rust code; the graph currently in `graphify-out/` comes from another project and must be rebuilt.
+Each lot is executed by a single session that always follows the same seven steps. Graphify is used through the `graphify` MCP server, which holds a knowledge graph of the code (stored in `graphify-out/`) and answers scoped questions about it. It is used only once the repository contains Rust code; the graph currently in `graphify-out/` comes from another project and must be rebuilt.
 
-### Graphify commands
+### Graphify MCP tools
 
-| Command | Use |
+| Tool | Use |
 | --- | --- |
-| `graphify query "<question>"` | First step for any codebase question, before any grep, search or source-file read, whenever `graphify-out/graph.json` exists. |
-| `graphify path "<A>" "<B>"` | Relationship between two concepts, types or crates. |
-| `graphify explain "<concept>"` | Focused view of one concept. |
-| `graphify update .` | Rebuild the graph after modifying code (AST only, no API cost). |
+| `query_graph` | First step for any codebase question, before any grep, search or source-file read, whenever `graphify-out/graph.json` exists. |
+| `get_node`, `get_neighbors` | Focused view of one concept and its direct relationships. |
+| `shortest_path` | Relationship between two concepts, types or crates. |
+| `get_community`, `god_nodes`, `graph_stats` | Broad navigation and structure of the graph. |
+| `get_pr_impact`, `list_prs`, `triage_prs` | Impact and triage of pull requests. |
+
+The MCP exposes no rebuild tool. Refresh the graph after code changes only if the MCP allows it; otherwise say so in the lot report.
 
 Supporting rules from `CLAUDE.md`:
 
 - If `graphify-out/wiki/index.md` exists, use it for broad navigation instead of browsing raw sources.
-- Read `graphify-out/GRAPH_REPORT.md` only for a broad architecture review, or when `query`, `path` and `explain` are not enough.
-- Every subagent prompt that explores code repeats the "query Graphify first" rule.
+- Read `graphify-out/GRAPH_REPORT.md` only for a broad architecture review, or when `query_graph`, `shortest_path` and `get_neighbors` are not enough.
+- Every subagent prompt that explores code repeats the "query Graphify (MCP) first" rule.
 - A committed `graphify-out/graph.json` is rewritten whole on every build, so a large diff to it in a pull request is expected and is not flagged as churn.
 
 ### The seven session steps
 
 1. Read `CLAUDE.md` and the lot file (`docs/lots/<lot>-*.md`), which is self-contained.
-2. Query Graphify (`graphify query`, `graphify path`, `graphify explain`) about the crates, types and functions the lot file names, instead of browsing files. This is the main token saving.
+2. Query Graphify through its MCP tools (`query_graph`, `get_neighbors`, `shortest_path`) about the crates, types and functions the lot file names, instead of browsing files. This is the main token saving.
 3. Read only the raw lines that the graph or an earlier read has already located.
 4. Create the branch `lot/<id>-<slug>` and write the code. Every command runs in Docker, never on the host.
 5. Run `cargo xtask ci` in Docker. GitHub CI only runs on tags, so this local command is the only quality gate before merge.
-6. Run `graphify update .`, then make the final commit (Conventional Commits, in English).
+6. Refresh the graphify graph if the MCP allows it, then make the final commit (Conventional Commits, in English).
 7. Write a short report: delivered, tests passed, deviations from this document.
 
 ### Lot file
