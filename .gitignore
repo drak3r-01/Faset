@@ -1,0 +1,64 @@
+# --- Rust / Cargo ---
+/target/
+**/target/
+**/*.rs.bk
+*.pdb
+# Libraries: Cargo.lock IS committed (workspace ships binaries)
+# --- Docker (local-only) ---
+docker-compose.override.yml
+.docker/
+.dockercache/
+.cargo-home/
+.sccache/
+# --- Build artefacts / packaging ---
+/dist/
+/out/
+/package/
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.zip
+*.tar.gz
+*.7z
+# --- Generated / runtime ---
+/generated/
+/screenshots/
+/reference-diffs/
+*.log
+*.profraw
+*.profdata
+flamegraph.svg
+perf.data*
+# --- Vendored third-party SDKs (fetched during Docker build, never versioned) ---
+/vendor-sdk/
+/sdk/
+/third_party/dlss/
+/third_party/fsr/
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials*.json
+# --- IDE / editors ---
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+# --- Tooling (local) ---
+.claude/
+graphify-out/
