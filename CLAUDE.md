@@ -18,4 +18,4 @@ Rules:
 - Everything in the repository is in English (code, comments, commits, docs). Conventional Commits.
 - Units: metre, second, radian; right-handed, Y up, -Z forward. Data in RON, user settings in TOML.
 - Errors: `thiserror` in libraries, `anyhow` in executables; logging with `tracing`.
-- Do not use graphify until the repository contains Rust code; the graph currently in `graphify-out/` is from another project and must be rebuilt.
+- Graphify graph rebuilds are done by Gabriel only: sessions never rebuild `graphify-out/`. At the end of a lot that changed code, tell Gabriel in the report that a rebuild is due.

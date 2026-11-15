@@ -1,0 +1,126 @@
+name: release
+
+# The only workflow of the repository: it runs on version tags and nowhere else.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dev image
+        run: docker compose build dev
+      - name: Tag matches workspace version
+        run: docker compose run --rm dev cargo xtask check-tag "$GITHUB_REF_NAME"
+      - name: Local gate (xtask ci)
+        run: docker compose run --rm dev cargo xtask ci
+
+  build-docker:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dev image
+        run: docker compose build dev
+      - name: Build
+        run: docker compose run --rm dev cargo xtask build --target ${{ matrix.target }}
+      - name: Package
+        run: docker compose run --rm dev cargo xtask package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist/faset-probe-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  build-macos:
+    needs: test
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release -p probe --target ${{ matrix.target }}
+      - name: Package with MoltenVK
+        run: |
+          brew install molten-vk
+          dir="faset-probe-${{ matrix.target }}"
+          mkdir -p "$dir"
+          cp "target/${{ matrix.target }}/release/probe" "$dir/"
+          cp "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" "$dir/"
+          tar -czf "$dir.tar.gz" "$dir"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: faset-probe-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [build-docker, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          path: release
+          merge-multiple: true
+      - name: Checksums
+        working-directory: release
+        run: |
+          test "$(find . -type f | wc -l)" -eq 6
+          sha256sum -- * > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" release/* --generate-notes $flags
+      - name: Image tags
+        id: meta
+        run: |
+          repo="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${repo}/server-runtime"
+          version="${GITHUB_REF_NAME#v}"
+          tags="${image}:${version}"
+          case "$GITHUB_REF_NAME" in *-*) ;; *) tags="${tags},${image}:latest" ;; esac
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: server-runtime
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}

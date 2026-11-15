@@ -11,7 +11,7 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 
 const USAGE: &str =
-    "usage: cargo xtask <check|test|render-test|build --target <t>|package|maps validate|deny|ci>";
+    "usage: cargo xtask <check|test|render-test|build --target <t>|package|check-tag <tag>|maps validate|deny|ci>";
 
 /// Targets built in the dev image. macOS targets are built by CI runners (lot 0.4).
 const TARGETS: [&str; 4] = [
@@ -36,6 +36,7 @@ fn run(args: &[&str]) -> Result<()> {
         ["render-test"] => render_test(),
         ["build", "--target", target] => build(target),
         ["package"] => package(),
+        ["check-tag", tag] => check_tag(tag),
         ["maps", "validate"] => maps_validate(),
         ["deny"] => deny(),
         ["ci"] => ci(),
@@ -197,6 +198,41 @@ fn maps_validate() -> Result<()> {
     Ok(())
 }
 
+/// Reads `[workspace.package] version` from a root manifest's text.
+fn workspace_version(manifest: &str) -> Option<String> {
+    let mut in_section = false;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_section = line == "[workspace.package]";
+        } else if in_section {
+            if let Some(rest) = line.strip_prefix("version") {
+                let value = rest.trim_start().strip_prefix('=')?.trim();
+                return Some(value.trim_matches('"').to_owned());
+            }
+        }
+    }
+    None
+}
+
+/// Fails unless the tag `vX.Y.Z[-pre]` equals the workspace version.
+fn check_tag(tag: &str) -> Result<()> {
+    let manifest = fs::read_to_string("Cargo.toml").context("failed to read Cargo.toml")?;
+    verify_tag(tag, &manifest)
+}
+
+fn verify_tag(tag: &str, manifest: &str) -> Result<()> {
+    let version = workspace_version(manifest).context("no [workspace.package] version")?;
+    let Some(tag_version) = tag.strip_prefix('v') else {
+        bail!("tag `{tag}` must start with `v`");
+    };
+    if tag_version != version {
+        bail!("tag `{tag}` does not match workspace version `{version}`");
+    }
+    println!("tag {tag} matches workspace version {version}");
+    Ok(())
+}
+
 /// Licence and advisory checks.
 fn deny() -> Result<()> {
     cargo(&["deny", "check"])
@@ -225,6 +261,28 @@ mod tests {
     #[test]
     fn stubs_succeed() {
         assert!(run(&["maps", "validate"]).is_ok());
+    }
+
+    #[test]
+    fn workspace_version_is_parsed() {
+        let manifest = "[workspace]\nmembers = []\n\n[workspace.package]\nedition = \"2021\"\nversion = \"1.2.3-rc.1\"\n";
+        assert_eq!(
+            super::workspace_version(manifest).as_deref(),
+            Some("1.2.3-rc.1")
+        );
+        assert_eq!(
+            super::workspace_version("[package]\nversion = \"9\"\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn tag_must_match_workspace_version() {
+        let version = super::workspace_version(include_str!("../../Cargo.toml")).unwrap();
+        let manifest = include_str!("../../Cargo.toml");
+        assert!(super::verify_tag(&format!("v{version}"), manifest).is_ok());
+        assert!(super::verify_tag("v9.9.9", manifest).is_err());
+        assert!(super::verify_tag(&version, manifest).is_err());
     }
 
     #[test]
