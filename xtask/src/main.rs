@@ -4,11 +4,24 @@
 //! (`dev.ps1`, `dev.sh`) stay thin wrappers around Docker.
 #![forbid(unsafe_code)]
 
+use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-const USAGE: &str = "usage: cargo xtask <check|test|render-test|maps validate|deny|ci>";
+const USAGE: &str =
+    "usage: cargo xtask <check|test|render-test|build --target <t>|package|maps validate|deny|ci>";
+
+/// Targets built in the dev image. macOS targets are built by CI runners (lot 0.4).
+const TARGETS: [&str; 4] = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+];
+
+const DIST: &str = "dist";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -21,6 +34,8 @@ fn run(args: &[&str]) -> Result<()> {
         ["check"] => check(),
         ["test"] => test(),
         ["render-test"] => render_test(),
+        ["build", "--target", target] => build(target),
+        ["package"] => package(),
         ["maps", "validate"] => maps_validate(),
         ["deny"] => deny(),
         ["ci"] => ci(),
@@ -57,12 +72,122 @@ fn check() -> Result<()> {
 
 /// Unit and integration tests through nextest.
 fn test() -> Result<()> {
-    cargo(&["nextest", "run", "--workspace", "--no-tests=pass"])
+    cargo(&[
+        "nextest",
+        "run",
+        "--workspace",
+        "--no-tests=pass",
+        "-E",
+        "not binary(lavapipe)",
+    ])
 }
 
-/// Headless lavapipe render tests. Stub until lot 0.3 adds the first one.
+/// Headless lavapipe render tests (software Vulkan, validation layers on).
 fn render_test() -> Result<()> {
-    println!("render-test: 0 tests (lavapipe probe arrives in lot 0.3)");
+    cargo(&[
+        "nextest",
+        "run",
+        "--workspace",
+        "--no-tests=pass",
+        "-E",
+        "binary(lavapipe)",
+    ])
+}
+
+/// Runs an external program and fails on a non-zero exit.
+fn run_cmd(program: &str, args: &[&str], dir: Option<&Path>) -> Result<()> {
+    println!("+ {program} {}", args.join(" "));
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to spawn `{program}`"))?;
+    if !status.success() {
+        bail!("`{program}` failed with {status}");
+    }
+    Ok(())
+}
+
+fn is_windows(target: &str) -> bool {
+    target.contains("windows")
+}
+
+fn exe_name(target: &str) -> &'static str {
+    if is_windows(target) {
+        "probe.exe"
+    } else {
+        "probe"
+    }
+}
+
+/// Builds the placeholder binary for one target into `dist/<target>/`.
+fn build(target: &str) -> Result<()> {
+    if !TARGETS.contains(&target) {
+        bail!("unsupported target `{target}`; expected one of {TARGETS:?}");
+    }
+    let mut args: Vec<&str> = if is_windows(target) {
+        vec!["xwin", "build"]
+    } else {
+        vec!["build"]
+    };
+    args.extend(["--release", "-p", "probe", "--target", target]);
+    cargo(&args)?;
+
+    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_owned());
+    let exe = exe_name(target);
+    let built = Path::new(&target_dir)
+        .join(target)
+        .join("release")
+        .join(exe);
+    let out_dir = Path::new(DIST).join(target);
+    fs::create_dir_all(&out_dir)?;
+    fs::copy(&built, out_dir.join(exe))
+        .with_context(|| format!("failed to copy {}", built.display()))?;
+    println!("built {}", out_dir.join(exe).display());
+    Ok(())
+}
+
+/// Archives every built target and writes `dist/SHA256SUMS`.
+fn package() -> Result<()> {
+    let dist = Path::new(DIST);
+    let mut archives = Vec::new();
+    for target in TARGETS {
+        if !dist.join(target).join(exe_name(target)).is_file() {
+            println!("skipping {target}: not built");
+            continue;
+        }
+        let archive = if is_windows(target) {
+            let name = format!("faset-probe-{target}.zip");
+            let _ = fs::remove_file(dist.join(&name));
+            run_cmd("zip", &["-r", "-q", &name, target], Some(dist))?;
+            name
+        } else {
+            let name = format!("faset-probe-{target}.tar.gz");
+            run_cmd("tar", &["-czf", &name, target], Some(dist))?;
+            name
+        };
+        archives.push(archive);
+    }
+    if archives.is_empty() {
+        bail!("nothing to package: run `build --target <t>` first");
+    }
+    let mut sums = String::new();
+    for name in &archives {
+        let out = Command::new("sha256sum")
+            .arg(name)
+            .current_dir(dist)
+            .output()
+            .context("failed to spawn `sha256sum`")?;
+        if !out.status.success() {
+            bail!("`sha256sum {name}` failed");
+        }
+        sums.push_str(&String::from_utf8_lossy(&out.stdout));
+    }
+    fs::write(dist.join("SHA256SUMS"), sums)?;
+    println!("packaged {} archive(s)", archives.len());
     Ok(())
 }
 
@@ -99,7 +224,12 @@ mod tests {
 
     #[test]
     fn stubs_succeed() {
-        assert!(run(&["render-test"]).is_ok());
         assert!(run(&["maps", "validate"]).is_ok());
+    }
+
+    #[test]
+    fn build_rejects_unknown_target() {
+        assert!(run(&["build", "--target", "riscv64-unknown-none"]).is_err());
+        assert!(run(&["build", "--target", "aarch64-apple-darwin"]).is_err());
     }
 }
