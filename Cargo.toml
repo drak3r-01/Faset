@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["xtask", "probe", "crates/core", "crates/protocol", "crates/sim", "crates/net", "crates/render"]
+members = ["xtask", "probe", "crates/core", "crates/protocol", "crates/sim", "crates/net", "crates/render", "crates/server"]
 
 [workspace.package]
 version = "0.0.1-rc.1"
@@ -15,3 +15,5 @@ tracing = "0.1"
 proptest = "1"
 faset-core = { path = "crates/core", version = "0.0.1-rc.1" }
 faset-protocol = { path = "crates/protocol", version = "0.0.1-rc.1" }
+faset-sim = { path = "crates/sim", version = "0.0.1-rc.1" }
+faset-net = { path = "crates/net", version = "0.0.1-rc.1" }

@@ -1,0 +1,19 @@
+[package]
+name = "faset-server"
+description = "Authoritative game server: connections, command buffers, tick loop, snapshots."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+faset-core.workspace = true
+faset-protocol.workspace = true
+faset-sim.workspace = true
+faset-net.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+blake3 = "1"
+
+[dev-dependencies]
+proptest.workspace = true
