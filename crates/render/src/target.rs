@@ -57,6 +57,13 @@ impl Swapchain {
         }
         let format = select::choose_surface_format(&formats).ok_or(RenderError::NoSrgbFormat)?;
         let present_mode = select::choose_present_mode(vsync, &modes);
+        // The opaque pass result reaches the swapchain through a blit.
+        if !caps
+            .supported_usage_flags
+            .contains(vk::ImageUsageFlags::TRANSFER_DST)
+        {
+            return Err(RenderError::SwapchainUsage);
+        }
         let info = vk::SwapchainCreateInfoKHR::default()
             .surface(surface.handle)
             .min_image_count(select::swapchain_image_count(&caps))
@@ -64,7 +71,7 @@ impl Swapchain {
             .image_color_space(format.color_space)
             .image_extent(extent)
             .image_array_layers(1)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(caps.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -150,7 +157,11 @@ impl Offscreen {
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC)
+            .usage(
+                vk::ImageUsageFlags::COLOR_ATTACHMENT
+                    | vk::ImageUsageFlags::TRANSFER_SRC
+                    | vk::ImageUsageFlags::TRANSFER_DST,
+            )
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .initial_layout(vk::ImageLayout::UNDEFINED);
         // SAFETY: valid device and create info.

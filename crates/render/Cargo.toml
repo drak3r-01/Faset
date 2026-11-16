@@ -1,20 +1,25 @@
 [package]
 name = "faset-render"
-description = "Vulkan renderer: device, swapchain, frame loop, offscreen target."
+description = "Vulkan renderer: device, swapchain, frame loop, meshes and the opaque pass."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
+faset-core.workspace = true
 thiserror.workspace = true
 ash = "0.38"
 ash-window = "0.13"
+bytemuck = { version = "1.25", features = ["derive"] }
 raw-window-handle = "0.6"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 gpu-allocator = { version = "0.28", default-features = false, features = ["std", "vulkan"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 tracing = "0.1"
+
+[build-dependencies]
+naga = { version = "30", features = ["wgsl-in", "spv-out"] }
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
