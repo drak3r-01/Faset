@@ -1,0 +1,10 @@
+[package]
+name = "faset-core"
+description = "Typed identifiers, time and maths base types."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+glam.workspace = true
