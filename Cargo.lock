@@ -474,7 +474,16 @@ dependencies = [
 name = "faset-core"
 version = "0.0.1-rc.1"
 dependencies = [
- "glam 0.29.3",
+ "glam",
+]
+
+[[package]]
+name = "faset-net"
+version = "0.0.1-rc.1"
+dependencies = [
+ "renet",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
@@ -644,12 +653,6 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.29.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8babf46d4c1c9d92deac9f7be466f76dfc4482b6452fc5024b5e8daf6ffeb3ee"
-
-[[package]]
-name = "glam"
 version = "0.33.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37bfe73dc8ec21f54d181e5a60554327ec3f1c600c455a75ccbfc65d2106a6c4"
@@ -665,7 +668,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d74079318e3a077bd3d15faa90fde24fa37bb9f157f92f853e6019a15fd413"
 dependencies = [
  "approx",
- "glam 0.33.12",
+ "glam",
  "num-traits",
  "simba",
 ]
@@ -1273,6 +1276,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "octets"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d59d30d3ad7f7e1c9a66e51c9cb71ae1c794b28ffe7053fd785defb0d180069"
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1566,6 +1575,17 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "renet"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ff4fbced648dbc74405b8aa88a95e8392c83ce7585ce74a8b3e140a0cf6f27a"
+dependencies = [
+ "bytes",
+ "log",
+ "octets",
+]
 
 [[package]]
 name = "robust"
