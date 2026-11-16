@@ -7,3 +7,5 @@ Milestones: J0 after 0.4 · J1 after 1.8 · J2 after 2.10 · J3 after 4.2 · J4 
 Model/effort of each lot is in the header of its file. Parallel threads after phase 0: A network (1.x), B rendering (2.x), C maps (3.1); they join at 3.2. Content lots 2.14, 4.6 (data), 5.6, 6.5 (texts) can run beside code lots. 2.11 and 2.12 block nothing and may be postponed.
 
 Items the plan leaves unspecified are marked as decisions inside each file: record the chosen value in your report.
+
+Synthèse de tous les lots (numéro, titre, résumé, modèle, statut) : [OVERVIEW.md](OVERVIEW.md)
