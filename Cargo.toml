@@ -1,9 +1,16 @@
 [workspace]
 resolver = "2"
-members = ["xtask", "probe"]
+members = ["xtask", "probe", "crates/core", "crates/protocol"]
 
 [workspace.package]
 version = "0.0.1-rc.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
+
+[workspace.dependencies]
+glam = "0.29"
+thiserror = "2"
+tracing = "0.1"
+proptest = "1"
+faset-core = { path = "crates/core", version = "0.0.1-rc.1" }
