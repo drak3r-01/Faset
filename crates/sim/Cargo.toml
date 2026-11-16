@@ -1,0 +1,17 @@
+[package]
+name = "faset-sim"
+description = "Deterministic fixed-step simulation: ECS world, systems, collisions."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+faset-core.workspace = true
+faset-protocol.workspace = true
+thiserror.workspace = true
+hecs ="0.10"
+parry3d = "0.21"
+
+[dev-dependencies]
+proptest.workspace = true
