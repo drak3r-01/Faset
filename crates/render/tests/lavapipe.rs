@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use faset_render::glam::{Mat4, Vec2, Vec3};
 use faset_render::{
-    cube_mesh, jitter, perspective_reverse_z, Camera, Instance, MeshId, RenderConfig, RenderError,
-    RenderWorld, Renderer, CUBE_FACE_TINTS,
+    cube_mesh, jitter, perspective_reverse_z, Camera, Instance, MaterialTable, MeshId, Pattern,
+    RenderConfig, RenderError, RenderWorld, Renderer, CUBE_FACE_TINTS,
 };
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -476,4 +476,280 @@ fn bless_clear_reference() {
 #[ignore = "regenerates tests/refs/cubes.png"]
 fn bless_cubes_reference() {
     render_cubes(&Path::new(env!("CARGO_MANIFEST_DIR")).join(CUBES_REFERENCE));
+}
+
+const SWATCH_REFERENCE: &str = "tests/refs/pattern_swatch.png";
+/// Fixed material time of the swatch, in seconds.
+const SWATCH_TIME: f32 = 1.25;
+
+/// One white cube per pattern (built-in material ids 0..=13), in a 4 x 4
+/// grid seen from the front and slightly above, each turned to show two
+/// faces plus its top.
+fn render_swatch(path: &Path) {
+    let mut renderer = headless((256, 256));
+    renderer.set_material_time(SWATCH_TIME);
+    let mut instances = Vec::new();
+    for (k, pattern) in Pattern::ALL.iter().enumerate() {
+        let (v, i) = cube_mesh(0.8, &[[255; 3]; 6], *pattern as u8);
+        let mesh = renderer.upload_mesh(&v, &i).unwrap();
+        let (col, row) = ((k % 4) as f32, (k / 4) as f32);
+        let pos = Vec3::new((col - 1.5) * 2.2, (1.5 - row) * 2.2 + 4.0, 0.0);
+        let world = Mat4::from_translation(pos) * Mat4::from_rotation_y(0.6);
+        instances.push(Instance::new(mesh, 0, world));
+    }
+    let view = faset_render::glam::camera::rh::view::look_at_mat4(
+        Vec3::new(0.0, 7.0, 11.0),
+        Vec3::new(0.0, 4.0, 0.0),
+        Vec3::Y,
+    );
+    let proj = perspective_reverse_z(50f32.to_radians(), 1.0, 0.1);
+    renderer
+        .render_frame(&world_with(Camera::new(view, proj), instances))
+        .unwrap();
+    assert_eq!(renderer.last_frame_stats().instances_drawn, 14);
+    renderer.read_back_png(path).unwrap();
+    assert_eq!(renderer.validation_message_count(), 0);
+}
+
+#[test]
+fn pattern_swatch_matches_reference() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("pattern_swatch.png");
+    render_swatch(&out);
+    let reference = load_rgba(&Path::new(env!("CARGO_MANIFEST_DIR")).join(SWATCH_REFERENCE));
+    let got = load_rgba(&out);
+    let error = max_channel_error(&got, &reference);
+    assert!(
+        error <= 1,
+        "max channel error {error} > 1 (output: {})",
+        out.display()
+    );
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+    let _ = std::fs::remove_file(out);
+}
+
+/// Regenerates the swatch reference from a lavapipe render. Inspect the
+/// image before committing it.
+#[test]
+#[ignore = "regenerates tests/refs/pattern_swatch.png"]
+fn bless_pattern_swatch_reference() {
+    render_swatch(&Path::new(env!("CARGO_MANIFEST_DIR")).join(SWATCH_REFERENCE));
+}
+
+fn srgb_decode(c: u8) -> f32 {
+    let s = f32::from(c) / 255.0;
+    if s <= 0.040_45 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Patterned materials seen on a wall 1 km away: the pattern must settle to
+/// a flat tone (every pixel's linear luminance within 5 % of the mean)
+/// instead of aliasing. Flat and gradient have no detail to alias.
+#[test]
+fn distant_patterns_do_not_shimmer() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("far.png");
+    {
+        let mut renderer = headless((128, 128));
+        renderer.set_material_time(SWATCH_TIME);
+        let camera = Camera::new(
+            faset_render::glam::camera::rh::view::look_at_mat4(
+                Vec3::new(3.7, 1.8, 0.0),
+                Vec3::new(3.7, 1.8, -1.0),
+                Vec3::Y,
+            ),
+            perspective_reverse_z(60f32.to_radians(), 1.0, 0.1),
+        );
+        for pattern in Pattern::ALL {
+            if matches!(pattern, Pattern::Flat | Pattern::Gradient) {
+                continue;
+            }
+            let (v, i) = cube_mesh(0.5, &[[255; 3]; 6], pattern as u8);
+            let mesh = renderer.upload_mesh(&v, &i).unwrap();
+            // Front face at 1 000 m, 4 km wide: fills the view.
+            let wall = Instance::new(
+                mesh,
+                0,
+                Mat4::from_translation(Vec3::new(0.0, 0.0, -1000.5))
+                    * Mat4::from_scale(Vec3::new(4000.0, 4000.0, 1.0)),
+            );
+            renderer
+                .render_frame(&world_with(camera, vec![wall]))
+                .unwrap();
+            renderer.read_back_png(&out).unwrap();
+            let img = load_rgba(&out);
+            let luminance: Vec<f32> = img
+                .pixels()
+                .map(|p| {
+                    let [r, g, b, _] = p.0;
+                    0.2126 * srgb_decode(r) + 0.7152 * srgb_decode(g) + 0.0722 * srgb_decode(b)
+                })
+                .collect();
+            let mean = luminance.iter().sum::<f32>() / luminance.len() as f32;
+            let worst = luminance
+                .iter()
+                .map(|l| (l - mean).abs())
+                .fold(0.0, f32::max);
+            assert!(mean > 0.0, "{pattern:?}: black wall");
+            assert!(
+                worst <= 0.05 * mean,
+                "{pattern:?}: luminance deviates {:.1} % from the mean {mean:.4}",
+                100.0 * worst / mean
+            );
+        }
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+    let _ = std::fs::remove_file(out);
+}
+
+#[test]
+fn custom_material_table_is_used() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("custom_material.png");
+    {
+        let mut renderer = headless((16, 16));
+        let table = MaterialTable::from_ron(
+            "[(id: 200, pattern: Flat, color_a: (0.5, 0.25, 1.0), color_b: (0.0, 0.0, 0.0), scale: 1.0)]",
+        )
+        .unwrap();
+        renderer.set_materials(&table).unwrap();
+        let (v, i) = cube_mesh(0.5, &[[255, 255, 128]; 6], 200);
+        let mesh = renderer.upload_mesh(&v, &i).unwrap();
+        let camera = Camera::new(
+            Mat4::IDENTITY,
+            perspective_reverse_z(90f32.to_radians(), 1.0, 0.1),
+        );
+        let wall = Instance::new(
+            mesh,
+            0,
+            Mat4::from_translation(Vec3::new(0.0, 0.0, -10.0))
+                * Mat4::from_scale(Vec3::new(40.0, 40.0, 1.0)),
+        );
+        renderer
+            .render_frame(&world_with(camera, vec![wall]))
+            .unwrap();
+        renderer.read_back_png(&out).unwrap();
+        let img = load_rgba(&out);
+        // Vertex colour times material colour A.
+        let blue = srgb_encode(128.0 / 255.0);
+        assert_pixel(&img, 8, 8, [srgb_encode(0.5), srgb_encode(0.25), blue]);
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+    let _ = std::fs::remove_file(out);
+}
+
+/// Counts `tracing::error!` events of the hot reload module.
+#[cfg(feature = "hot-reload")]
+struct ReloadErrors(Arc<AtomicUsize>);
+
+#[cfg(feature = "hot-reload")]
+impl<S: tracing::Subscriber> Layer<S> for ReloadErrors {
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+        let meta = event.metadata();
+        if *meta.level() == tracing::Level::ERROR && meta.target().contains("hot_reload") {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+#[cfg(feature = "hot-reload")]
+fn assert_pixel_eq(got: [u8; 4], rgb: [u8; 3]) {
+    for (g, e) in got.iter().zip(rgb) {
+        assert!(g.abs_diff(e) <= 1, "pixel {got:?}, expected {rgb:?}");
+    }
+}
+
+/// Edits a copy of the shader sources: a valid edit goes live within 60
+/// frames; a broken edit keeps the previous pipeline and logs an error.
+#[cfg(feature = "hot-reload")]
+#[test]
+fn hot_reload_swaps_valid_shaders_and_keeps_old_on_error() {
+    use faset_render::ShaderWatcher;
+
+    let messages = Arc::new(AtomicUsize::new(0));
+    let errors = Arc::new(AtomicUsize::new(0));
+    let subscriber = tracing_subscriber::registry()
+        .with(VulkanMessages(messages.clone()))
+        .with(ReloadErrors(errors.clone()))
+        .with(tracing_subscriber::fmt::layer().with_test_writer());
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let dir = std::env::temp_dir().join(format!("faset-shader-reload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for entry in std::fs::read_dir(faset_shaders::SOURCE_DIR).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|x| x == "wgsl") {
+            std::fs::copy(&path, dir.join(path.file_name().unwrap())).unwrap();
+        }
+    }
+    let opaque = dir.join("opaque.wgsl");
+    let original = std::fs::read_to_string(&opaque).unwrap();
+    let out = out_path("hot_reload.png");
+    {
+        let mut renderer = headless((16, 16));
+        let mut watcher = ShaderWatcher::new(&dir);
+        let grey = [128, 128, 128];
+        let (v, i) = cube_mesh(0.5, &[grey; 6], 0);
+        let mesh = renderer.upload_mesh(&v, &i).unwrap();
+        let camera = Camera::new(
+            Mat4::IDENTITY,
+            perspective_reverse_z(90f32.to_radians(), 1.0, 0.1),
+        );
+        let world = world_with(
+            camera,
+            vec![Instance::new(
+                mesh,
+                0,
+                Mat4::from_translation(Vec3::new(0.0, 0.0, -10.0))
+                    * Mat4::from_scale(Vec3::new(40.0, 40.0, 1.0)),
+            )],
+        );
+        let centre = |renderer: &mut Renderer| {
+            renderer.render_frame(&world).unwrap();
+            renderer.read_back_png(&out).unwrap();
+            load_rgba(&out).get_pixel(8, 8).0
+        };
+        assert!(!watcher.poll(&mut renderer), "no edit yet");
+        assert_pixel_eq(centre(&mut renderer), expected_rgb(grey));
+
+        // Valid edit: paint everything red. One frame per poll.
+        let red = original.replace(
+            "out.color = vec4<f32>(in.color * material, 1.0);",
+            "out.color = vec4<f32>(1.0, 0.0, 0.0, 1.0);",
+        );
+        assert_ne!(red, original, "edit target found");
+        std::fs::write(&opaque, &red).unwrap();
+        let mut reloaded = false;
+        for _ in 0..60 {
+            reloaded = watcher.poll(&mut renderer);
+            renderer.render_frame(&world).unwrap();
+            if reloaded {
+                break;
+            }
+        }
+        assert!(reloaded, "new pipeline not active within 60 frames");
+        assert_pixel_eq(centre(&mut renderer), [255, 0, 0]);
+
+        // Broken edit: the red pipeline stays and one error is logged.
+        std::fs::write(&opaque, format!("{red}\nfn broken( {{\n")).unwrap();
+        for _ in 0..3 {
+            assert!(!watcher.poll(&mut renderer));
+            assert_pixel_eq(centre(&mut renderer), [255, 0, 0]);
+        }
+        assert_eq!(
+            errors.load(Ordering::SeqCst),
+            1,
+            "one error per failed edit"
+        );
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(out);
 }

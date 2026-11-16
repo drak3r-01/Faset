@@ -1,7 +1,7 @@
 //! CPU frustum culling and batching of instances into instanced draws.
 
 use bytemuck::{Pod, Zeroable};
-use faset_core::glam::{Mat3, Mat4, Vec4};
+use faset_core::glam::{Mat4, Vec4};
 
 use crate::mesh::{MeshId, MeshRange};
 
@@ -36,8 +36,9 @@ pub(crate) struct GpuInstance {
     pub clip_from_local: [f32; 16],
     /// Previous clip-from-local, column-major.
     pub prev_clip_from_local: [f32; 16],
-    /// World normal matrix columns (xyz, w = 0).
-    pub normal_matrix: [f32; 12],
+    /// World-from-local affine matrix, rows 0..2. The shader derives the
+    /// world position (for materials) and the normal matrix from it.
+    pub world_rows: [f32; 12],
 }
 
 /// One `vkCmdDrawIndexed` over consecutive instances of one mesh.
@@ -122,23 +123,13 @@ pub(crate) fn cull_and_batch(
     for &(mesh, i) in &visible {
         let inst = &instances[i];
         let first_instance = gpu.len() as u32;
-        let normal = Mat3::from_mat4(inst.world).inverse().transpose();
+        let w = inst.world;
+        let (r0, r1, r2) = (w.row(0), w.row(1), w.row(2));
         gpu.push(GpuInstance {
-            clip_from_local: (*view_proj * inst.world).to_cols_array(),
+            clip_from_local: (*view_proj * w).to_cols_array(),
             prev_clip_from_local: (*prev_view_proj * inst.prev_world).to_cols_array(),
-            normal_matrix: [
-                normal.x_axis.x,
-                normal.x_axis.y,
-                normal.x_axis.z,
-                0.0,
-                normal.y_axis.x,
-                normal.y_axis.y,
-                normal.y_axis.z,
-                0.0,
-                normal.z_axis.x,
-                normal.z_axis.y,
-                normal.z_axis.z,
-                0.0,
+            world_rows: [
+                r0.x, r0.y, r0.z, r0.w, r1.x, r1.y, r1.z, r1.w, r2.x, r2.y, r2.z, r2.w,
             ],
         });
         match draws.last_mut() {

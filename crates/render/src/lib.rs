@@ -5,6 +5,10 @@
 //! The renderer never reads the ECS; it only consumes a [`RenderWorld`].
 //! Colours are linear; the opaque pass renders to RGBA16F and the result is
 //! blitted to the 8-bit sRGB target.
+//!
+//! Surfaces are painted by procedural materials chosen by the vertex
+//! material id (see [`MaterialTable`]); shaders come from `faset-shaders`.
+//! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
 
 mod camera;
 mod context;
@@ -12,6 +16,9 @@ mod cull;
 mod deferred;
 mod frame;
 mod gpu;
+#[cfg(feature = "hot-reload")]
+mod hot_reload;
+mod material;
 mod mesh;
 mod opaque;
 mod select;
@@ -37,6 +44,9 @@ pub use camera::{
 };
 pub use cull::Instance;
 pub use faset_core::glam;
+#[cfg(feature = "hot-reload")]
+pub use hot_reload::ShaderWatcher;
+pub use material::{Material, MaterialError, MaterialTable, Pattern};
 pub use mesh::{cube_mesh, Aabb, CubeFaceColors, MeshId, Vertex, CUBE_FACE_TINTS};
 
 /// Which physical device to use.
@@ -164,6 +174,8 @@ pub struct Renderer {
     size: (u32, u32),
     /// Frames submitted so far; also the index of the next frame.
     frame_index: u64,
+    /// Material animation time in seconds.
+    material_time: f32,
     // Last field: dropped after `Drop for Renderer` released everything above.
     ctx: Context,
 }
@@ -226,7 +238,7 @@ impl Renderer {
         let mut opaque = None;
         let target = result
             .and_then(|()| {
-                opaque = Some(OpaquePipeline::new(&ctx)?);
+                opaque = Some(OpaquePipeline::new(&mut ctx, &MaterialTable::builtin())?);
                 Ok(())
             })
             .and_then(|()| make_target(&mut ctx));
@@ -243,11 +255,12 @@ impl Renderer {
                 stats: FrameStats::default(),
                 size,
                 frame_index: 0,
+                material_time: 0.0,
                 ctx,
             }),
             (result, opaque) => {
                 if let Some(mut p) = opaque {
-                    p.destroy(&ctx);
+                    p.destroy(&mut ctx);
                 }
                 for mut f in frames {
                     f.destroy(&mut ctx);
@@ -620,7 +633,8 @@ impl Renderer {
             min_depth: 0.0,
             max_depth: 1.0,
         };
-        let jitter_bytes: [u8; 8] = bytemuck::cast([jitter.x, jitter.y]);
+        let push_bytes: [u8; opaque::PUSH_CONSTANT_SIZE as usize] =
+            bytemuck::cast([jitter.x, jitter.y, self.material_time, 0.0]);
 
         // SAFETY: the fence wait above means the GPU is done with this slot's
         // pool, command buffer and instance buffer; the fence is reset only
@@ -660,9 +674,17 @@ impl Renderer {
             device.cmd_push_constants(
                 frame.cmd,
                 self.opaque.layout,
-                vk::ShaderStageFlags::VERTEX,
+                opaque::PUSH_CONSTANT_STAGES,
                 0,
-                &jitter_bytes,
+                &push_bytes,
+            );
+            device.cmd_bind_descriptor_sets(
+                frame.cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.opaque.layout,
+                0,
+                &[self.opaque.materials.set],
+                &[],
             );
             if let (Some(arena), Some(instances), false) =
                 (arena, frame.instances.as_ref(), self.draws.is_empty())
@@ -904,6 +926,34 @@ impl Renderer {
         self.stats
     }
 
+    /// Replaces the material table (the built-in one at creation). Waits
+    /// for the GPU to go idle (load time only).
+    pub fn set_materials(&mut self, table: &MaterialTable) -> Result<(), RenderError> {
+        // SAFETY: valid device; once idle no frame reads the table.
+        unsafe { self.ctx.device.device_wait_idle() }?;
+        self.opaque.materials.write(table);
+        Ok(())
+    }
+
+    /// Sets the time, in seconds, that animates water, lava, emissive and
+    /// hologram materials from the next frame on (0 at creation).
+    pub fn set_material_time(&mut self, seconds: f32) {
+        self.material_time = seconds;
+    }
+
+    /// Swaps the opaque pipeline for one built from new SPIR-V; keeps the
+    /// current one on error.
+    #[cfg(feature = "hot-reload")]
+    pub(crate) fn replace_opaque_shaders(
+        &mut self,
+        vs: &[u32],
+        fs: &[u32],
+    ) -> Result<(), RenderError> {
+        // SAFETY: valid device; once idle no frame uses the old pipeline.
+        unsafe { self.ctx.device.device_wait_idle() }?;
+        self.opaque.replace_shaders(&self.ctx.device, vs, fs)
+    }
+
     /// True when the Khronos validation layer is active (debug builds with
     /// the layer installed).
     pub fn validation_enabled(&self) -> bool {
@@ -997,7 +1047,7 @@ impl Drop for Renderer {
         if let Some(mut a) = self.arena.take() {
             a.destroy(&mut self.ctx);
         }
-        self.opaque.destroy(&self.ctx);
+        self.opaque.destroy(&mut self.ctx);
         for mut f in self.frames.drain(..) {
             f.destroy(&mut self.ctx);
         }

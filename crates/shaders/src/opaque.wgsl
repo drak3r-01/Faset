@@ -2,12 +2,18 @@
 //
 // Outputs: HDR colour (RGBA16F), motion vectors (RG16F, UV units per frame,
 // computed without jitter), world normals (RG8, octahedral).
-// Lighting arrives in lots 2.3-2.4; colour is the unlit vertex colour.
+// Colour is the vertex colour times the procedural material colour, unlit
+// (lighting arrives in lot 2.4).
+
+#include "materials.wgsl"
 
 struct Immediates {
     // Sub-pixel jitter in NDC units. Adding `jitter * w` to clip x/y is the
     // same as subtracting it from P[2][0] and P[2][1] (see camera.rs).
     jitter: vec2<f32>,
+    // Material animation time in seconds.
+    time: f32,
+    _pad: f32,
 }
 
 var<immediate> imm: Immediates;
@@ -16,7 +22,7 @@ struct VertexIn {
     @location(0) position: vec3<f32>,
     // R8G8B8A8_SNORM: xyz normal, w unused.
     @location(1) normal: vec4<f32>,
-    // R8G8B8A8_UNORM: rgb colour, a = material id / 255 (unused here).
+    // R8G8B8A8_UNORM: rgb colour, a = material id / 255.
     @location(2) color: vec4<f32>,
 }
 
@@ -31,10 +37,10 @@ struct InstanceIn {
     @location(8) prev1: vec4<f32>,
     @location(9) prev2: vec4<f32>,
     @location(10) prev3: vec4<f32>,
-    // World-from-local normal matrix (inverse transpose), xyz columns.
-    @location(11) n0: vec4<f32>,
-    @location(12) n1: vec4<f32>,
-    @location(13) n2: vec4<f32>,
+    // World-from-local affine matrix, rows 0..2.
+    @location(11) world0: vec4<f32>,
+    @location(12) world1: vec4<f32>,
+    @location(13) world2: vec4<f32>,
 }
 
 struct VertexOut {
@@ -43,22 +49,33 @@ struct VertexOut {
     @location(1) normal: vec3<f32>,
     @location(2) clip: vec4<f32>,
     @location(3) prev_clip: vec4<f32>,
+    @location(4) world_pos: vec3<f32>,
+    @location(5) @interpolate(flat) material: u32,
 }
 
 @vertex
 fn vs_main(v: VertexIn, i: InstanceIn) -> VertexOut {
     let clip_from_local = mat4x4<f32>(i.clip0, i.clip1, i.clip2, i.clip3);
     let prev_from_local = mat4x4<f32>(i.prev0, i.prev1, i.prev2, i.prev3);
-    let normal_matrix = mat3x3<f32>(i.n0.xyz, i.n1.xyz, i.n2.xyz);
     let local = vec4<f32>(v.position, 1.0);
     let clip = clip_from_local * local;
+
+    // Columns of the linear part; the cofactor matrix is the inverse
+    // transpose times the determinant, so its sign fixes mirrored instances.
+    let ca = vec3<f32>(i.world0.x, i.world1.x, i.world2.x);
+    let cb = vec3<f32>(i.world0.y, i.world1.y, i.world2.y);
+    let cc = vec3<f32>(i.world0.z, i.world1.z, i.world2.z);
+    let cofactor = mat3x3<f32>(cross(cb, cc), cross(cc, ca), cross(ca, cb));
+    let det_sign = sign(dot(ca, cross(cb, cc)));
 
     var out: VertexOut;
     out.position = vec4<f32>(clip.xy + imm.jitter * clip.w, clip.zw);
     out.color = v.color.rgb;
-    out.normal = normal_matrix * v.normal.xyz;
+    out.normal = det_sign * (cofactor * v.normal.xyz);
     out.clip = clip;
     out.prev_clip = prev_from_local * local;
+    out.world_pos = vec3<f32>(dot(i.world0, local), dot(i.world1, local), dot(i.world2, local));
+    out.material = u32(round(v.color.a * 255.0));
     return out;
 }
 
@@ -80,9 +97,14 @@ fn encode_octahedral(n: vec3<f32>) -> vec2<f32> {
 
 @fragment
 fn fs_main(in: VertexOut) -> FragmentOut {
+    // Derivatives first, in uniform control flow.
+    let dpos = fwidth(in.world_pos);
+    let normal = normalize(in.normal);
+    let material = material_color(in.material, in.world_pos, normal, dpos, imm.time);
+
     var out: FragmentOut;
-    out.color = vec4<f32>(in.color, 1.0);
+    out.color = vec4<f32>(in.color * material, 1.0);
     out.motion = 0.5 * (in.clip.xy / in.clip.w - in.prev_clip.xy / in.prev_clip.w);
-    out.normal = encode_octahedral(normalize(in.normal));
+    out.normal = encode_octahedral(normal);
     return out;
 }
