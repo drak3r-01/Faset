@@ -13,7 +13,7 @@ use faset_sim::World;
 use crate::commands::CommandBuffer;
 use crate::config::{ConfigError, ServerConfig};
 use crate::link::ServerTransport;
-use crate::snapshot::{EntityState, Snapshot};
+use crate::snapshot::{EntityState, InputPacket, Snapshot, SnapshotEncoder};
 
 /// Health reported for every player until the sim exposes damage (lots 4.x).
 const STUB_HEALTH: u8 = 100;
@@ -70,6 +70,8 @@ struct Client {
     player: Option<NetId>,
     phase: Phase,
     since: Tick,
+    /// Reference snapshots sent to this client and its acknowledgement.
+    snapshots: SnapshotEncoder,
 }
 
 /// What the server knows about an active player beyond the sim's position.
@@ -208,7 +210,8 @@ impl Server {
     /// 1. receive: connection changes, handshake messages, commands;
     /// 2. read one command per player from its buffer (repeat if missing);
     /// 3. step the world;
-    /// 4. send full snapshots when due, then flush.
+    /// 4. send snapshots when due (deltas against each client's
+    ///    acknowledged snapshot, see [`crate::snapshot::delta`]), then flush.
     pub fn tick(&mut self) {
         let dt = Duration::from_secs_f32(DT);
         for link in 0..self.links.len() {
@@ -273,6 +276,7 @@ impl Server {
                             player: None,
                             phase: Phase::AwaitHello,
                             since: self.world.tick(),
+                            snapshots: SnapshotEncoder::new(),
                         },
                     );
                 }
@@ -301,17 +305,23 @@ impl Server {
                     break;
                 }
             }
-            let Some(player) = self.clients.get(&conn).and_then(|c| c.player) else {
+            let Some(client) = self.clients.get_mut(&conn) else {
+                continue;
+            };
+            let Some(player) = client.player else {
                 continue;
             };
             let tick = self.world.tick();
             while let Some(bytes) = self.links[link].listener.recv(conn.1, Channel::Input) {
-                let (Ok(cmd), Some(p)) =
-                    (InputCommand::decode(&bytes), self.players.get_mut(&player))
-                else {
+                let Ok(packet) = InputPacket::decode(&bytes) else {
                     continue;
                 };
-                p.commands.push(cmd, tick);
+                if let Some(ack) = packet.ack {
+                    client.snapshots.acknowledge(ack);
+                }
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.commands.push(packet.command, tick);
+                }
             }
         }
     }
@@ -469,9 +479,15 @@ impl Server {
         }
     }
 
+    /// Sends the next snapshot to one client: a delta against the snapshot
+    /// it acknowledged, or a full one (see [`SnapshotEncoder`]).
     fn send_snapshot(&mut self, conn: (usize, PeerId)) {
         let player = self.clients.get(&conn).and_then(|c| c.player);
-        match self.snapshot_for(player).to_message() {
+        let snapshot = self.snapshot_for(player);
+        let Some(client) = self.clients.get_mut(&conn) else {
+            return;
+        };
+        match client.snapshots.encode(&snapshot) {
             Ok(msg) => self.send(conn, Channel::Snapshot, &msg),
             Err(e) => tracing::error!(error = %e, "snapshot encoding failed"),
         }
