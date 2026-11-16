@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [workspace.dependencies]
-glam = "0.29"
+glam = "0.33"
 thiserror = "2"
 proptest = "1"
 faset-core = { path = "crates/core", version = "0.0.1-rc.1" }
