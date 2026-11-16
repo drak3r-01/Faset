@@ -6,6 +6,7 @@ use gpu_allocator::MemoryLocation;
 
 use crate::context::Context;
 use crate::deferred::RingCursor;
+use crate::gpu::GpuBuffer;
 use crate::RenderError;
 
 /// Size of each frame's uniform ring buffer.
@@ -27,6 +28,8 @@ pub(crate) struct FrameData {
     /// Signalled when this frame's submission completes; created signalled.
     pub fence: vk::Fence,
     pub uniforms: UniformRing,
+    /// Per-instance data of this frame (host-visible), grown on demand.
+    pub instances: Option<GpuBuffer>,
 }
 
 impl FrameData {
@@ -69,6 +72,7 @@ impl FrameData {
                     allocation: None,
                     cursor: RingCursor::new(UNIFORM_RING_SIZE),
                 },
+                instances: None,
             };
             let requirements = device.get_buffer_memory_requirements(buffer);
             let allocation = ctx.allocator.allocate(&AllocationCreateDesc {
@@ -97,6 +101,9 @@ impl FrameData {
 
     /// Destroys every handle. The GPU must be done with this frame.
     pub(crate) fn destroy(&mut self, ctx: &mut Context) {
+        if let Some(mut b) = self.instances.take() {
+            b.destroy(ctx);
+        }
         if let Some(a) = self.uniforms.allocation.take() {
             if let Err(e) = ctx.allocator.free(a) {
                 tracing::warn!("failed to free uniform ring: {e}");
@@ -159,49 +166,6 @@ pub(crate) const COLOR_RANGE: vk::ImageSubresourceRange = vk::ImageSubresourceRa
     base_array_layer: 0,
     layer_count: 1,
 };
-
-/// One layout transition on a colour image.
-pub(crate) struct Transition {
-    pub old: vk::ImageLayout,
-    pub new: vk::ImageLayout,
-    pub src_stage: vk::PipelineStageFlags,
-    pub src_access: vk::AccessFlags,
-    pub dst_stage: vk::PipelineStageFlags,
-    pub dst_access: vk::AccessFlags,
-}
-
-/// Records `t` on `image`.
-///
-/// # Safety
-/// `cmd` must be in the recording state and `image` a live colour image.
-pub(crate) unsafe fn transition(
-    device: &ash::Device,
-    cmd: vk::CommandBuffer,
-    image: vk::Image,
-    t: &Transition,
-) {
-    let barrier = vk::ImageMemoryBarrier::default()
-        .src_access_mask(t.src_access)
-        .dst_access_mask(t.dst_access)
-        .old_layout(t.old)
-        .new_layout(t.new)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .image(image)
-        .subresource_range(COLOR_RANGE);
-    // SAFETY: forwarded from the caller.
-    unsafe {
-        device.cmd_pipeline_barrier(
-            cmd,
-            t.src_stage,
-            t.dst_stage,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[barrier],
-        );
-    }
-}
 
 /// Creates a 2D colour view of `image`.
 pub(crate) fn create_view(

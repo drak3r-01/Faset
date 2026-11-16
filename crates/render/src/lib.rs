@@ -1,26 +1,43 @@
-//! Vulkan 1.2 renderer: device selection, windowed swapchain frame loop and a
-//! headless offscreen target that reads back to PNG.
+//! Vulkan 1.2 renderer: device selection, windowed swapchain frame loop, a
+//! headless offscreen target that reads back to PNG, and the opaque pass
+//! that draws static meshes as instances.
 //!
 //! The renderer never reads the ECS; it only consumes a [`RenderWorld`].
-//! Colours are linear; targets are 8-bit sRGB.
+//! Colours are linear; the opaque pass renders to RGBA16F and the result is
+//! blitted to the 8-bit sRGB target.
 
+mod camera;
 mod context;
+mod cull;
 mod deferred;
 mod frame;
+mod gpu;
+mod mesh;
+mod opaque;
 mod select;
 mod target;
 
 use std::path::Path;
 
 use ash::{khr, vk};
-use gpu_allocator::vulkan::{AllocationCreateDesc, AllocationScheme};
 use gpu_allocator::MemoryLocation;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use context::{Context, WindowHandles};
+use cull::{DrawBatch, GpuInstance};
 use deferred::{DeferredQueue, FRAMES_IN_FLIGHT};
-use frame::{transition, FrameData, Garbage, Transition};
+use frame::{FrameData, Garbage};
+use gpu::{image_barriers, GpuBuffer, ImageBarrier};
+use opaque::{GBuffer, MeshArena, OpaquePipeline};
 use target::{Offscreen, Swapchain};
+
+pub use camera::{
+    halton, jitter, jitter_ndc, jittered_projection, motion_vector, perspective_reverse_z, Camera,
+    JITTER_SAMPLES,
+};
+pub use cull::Instance;
+pub use faset_core::glam;
+pub use mesh::{cube_mesh, Aabb, CubeFaceColors, MeshId, Vertex, CUBE_FACE_TINTS};
 
 /// Which physical device to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -54,19 +71,35 @@ impl Default for RenderConfig {
     }
 }
 
-/// What to draw this frame. Skeleton: later lots add contents.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// What to draw this frame. Lights and ambience arrive with lot 2.4.
+#[derive(Debug, Clone, PartialEq)]
 pub struct RenderWorld {
-    /// Linear RGBA clear colour.
+    /// Linear RGBA colour of pixels no mesh covers.
     pub clear_color: [f32; 4],
+    pub camera: Camera,
+    /// Static mesh instances; per-instance data is rewritten every frame.
+    pub instances: Vec<Instance>,
 }
 
 impl Default for RenderWorld {
     fn default() -> Self {
         Self {
             clear_color: [0.0, 0.0, 0.0, 1.0],
+            camera: Camera::default(),
+            instances: Vec::new(),
         }
     }
+}
+
+/// Counters of the last rendered frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameStats {
+    /// `vkCmdDrawIndexed` calls (one per visible mesh).
+    pub draw_calls: u32,
+    /// Instances that passed frustum culling.
+    pub instances_drawn: u32,
+    /// Instances rejected by frustum culling.
+    pub instances_culled: u32,
 }
 
 /// Renderer errors.
@@ -80,6 +113,8 @@ pub enum RenderError {
     NoSuitableGpu,
     #[error("the surface offers no 8-bit sRGB format")]
     NoSrgbFormat,
+    #[error("the swapchain images cannot be transfer destinations")]
+    SwapchainUsage,
     #[error("window handle unavailable: {0}")]
     WindowHandle(#[from] raw_window_handle::HandleError),
     #[error("Vulkan call failed: {0}")]
@@ -92,6 +127,10 @@ pub enum RenderError {
     NothingRendered,
     #[error("PNG encoding failed: {0}")]
     Png(#[from] image::ImageError),
+    #[error("the static mesh arena is full")]
+    ArenaFull,
+    #[error("invalid mesh: index count not a multiple of 3, or index out of range")]
+    InvalidMesh,
 }
 
 struct Windowed {
@@ -112,6 +151,15 @@ pub struct Renderer {
     frames: Vec<FrameData>,
     target: Target,
     deferred: DeferredQueue<Garbage>,
+    opaque: OpaquePipeline,
+    /// Created at the first frame and whenever the target size changes.
+    gbuffer: Option<GBuffer>,
+    /// Created at the first mesh upload.
+    arena: Option<MeshArena>,
+    /// Scratch lists reused every frame.
+    gpu_instances: Vec<GpuInstance>,
+    draws: Vec<DrawBatch>,
+    stats: FrameStats,
     /// Requested size; rendering pauses while either side is 0.
     size: (u32, u32),
     /// Frames submitted so far; also the index of the next frame.
@@ -175,21 +223,38 @@ impl Renderer {
                 }
             }
         }
-        let target = result.and_then(|()| make_target(&mut ctx));
-        match target {
-            Ok(target) => Ok(Self {
+        let mut opaque = None;
+        let target = result
+            .and_then(|()| {
+                opaque = Some(OpaquePipeline::new(&ctx)?);
+                Ok(())
+            })
+            .and_then(|()| make_target(&mut ctx));
+        match (target, opaque) {
+            (Ok(target), Some(opaque)) => Ok(Self {
                 frames,
                 target,
                 deferred: DeferredQueue::new(),
+                opaque,
+                gbuffer: None,
+                arena: None,
+                gpu_instances: Vec::new(),
+                draws: Vec::new(),
+                stats: FrameStats::default(),
                 size,
                 frame_index: 0,
                 ctx,
             }),
-            Err(e) => {
+            (result, opaque) => {
+                if let Some(mut p) = opaque {
+                    p.destroy(&ctx);
+                }
                 for mut f in frames {
                     f.destroy(&mut ctx);
                 }
-                Err(e)
+                Err(result
+                    .err()
+                    .expect("the pipeline exists when the target does"))
             }
         }
     }
@@ -218,6 +283,89 @@ impl Renderer {
         }
     }
 
+    /// Copies a flat-shaded mesh into the static arena.
+    ///
+    /// Indices are local to `vertices`; triangles are counter-clockwise seen
+    /// from outside. Waits for the GPU to go idle (load time only).
+    pub fn upload_mesh(
+        &mut self,
+        vertices: &[Vertex],
+        indices: &[u32],
+    ) -> Result<MeshId, RenderError> {
+        if !indices.len().is_multiple_of(3) || indices.iter().any(|&i| i as usize >= vertices.len())
+        {
+            return Err(RenderError::InvalidMesh);
+        }
+        if self.arena.is_none() {
+            self.arena = Some(MeshArena::new(&mut self.ctx)?);
+        }
+        let arena = self.arena.as_mut().expect("created above");
+        let (id, vertex_offset, index_offset) = arena.add(vertices, indices.len())?;
+        let (vertex_buffer, index_buffer) = (arena.vertices.buffer, arena.indices.buffer);
+
+        let vertex_bytes: &[u8] = bytemuck::cast_slice(vertices);
+        let index_bytes: &[u8] = bytemuck::cast_slice(indices);
+        let total = (vertex_bytes.len() + index_bytes.len()) as u64;
+        if total == 0 {
+            return Ok(id);
+        }
+        let mut staging = GpuBuffer::new(
+            &mut self.ctx,
+            "mesh-staging",
+            total,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            MemoryLocation::CpuToGpu,
+        )?;
+        let mapped = staging.mapped();
+        mapped[..vertex_bytes.len()].copy_from_slice(vertex_bytes);
+        mapped[vertex_bytes.len()..total as usize].copy_from_slice(index_bytes);
+        let src = staging.buffer;
+        let result = one_shot(&self.ctx, &self.frames[0], |device, cmd| {
+            let barrier = |buffer| {
+                vk::BufferMemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(
+                        vk::AccessFlags::VERTEX_ATTRIBUTE_READ | vk::AccessFlags::INDEX_READ,
+                    )
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .buffer(buffer)
+                    .size(vk::WHOLE_SIZE)
+            };
+            // SAFETY: recording command buffer, live buffers, regions inside
+            // both buffers (the arena reserved them).
+            unsafe {
+                if !vertex_bytes.is_empty() {
+                    let region = vk::BufferCopy {
+                        src_offset: 0,
+                        dst_offset: vertex_offset,
+                        size: vertex_bytes.len() as u64,
+                    };
+                    device.cmd_copy_buffer(cmd, src, vertex_buffer, &[region]);
+                }
+                if !index_bytes.is_empty() {
+                    let region = vk::BufferCopy {
+                        src_offset: vertex_bytes.len() as u64,
+                        dst_offset: index_offset,
+                        size: index_bytes.len() as u64,
+                    };
+                    device.cmd_copy_buffer(cmd, src, index_buffer, &[region]);
+                }
+                device.cmd_pipeline_barrier(
+                    cmd,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::VERTEX_INPUT,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[barrier(vertex_buffer), barrier(index_buffer)],
+                    &[],
+                );
+            }
+        });
+        staging.destroy(&mut self.ctx);
+        result.map(|()| id)
+    }
+
     /// Renders one frame. Returns `Ok` without drawing while the target has
     /// a zero area.
     pub fn render_frame(&mut self, world: &RenderWorld) -> Result<(), RenderError> {
@@ -242,12 +390,72 @@ impl Renderer {
             garbage.destroy(&mut self.ctx);
         }
 
+        // Opaque targets follow the output size; the old ones may still be
+        // in use by the other frame in flight.
+        let extent = match &self.target {
+            Target::Windowed(w) => w.swapchain.as_ref().expect("checked above").extent,
+            Target::Headless(o) => o.extent,
+        };
+        if self.gbuffer.as_ref().is_none_or(|g| g.extent != extent) {
+            let new = GBuffer::new(&mut self.ctx, extent)?;
+            if let Some(old) = self.gbuffer.replace(new) {
+                for image in old.into_images() {
+                    self.deferred.push(self.frame_index, Garbage::Image(image));
+                }
+            }
+        }
+
+        // Culling and per-instance data.
+        let camera = &world.camera;
+        let view_proj = camera.view_proj();
+        let meshes = self.arena.as_ref().map_or(&[][..], |a| &a.meshes[..]);
+        let unknown = cull::cull_and_batch(
+            &view_proj,
+            &camera.prev_view_proj,
+            &world.instances,
+            meshes,
+            &mut self.gpu_instances,
+            &mut self.draws,
+        );
+        if unknown > 0 {
+            tracing::warn!(
+                unknown,
+                "instances reference meshes that were never uploaded"
+            );
+        }
+        let frame = &mut self.frames[slot];
+        let instance_bytes: &[u8] = bytemuck::cast_slice(&self.gpu_instances);
+        if !instance_bytes.is_empty() {
+            let needed = instance_bytes.len() as u64;
+            if frame.instances.as_ref().is_none_or(|b| b.size < needed) {
+                if let Some(mut old) = frame.instances.take() {
+                    // This slot's last submission finished (fence above).
+                    old.destroy(&mut self.ctx);
+                }
+                frame.instances = Some(GpuBuffer::new(
+                    &mut self.ctx,
+                    "frame-instances",
+                    needed.next_power_of_two().max(64 * 1024),
+                    vk::BufferUsageFlags::VERTEX_BUFFER,
+                    MemoryLocation::CpuToGpu,
+                )?);
+            }
+            let buffer = frame.instances.as_mut().expect("allocated above");
+            buffer.mapped()[..instance_bytes.len()].copy_from_slice(instance_bytes);
+        }
+        self.stats = FrameStats {
+            draw_calls: self.draws.len() as u32,
+            instances_drawn: self.gpu_instances.len() as u32,
+            instances_culled: (world.instances.len() - self.gpu_instances.len() - unknown) as u32,
+        };
+        let jitter = jitter_ndc(camera.jitter_px, (extent.width, extent.height));
+
         let frame = &mut self.frames[slot];
         frame.uniforms.cursor.reset();
         let device = &self.ctx.device;
 
         // Pick the image to draw into.
-        let (image, view, extent, image_index) = match &mut self.target {
+        let (image, image_index) = match &mut self.target {
             Target::Windowed(w) => {
                 let sc = w.swapchain.as_ref().expect("checked above");
                 // SAFETY: live swapchain; the semaphore is unsignalled because
@@ -271,52 +479,155 @@ impl Renderer {
                     }
                     Err(e) => return Err(e.into()),
                 };
-                let i = index as usize;
-                (sc.images[i], sc.views[i], sc.extent, Some(index))
+                (sc.images[index as usize], Some(index))
             }
-            Target::Headless(o) => (o.image.image, o.image.view, o.extent, None),
+            Target::Headless(o) => (o.image.image, None),
         };
 
-        let final_transition = if image_index.is_some() {
-            Transition {
-                old: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                new: vk::ImageLayout::PRESENT_SRC_KHR,
-                src_stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                src_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                dst_stage: vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                dst_access: vk::AccessFlags::empty(),
-            }
-        } else {
-            Transition {
-                old: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                new: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                src_stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                src_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                dst_stage: vk::PipelineStageFlags::TRANSFER,
-                dst_access: vk::AccessFlags::TRANSFER_READ,
-            }
+        let gbuffer = self.gbuffer.as_ref().expect("created above");
+        let arena = self.arena.as_ref();
+        let color = vk::ImageAspectFlags::COLOR;
+        let attachment = |image| ImageBarrier {
+            image,
+            aspect: color,
+            old: vk::ImageLayout::UNDEFINED,
+            new: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            src_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            dst_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
         };
-        let attachments = [vk::RenderingAttachmentInfo::default()
-            .image_view(view)
-            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        let begin_barriers = [
+            attachment(gbuffer.hdr.image),
+            attachment(gbuffer.motion.image),
+            attachment(gbuffer.normal.image),
+            ImageBarrier {
+                image: gbuffer.depth.image,
+                aspect: vk::ImageAspectFlags::DEPTH,
+                old: vk::ImageLayout::UNDEFINED,
+                new: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                src_access: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dst_access: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            },
+        ];
+        let clear_color = |c: [f32; 4]| vk::ClearValue {
+            color: vk::ClearColorValue { float32: c },
+        };
+        let color_attachments = [
+            (gbuffer.hdr.view, clear_color(world.clear_color)),
+            (gbuffer.motion.view, clear_color([0.0; 4])),
+            (gbuffer.normal.view, clear_color([0.5, 0.5, 0.0, 0.0])),
+        ]
+        .map(|(view, clear)| {
+            vk::RenderingAttachmentInfo::default()
+                .image_view(view)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .clear_value(clear)
+        });
+        let depth_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(gbuffer.depth.view)
+            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: world.clear_color,
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 0.0,
+                    stencil: 0,
                 },
-            })];
+            });
+        let full = vk::Rect2D {
+            offset: vk::Offset2D::default(),
+            extent,
+        };
         let rendering = vk::RenderingInfo::default()
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D::default(),
-                extent,
-            })
+            .render_area(full)
             .layer_count(1)
-            .color_attachments(&attachments);
+            .color_attachments(&color_attachments)
+            .depth_attachment(&depth_attachment);
+
+        let shader_read = |image| ImageBarrier {
+            image,
+            aspect: color,
+            old: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            new: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            src_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            dst_access: vk::AccessFlags::SHADER_READ | vk::AccessFlags::TRANSFER_READ,
+        };
+        let end_barriers = [
+            ImageBarrier {
+                image: gbuffer.hdr.image,
+                aspect: color,
+                old: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                new: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                src_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_access: vk::AccessFlags::TRANSFER_READ,
+            },
+            shader_read(gbuffer.motion.image),
+            shader_read(gbuffer.normal.image),
+            ImageBarrier {
+                image,
+                aspect: color,
+                old: vk::ImageLayout::UNDEFINED,
+                new: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                src_access: vk::AccessFlags::empty(),
+                dst_access: vk::AccessFlags::TRANSFER_WRITE,
+            },
+        ];
+        let corner = vk::Offset3D {
+            x: extent.width as i32,
+            y: extent.height as i32,
+            z: 1,
+        };
+        let layers = vk::ImageSubresourceLayers {
+            aspect_mask: color,
+            mip_level: 0,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
+        let blit = vk::ImageBlit {
+            src_subresource: layers,
+            src_offsets: [vk::Offset3D::default(), corner],
+            dst_subresource: layers,
+            dst_offsets: [vk::Offset3D::default(), corner],
+        };
+        let (final_layout, final_access, final_stage) = if image_index.is_some() {
+            (
+                vk::ImageLayout::PRESENT_SRC_KHR,
+                vk::AccessFlags::empty(),
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            )
+        } else {
+            (
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::AccessFlags::TRANSFER_READ,
+                vk::PipelineStageFlags::TRANSFER,
+            )
+        };
+        let final_barrier = [ImageBarrier {
+            image,
+            aspect: color,
+            old: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            new: final_layout,
+            src_access: vk::AccessFlags::TRANSFER_WRITE,
+            dst_access: final_access,
+        }];
+        let viewport = vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: extent.width as f32,
+            height: extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let jitter_bytes: [u8; 8] = bytemuck::cast([jitter.x, jitter.y]);
 
         // SAFETY: the fence wait above means the GPU is done with this slot's
-        // pool and command buffer; the fence is reset only once an image was
-        // acquired, so an early return never leaves it unsignalled.
+        // pool, command buffer and instance buffer; the fence is reset only
+        // once an image was acquired, so an early return never leaves it
+        // unsignalled. The G-buffer is shared by both frames in flight: the
+        // first barrier orders this frame after the previous one's writes and
+        // blit reads (same queue, submission order).
         unsafe {
             device.reset_fences(&[fence])?;
             device.reset_command_pool(frame.pool, vk::CommandPoolResetFlags::empty())?;
@@ -325,24 +636,84 @@ impl Renderer {
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
-            transition(
+            image_barriers(
                 device,
                 frame.cmd,
-                image,
-                &Transition {
-                    old: vk::ImageLayout::UNDEFINED,
-                    new: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    src_stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    src_access: vk::AccessFlags::empty(),
-                    dst_stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    dst_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                },
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                &begin_barriers,
             );
             self.ctx
                 .dynamic_rendering
                 .cmd_begin_rendering(frame.cmd, &rendering);
+            device.cmd_bind_pipeline(
+                frame.cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.opaque.pipeline,
+            );
+            device.cmd_set_viewport(frame.cmd, 0, &[viewport]);
+            device.cmd_set_scissor(frame.cmd, 0, &[full]);
+            device.cmd_push_constants(
+                frame.cmd,
+                self.opaque.layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                &jitter_bytes,
+            );
+            if let (Some(arena), Some(instances), false) =
+                (arena, frame.instances.as_ref(), self.draws.is_empty())
+            {
+                device.cmd_bind_vertex_buffers(
+                    frame.cmd,
+                    0,
+                    &[arena.vertices.buffer, instances.buffer],
+                    &[0, 0],
+                );
+                device.cmd_bind_index_buffer(
+                    frame.cmd,
+                    arena.indices.buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                for d in &self.draws {
+                    device.cmd_draw_indexed(
+                        frame.cmd,
+                        d.index_count,
+                        d.instance_count,
+                        d.first_index,
+                        d.base_vertex,
+                        d.first_instance,
+                    );
+                }
+            }
             self.ctx.dynamic_rendering.cmd_end_rendering(frame.cmd);
-            transition(device, frame.cmd, image, &final_transition);
+            image_barriers(
+                device,
+                frame.cmd,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER | vk::PipelineStageFlags::FRAGMENT_SHADER,
+                &end_barriers,
+            );
+            device.cmd_blit_image(
+                frame.cmd,
+                gbuffer.hdr.image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[blit],
+                vk::Filter::NEAREST,
+            );
+            image_barriers(
+                device,
+                frame.cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                final_stage,
+                &final_barrier,
+            );
             device.end_command_buffer(frame.cmd)?;
         }
 
@@ -351,7 +722,8 @@ impl Renderer {
             (Target::Windowed(w), Some(index)) => {
                 let sc = w.swapchain.as_ref().expect("checked above");
                 let wait = [frame.image_available];
-                let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+                // The image is first touched by the transfer barrier.
+                let wait_stages = [vk::PipelineStageFlags::TRANSFER];
                 let signal = [sc.render_finished[index as usize]];
                 let submit = vk::SubmitInfo::default()
                     .command_buffers(&cmds)
@@ -394,37 +766,61 @@ impl Renderer {
         if !offscreen.rendered || select::is_zero_area(self.size) {
             return Err(RenderError::NothingRendered);
         }
-        let extent = offscreen.extent;
-        let image = offscreen.image.image;
-        let byte_len = u64::from(extent.width) * u64::from(extent.height) * 4;
-        let ctx = &mut self.ctx;
+        let (image, extent) = (offscreen.image.image, offscreen.extent);
+        let bytes = self.copy_to_host(image, extent, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, 4)?;
+        image::save_buffer(
+            path,
+            &bytes,
+            extent.width,
+            extent.height,
+            image::ExtendedColorType::Rgba8,
+        )?;
+        Ok(())
+    }
 
-        // SAFETY: valid device; the wait makes every frame slot reusable.
-        unsafe { ctx.device.device_wait_idle() }?;
-        let info = vk::BufferCreateInfo::default()
-            .size(byte_len)
-            .usage(vk::BufferUsageFlags::TRANSFER_DST)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        // SAFETY: valid create info.
-        let buffer = unsafe { ctx.device.create_buffer(&info, None) }?;
-        // SAFETY: live buffer.
-        let requirements = unsafe { ctx.device.get_buffer_memory_requirements(buffer) };
-        let allocation = match ctx.allocator.allocate(&AllocationCreateDesc {
-            name: "readback",
-            requirements,
-            location: MemoryLocation::GpuToCpu,
-            linear: true,
-            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-        }) {
-            Ok(a) => a,
-            Err(e) => {
-                // SAFETY: the buffer was never used.
-                unsafe { ctx.device.destroy_buffer(buffer, None) };
-                return Err(e.into());
-            }
+    /// Motion vectors of the last headless frame, row-major, in UV units per
+    /// frame (current minus previous position, x right, y down).
+    pub fn read_back_motion(&mut self) -> Result<Vec<[f32; 2]>, RenderError> {
+        let Target::Headless(offscreen) = &self.target else {
+            return Err(RenderError::NotHeadless);
         };
+        let gbuffer = match &self.gbuffer {
+            Some(g) if offscreen.rendered && !select::is_zero_area(self.size) => g,
+            _ => return Err(RenderError::NothingRendered),
+        };
+        let (image, extent) = (gbuffer.motion.image, gbuffer.extent);
+        let bytes =
+            self.copy_to_host(image, extent, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, 4)?;
+        Ok(bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| {
+                [
+                    f16_to_f32(u16::from_le_bytes([c[0], c[1]])),
+                    f16_to_f32(u16::from_le_bytes([c[2], c[3]])),
+                ]
+            })
+            .collect())
+    }
 
-        let frame = &self.frames[0];
+    /// Copies a colour image (left in `layout`) to host memory.
+    fn copy_to_host(
+        &mut self,
+        image: vk::Image,
+        extent: vk::Extent2D,
+        layout: vk::ImageLayout,
+        bytes_per_pixel: u64,
+    ) -> Result<Vec<u8>, RenderError> {
+        let byte_len = u64::from(extent.width) * u64::from(extent.height) * bytes_per_pixel;
+        let mut buffer = GpuBuffer::new(
+            &mut self.ctx,
+            "readback",
+            byte_len,
+            vk::BufferUsageFlags::TRANSFER_DST,
+            MemoryLocation::GpuToCpu,
+        )?;
+        let dst = buffer.buffer;
         let region = vk::BufferImageCopy::default()
             .image_subresource(vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -438,32 +834,38 @@ impl Renderer {
             .dst_access_mask(vk::AccessFlags::HOST_READ)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .buffer(buffer)
+            .buffer(dst)
             .size(vk::WHOLE_SIZE);
-        let cmds = [frame.cmd];
-        let submit = vk::SubmitInfo::default().command_buffers(&cmds);
-        let device = &ctx.device;
-        // SAFETY: the device is idle, so frame 0's pool, command buffer and
-        // (signalled) fence are free; a headless frame leaves the image in
-        // TRANSFER_SRC layout; the memory fits the buffer's requirements.
-        let copied = unsafe {
-            (|| -> Result<(), vk::Result> {
-                device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset())?;
-                device.reset_command_pool(frame.pool, vk::CommandPoolResetFlags::empty())?;
-                device.begin_command_buffer(
-                    frame.cmd,
-                    &vk::CommandBufferBeginInfo::default()
-                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-                )?;
+        let needs_transition = layout != vk::ImageLayout::TRANSFER_SRC_OPTIMAL;
+        let swap = |old, new| ImageBarrier {
+            image,
+            aspect: vk::ImageAspectFlags::COLOR,
+            old,
+            new,
+            src_access: vk::AccessFlags::MEMORY_WRITE,
+            dst_access: vk::AccessFlags::MEMORY_READ,
+        };
+        let copied = one_shot(&self.ctx, &self.frames[0], |device, cmd| {
+            // SAFETY: recording command buffer, live image and buffer.
+            unsafe {
+                if needs_transition {
+                    image_barriers(
+                        device,
+                        cmd,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::PipelineStageFlags::TRANSFER,
+                        &[swap(layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)],
+                    );
+                }
                 device.cmd_copy_image_to_buffer(
-                    frame.cmd,
+                    cmd,
                     image,
                     vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                    buffer,
+                    dst,
                     &[region],
                 );
                 device.cmd_pipeline_barrier(
-                    frame.cmd,
+                    cmd,
                     vk::PipelineStageFlags::TRANSFER,
                     vk::PipelineStageFlags::HOST,
                     vk::DependencyFlags::empty(),
@@ -471,32 +873,19 @@ impl Renderer {
                     &[to_host],
                     &[],
                 );
-                device.end_command_buffer(frame.cmd)?;
-                device.reset_fences(&[frame.fence])?;
-                device.queue_submit(ctx.queue, &[submit], frame.fence)?;
-                device.wait_for_fences(&[frame.fence], true, u64::MAX)
-            })()
-        };
-
-        let result = copied.map_err(RenderError::from).and_then(|()| {
-            let bytes = allocation
-                .mapped_slice()
-                .expect("GpuToCpu memory is host-mapped");
-            image::save_buffer(
-                path,
-                &bytes[..byte_len as usize],
-                extent.width,
-                extent.height,
-                image::ExtendedColorType::Rgba8,
-            )
-            .map_err(RenderError::from)
+                if needs_transition {
+                    image_barriers(
+                        device,
+                        cmd,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        &[swap(vk::ImageLayout::TRANSFER_SRC_OPTIMAL, layout)],
+                    );
+                }
+            }
         });
-
-        // SAFETY: the copy finished (or never started); nothing else uses it.
-        unsafe { ctx.device.destroy_buffer(buffer, None) };
-        if let Err(e) = ctx.allocator.free(allocation) {
-            tracing::warn!("failed to free read-back memory: {e}");
-        }
+        let result = copied.map(|()| buffer.mapped()[..byte_len as usize].to_vec());
+        buffer.destroy(&mut self.ctx);
         result
     }
 
@@ -510,6 +899,11 @@ impl Renderer {
         self.frame_index
     }
 
+    /// Culling and draw counters of the last rendered frame.
+    pub fn last_frame_stats(&self) -> FrameStats {
+        self.stats
+    }
+
     /// True when the Khronos validation layer is active (debug builds with
     /// the layer installed).
     pub fn validation_enabled(&self) -> bool {
@@ -519,6 +913,48 @@ impl Renderer {
     /// Warning and error messages reported by the validation layer so far.
     pub fn validation_message_count(&self) -> u32 {
         self.ctx.validation_messages()
+    }
+}
+
+/// Records and runs one command buffer on `frame`, waiting for it. Waits for
+/// the device to be idle first, so the slot is free.
+fn one_shot(
+    ctx: &Context,
+    frame: &FrameData,
+    record: impl FnOnce(&ash::Device, vk::CommandBuffer),
+) -> Result<(), RenderError> {
+    let device = &ctx.device;
+    let cmds = [frame.cmd];
+    let submit = vk::SubmitInfo::default().command_buffers(&cmds);
+    // SAFETY: once the device is idle the slot's pool, command buffer and
+    // (signalled) fence are free; the fence is signalled again on return.
+    unsafe {
+        device.device_wait_idle()?;
+        device.reset_command_pool(frame.pool, vk::CommandPoolResetFlags::empty())?;
+        device.begin_command_buffer(
+            frame.cmd,
+            &vk::CommandBufferBeginInfo::default()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+        )?;
+        record(device, frame.cmd);
+        device.end_command_buffer(frame.cmd)?;
+        device.reset_fences(&[frame.fence])?;
+        device.queue_submit(ctx.queue, &[submit], frame.fence)?;
+        device.wait_for_fences(&[frame.fence], true, u64::MAX)?;
+    }
+    Ok(())
+}
+
+/// IEEE 754 half to single precision.
+fn f16_to_f32(h: u16) -> f32 {
+    let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exponent = i32::from((h >> 10) & 0x1f);
+    let mantissa = f32::from(h & 0x3ff);
+    match exponent {
+        0 => sign * mantissa * 2f32.powi(-24),
+        31 if mantissa == 0.0 => sign * f32::INFINITY,
+        31 => f32::NAN,
+        e => sign * (1.0 + mantissa / 1024.0) * 2f32.powi(e - 15),
     }
 }
 
@@ -555,8 +991,30 @@ impl Drop for Renderer {
             }
             Target::Headless(o) => o.image.destroy(&mut self.ctx),
         }
+        if let Some(g) = self.gbuffer.take() {
+            g.destroy(&mut self.ctx);
+        }
+        if let Some(mut a) = self.arena.take() {
+            a.destroy(&mut self.ctx);
+        }
+        self.opaque.destroy(&self.ctx);
         for mut f in self.frames.drain(..) {
             f.destroy(&mut self.ctx);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::f16_to_f32;
+
+    #[test]
+    fn half_floats_decode() {
+        assert_eq!(f16_to_f32(0x0000), 0.0);
+        assert_eq!(f16_to_f32(0x3c00), 1.0);
+        assert_eq!(f16_to_f32(0xc000), -2.0);
+        assert_eq!(f16_to_f32(0x3555), 0.333_251_95);
+        assert_eq!(f16_to_f32(0x0001), 2f32.powi(-24));
+        assert!(f16_to_f32(0x7e00).is_nan());
     }
 }
