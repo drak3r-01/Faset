@@ -1,0 +1,12 @@
+[package]
+name = "faset-net"
+description = "Network transports (UDP, memory, condition simulator) and the four game channels."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+renet = "2"
+thiserror.workspace = true
+tracing.workspace = true
