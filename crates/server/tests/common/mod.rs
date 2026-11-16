@@ -1,12 +1,15 @@
 //! A minimal headless client for integration tests: handshake, commands
-//! and snapshot decoding over any transport.
+//! and snapshot decoding (full and delta) over any transport.
+
+// Each test binary uses a different part of this helper.
+#![allow(dead_code)]
 
 use std::time::Duration;
 
 use faset_core::{NetId, Tick, DT};
 use faset_net::{Channel, ClientEndpoint, Transport};
 use faset_protocol::{InputCommand, Message, PROTOCOL_VERSION};
-use faset_server::{build_fingerprint, Snapshot};
+use faset_server::{build_fingerprint, InputPacket, Snapshot, SnapshotDecoder};
 
 pub struct HeadlessClient<T: Transport> {
     endpoint: ClientEndpoint<T>,
@@ -15,6 +18,12 @@ pub struct HeadlessClient<T: Transport> {
     pub player: Option<NetId>,
     pub map_fingerprint: Option<u64>,
     pub snapshots: Vec<Snapshot>,
+    /// Resolves delta baselines and yields the acknowledgement.
+    pub decoder: SnapshotDecoder,
+    /// Snapshot messages received: (full, delta) counts and wire bytes.
+    pub fulls: usize,
+    pub deltas: usize,
+    pub snapshot_bytes: usize,
     /// Client steps since the latest snapshot arrived.
     since_snapshot: u32,
 }
@@ -32,6 +41,10 @@ impl<T: Transport> HeadlessClient<T> {
             player: None,
             map_fingerprint: None,
             snapshots: Vec::new(),
+            decoder: SnapshotDecoder::new(),
+            fulls: 0,
+            deltas: 0,
+            snapshot_bytes: 0,
             since_snapshot: 0,
         }
     }
@@ -76,7 +89,13 @@ impl<T: Transport> HeadlessClient<T> {
                 pitch: 0,
                 weapon_slot: 1,
             };
-            self.endpoint.send(Channel::Input, &cmd.encode()).unwrap();
+            let packet = InputPacket {
+                command: cmd,
+                ack: self.decoder.ack(),
+            };
+            self.endpoint
+                .send(Channel::Input, &packet.encode())
+                .unwrap();
         }
         self.endpoint.update(Duration::from_secs_f32(DT)).unwrap();
         self.since_snapshot += 1;
@@ -94,7 +113,14 @@ impl<T: Transport> HeadlessClient<T> {
             }
         }
         while let Some(bytes) = self.endpoint.recv(Channel::Snapshot) {
-            let snap = Snapshot::decode(&bytes).unwrap();
+            let msg = Message::decode(&bytes).unwrap();
+            match msg {
+                Message::SnapshotFull { .. } => self.fulls += 1,
+                Message::SnapshotDelta { .. } => self.deltas += 1,
+                _ => panic!("not a snapshot: {msg:?}"),
+            }
+            self.snapshot_bytes += bytes.len();
+            let snap = self.decoder.decode(&msg).unwrap();
             if self.latest().is_none_or(|l| snap.tick > l.tick) {
                 self.since_snapshot = 0;
             }

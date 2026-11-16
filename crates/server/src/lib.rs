@@ -2,7 +2,9 @@
 //!
 //! [`Server`] accepts clients on any number of transports at once, runs the
 //! connection handshake, buffers each client's input commands by tick, steps
-//! the [`faset_sim::World`] at a fixed 60 Hz and sends full snapshots.
+//! the [`faset_sim::World`] at a fixed 60 Hz and sends snapshots, as deltas
+//! against the last snapshot each client acknowledged (see
+//! [`snapshot::delta`]).
 //!
 //! * [`Server::tick`] advances exactly one step and never sleeps; tests drive
 //!   it directly.
@@ -34,4 +36,7 @@ pub use config::{
 };
 pub use link::ServerTransport;
 pub use server::{Bot, RejectReason, Server, ServerNotice};
-pub use snapshot::{EntityState, Snapshot, SnapshotError, MAX_SNAPSHOT_ENTITIES};
+pub use snapshot::{
+    EntityState, InputPacket, QuantizedEntity, QuantizedSnapshot, Snapshot, SnapshotDecoder,
+    SnapshotEncoder, SnapshotError, MAX_SNAPSHOT_ENTITIES, REFERENCE_SNAPSHOTS,
+};

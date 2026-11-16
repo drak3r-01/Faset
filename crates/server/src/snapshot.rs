@@ -1,4 +1,6 @@
-//! Full snapshot layout (the opaque `data` of `Message::SnapshotFull`).
+//! Snapshots: full layout, quantized state, delta encoding and acknowledgements.
+//!
+//! # Full snapshot (`Message::SnapshotFull::data`)
 //!
 //! Layout, LSB-first through [`BitWriter`], zero padded to a byte:
 //!
@@ -18,6 +20,15 @@
 //!
 //! 179 bits per entity; [`MAX_SNAPSHOT_ENTITIES`] fit the protocol's
 //! snapshot payload limit.
+//!
+//! # Delta snapshot
+//!
+//! See [`delta`] for the `Message::SnapshotDelta::data` layout, the
+//! 64-snapshot reference ring and the acknowledgement carried by input
+//! packets.
+//!
+//! Both codecs work on [`QuantizedSnapshot`], the exact integer values on the
+//! wire, so a delta reconstructs the sender's quantized state bit for bit.
 
 use faset_core::glam::Vec3;
 use faset_core::{NetId, Tick};
@@ -29,12 +40,18 @@ use faset_protocol::quant::{
 };
 use faset_protocol::{BitReader, BitWriter, DecodeError, EncodeError, Message};
 
+pub mod delta;
+
+pub use delta::{
+    InputPacket, SnapshotDecoder, SnapshotEncoder, ENTITY_FIELDS, REFERENCE_SNAPSHOTS,
+};
+
 const ENTITY_BITS: usize = 16 + 3 * POS_BITS as usize + 3 * VEL_BITS as usize + 16 + 12 + 8 + 4 + 3;
 const HEADER_BITS: usize = 1 + 32 + 8;
 const WEAPON_BITS: u32 = 4;
 
-/// Most entities one full snapshot carries (decision: 48, below the 51 that
-/// fit [`MAX_SNAPSHOT_BYTES`]).
+/// Most entities one snapshot carries (decision: 48, below the 51 that fit
+/// [`MAX_SNAPSHOT_BYTES`]).
 pub const MAX_SNAPSHOT_ENTITIES: usize = 48;
 
 const _: () = assert!(HEADER_BITS + MAX_SNAPSHOT_ENTITIES * ENTITY_BITS <= MAX_SNAPSHOT_BYTES * 8);
@@ -45,9 +62,12 @@ pub enum SnapshotError {
     /// More entities than [`MAX_SNAPSHOT_ENTITIES`].
     #[error("{0} entities exceed the snapshot maximum")]
     TooManyEntities(usize),
-    /// The message is not a full snapshot.
-    #[error("not a full snapshot message")]
+    /// The message is not the expected snapshot message.
+    #[error("not a snapshot message of the expected kind")]
     WrongMessage,
+    /// A delta refers to a baseline snapshot the receiver does not hold.
+    #[error("delta baseline {0:?} is unknown")]
+    MissingBaseline(Tick),
     /// Malformed payload.
     #[error("malformed snapshot: {0}")]
     Decode(#[from] DecodeError),
@@ -88,22 +108,237 @@ pub struct Snapshot {
     pub entities: Vec<EntityState>,
 }
 
-fn write_vec(w: &mut BitWriter, v: Vec3, q: fn(f32) -> i64, bits: u32) {
-    for c in [v.x, v.y, v.z] {
-        let mask = (1u64 << bits) - 1;
-        w.write_bits(q(c) as u64 & mask, bits);
+/// One entity as raw quantized wire values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct QuantizedEntity {
+    pub id: NetId,
+    /// Units of 1/256 m, 24-bit signed range.
+    pub position: [i32; 3],
+    /// Units of 1/16 m/s.
+    pub velocity: [i16; 3],
+    pub yaw: u16,
+    /// 12-bit snapshot pitch.
+    pub pitch: u16,
+    pub health: u8,
+    /// 0 to 15.
+    pub weapon: u8,
+    pub on_ground: bool,
+    pub sliding: bool,
+    pub alive: bool,
+}
+
+/// A snapshot as raw quantized wire values: the unit both codecs compare
+/// and reconstruct.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct QuantizedSnapshot {
+    pub tick: Tick,
+    pub last_command: Option<Tick>,
+    /// Entities in ascending id order.
+    pub entities: Vec<QuantizedEntity>,
+}
+
+impl QuantizedEntity {
+    /// Quantizes `e` exactly as the wire does.
+    #[must_use]
+    pub fn from_state(e: &EntityState) -> Self {
+        Self {
+            id: e.id,
+            position: e.position.to_array().map(quantize_position),
+            velocity: e.velocity.to_array().map(quantize_velocity),
+            yaw: quantize_yaw(e.yaw),
+            pitch: quantize_pitch_snapshot(e.pitch),
+            health: e.health,
+            weapon: e.weapon.min(15),
+            on_ground: e.on_ground,
+            sliding: e.sliding,
+            alive: e.alive,
+        }
+    }
+
+    /// The values the receiver works with.
+    #[must_use]
+    pub fn to_state(&self) -> EntityState {
+        EntityState {
+            id: self.id,
+            position: Vec3::from_array(self.position.map(dequantize_position)),
+            velocity: Vec3::from_array(self.velocity.map(dequantize_velocity)),
+            yaw: dequantize_yaw(self.yaw),
+            pitch: dequantize_pitch_snapshot(self.pitch),
+            health: self.health,
+            weapon: self.weapon,
+            on_ground: self.on_ground,
+            sliding: self.sliding,
+            alive: self.alive,
+        }
     }
 }
 
-fn read_vec(r: &mut BitReader, bits: u32, dq: fn(i64) -> f32) -> Result<Vec3, DecodeError> {
-    let mut c = [0.0f32; 3];
-    for v in &mut c {
-        let raw = r.read_bits(bits)?;
-        // Sign-extend from `bits` to 64.
-        let shift = 64 - bits;
-        *v = dq(((raw << shift) as i64) >> shift);
+fn write_signed(w: &mut BitWriter, v: i64, bits: u32) {
+    w.write_bits(v as u64 & ((1u64 << bits) - 1), bits);
+}
+
+fn read_signed(r: &mut BitReader, bits: u32) -> Result<i64, DecodeError> {
+    let raw = r.read_bits(bits)?;
+    let shift = 64 - bits;
+    Ok(((raw << shift) as i64) >> shift)
+}
+
+/// Writes field `index` (see [`ENTITY_FIELDS`]) of `e`.
+pub(crate) fn write_field(w: &mut BitWriter, e: &QuantizedEntity, index: usize) {
+    match index {
+        0..=2 => write_signed(w, i64::from(e.position[index]), POS_BITS),
+        3..=5 => write_signed(w, i64::from(e.velocity[index - 3]), VEL_BITS),
+        6 => w.write_bits(u64::from(e.yaw), 16),
+        7 => w.write_bits(u64::from(e.pitch), PITCH_SNAPSHOT_BITS),
+        8 => w.write_bits(u64::from(e.health), 8),
+        9 => w.write_bits(u64::from(e.weapon), WEAPON_BITS),
+        _ => {
+            w.write_bool(e.on_ground);
+            w.write_bool(e.sliding);
+            w.write_bool(e.alive);
+        }
     }
-    Ok(Vec3::from_array(c))
+}
+
+/// Reads field `index` (see [`ENTITY_FIELDS`]) into `e`.
+pub(crate) fn read_field(
+    r: &mut BitReader,
+    e: &mut QuantizedEntity,
+    index: usize,
+) -> Result<(), DecodeError> {
+    match index {
+        0..=2 => e.position[index] = read_signed(r, POS_BITS)? as i32,
+        3..=5 => e.velocity[index - 3] = read_signed(r, VEL_BITS)? as i16,
+        6 => e.yaw = r.read_bits(16)? as u16,
+        7 => e.pitch = r.read_bits(PITCH_SNAPSHOT_BITS)? as u16,
+        8 => e.health = r.read_bits(8)? as u8,
+        9 => e.weapon = r.read_bits(WEAPON_BITS)? as u8,
+        _ => {
+            e.on_ground = r.read_bool()?;
+            e.sliding = r.read_bool()?;
+            e.alive = r.read_bool()?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether field `index` (see [`ENTITY_FIELDS`]) differs between `a` and `b`.
+pub(crate) fn field_differs(a: &QuantizedEntity, b: &QuantizedEntity, index: usize) -> bool {
+    match index {
+        0..=2 => a.position[index] != b.position[index],
+        3..=5 => a.velocity[index - 3] != b.velocity[index - 3],
+        6 => a.yaw != b.yaw,
+        7 => a.pitch != b.pitch,
+        8 => a.health != b.health,
+        9 => a.weapon != b.weapon,
+        _ => (a.on_ground, a.sliding, a.alive) != (b.on_ground, b.sliding, b.alive),
+    }
+}
+
+pub(crate) fn empty_entity(id: NetId) -> QuantizedEntity {
+    QuantizedEntity {
+        id,
+        position: [0; 3],
+        velocity: [0; 3],
+        yaw: 0,
+        pitch: 0,
+        health: 0,
+        weapon: 0,
+        on_ground: false,
+        sliding: false,
+        alive: false,
+    }
+}
+
+pub(crate) fn write_last_command(w: &mut BitWriter, last: Option<Tick>) {
+    match last {
+        Some(t) => {
+            w.write_bool(true);
+            w.write_bits(u64::from(t.0), 32);
+        }
+        None => w.write_bool(false),
+    }
+}
+
+pub(crate) fn read_last_command(r: &mut BitReader) -> Result<Option<Tick>, DecodeError> {
+    Ok(if r.read_bool()? {
+        Some(Tick(r.read_bits(32)? as u32))
+    } else {
+        None
+    })
+}
+
+impl QuantizedSnapshot {
+    /// Quantizes `s` exactly as the wire does.
+    #[must_use]
+    pub fn from_snapshot(s: &Snapshot) -> Self {
+        Self {
+            tick: s.tick,
+            last_command: s.last_command,
+            entities: s.entities.iter().map(QuantizedEntity::from_state).collect(),
+        }
+    }
+
+    /// The values the receiver works with.
+    #[must_use]
+    pub fn to_snapshot(&self) -> Snapshot {
+        Snapshot {
+            tick: self.tick,
+            last_command: self.last_command,
+            entities: self
+                .entities
+                .iter()
+                .map(QuantizedEntity::to_state)
+                .collect(),
+        }
+    }
+
+    /// Encodes the full snapshot payload (`Message::SnapshotFull::data`).
+    ///
+    /// # Errors
+    /// [`SnapshotError::TooManyEntities`].
+    pub fn encode_full(&self) -> Result<Vec<u8>, SnapshotError> {
+        if self.entities.len() > MAX_SNAPSHOT_ENTITIES {
+            return Err(SnapshotError::TooManyEntities(self.entities.len()));
+        }
+        let mut w = BitWriter::new();
+        write_last_command(&mut w, self.last_command);
+        w.write_bits(self.entities.len() as u64, 8);
+        for e in &self.entities {
+            w.write_bits(u64::from(e.id.0), 16);
+            for f in 0..ENTITY_FIELDS {
+                write_field(&mut w, e, f);
+            }
+        }
+        Ok(w.finish())
+    }
+
+    /// Decodes a full snapshot payload.
+    ///
+    /// # Errors
+    /// [`SnapshotError::Decode`] or [`SnapshotError::TooManyEntities`].
+    pub fn decode_full(tick: Tick, data: &[u8]) -> Result<Self, SnapshotError> {
+        let mut r = BitReader::new(data);
+        let last_command = read_last_command(&mut r)?;
+        let count = r.read_bits(8)? as usize;
+        if count > MAX_SNAPSHOT_ENTITIES {
+            return Err(SnapshotError::TooManyEntities(count));
+        }
+        let mut entities = Vec::with_capacity(count);
+        for _ in 0..count {
+            let mut e = empty_entity(NetId(r.read_bits(16)? as u16));
+            for f in 0..ENTITY_FIELDS {
+                read_field(&mut r, &mut e, f)?;
+            }
+            entities.push(e);
+        }
+        r.finish()?;
+        Ok(Self {
+            tick,
+            last_command,
+            entities,
+        })
+    }
 }
 
 impl Snapshot {
@@ -112,44 +347,7 @@ impl Snapshot {
     /// # Errors
     /// [`SnapshotError::TooManyEntities`].
     pub fn encode_data(&self) -> Result<Vec<u8>, SnapshotError> {
-        if self.entities.len() > MAX_SNAPSHOT_ENTITIES {
-            return Err(SnapshotError::TooManyEntities(self.entities.len()));
-        }
-        let mut w = BitWriter::new();
-        match self.last_command {
-            Some(t) => {
-                w.write_bool(true);
-                w.write_bits(u64::from(t.0), 32);
-            }
-            None => w.write_bool(false),
-        }
-        w.write_bits(self.entities.len() as u64, 8);
-        for e in &self.entities {
-            w.write_bits(u64::from(e.id.0), 16);
-            write_vec(
-                &mut w,
-                e.position,
-                |v| i64::from(quantize_position(v)),
-                POS_BITS,
-            );
-            write_vec(
-                &mut w,
-                e.velocity,
-                |v| i64::from(quantize_velocity(v)),
-                VEL_BITS,
-            );
-            w.write_bits(u64::from(quantize_yaw(e.yaw)), 16);
-            w.write_bits(
-                u64::from(quantize_pitch_snapshot(e.pitch)),
-                PITCH_SNAPSHOT_BITS,
-            );
-            w.write_bits(u64::from(e.health), 8);
-            w.write_bits(u64::from(e.weapon.min(15)), WEAPON_BITS);
-            w.write_bool(e.on_ground);
-            w.write_bool(e.sliding);
-            w.write_bool(e.alive);
-        }
-        Ok(w.finish())
+        QuantizedSnapshot::from_snapshot(self).encode_full()
     }
 
     /// Decodes a payload written by [`encode_data`](Self::encode_data).
@@ -157,46 +355,7 @@ impl Snapshot {
     /// # Errors
     /// [`SnapshotError::Decode`] for malformed input.
     pub fn decode_data(tick: Tick, data: &[u8]) -> Result<Self, SnapshotError> {
-        let mut r = BitReader::new(data);
-        let last_command = if r.read_bool()? {
-            Some(Tick(r.read_bits(32)? as u32))
-        } else {
-            None
-        };
-        let count = r.read_bits(8)? as usize;
-        if count > MAX_SNAPSHOT_ENTITIES {
-            return Err(SnapshotError::TooManyEntities(count));
-        }
-        let mut entities = Vec::with_capacity(count);
-        for _ in 0..count {
-            let id = NetId(r.read_bits(16)? as u16);
-            let position = read_vec(&mut r, POS_BITS, |q| dequantize_position(q as i32))?;
-            let velocity = read_vec(&mut r, VEL_BITS, |q| dequantize_velocity(q as i16))?;
-            let yaw = dequantize_yaw(r.read_bits(16)? as u16);
-            let pitch_q = r.read_bits(PITCH_SNAPSHOT_BITS)? as u16;
-            if pitch_q > 4095 {
-                return Err(DecodeError::OutOfRange.into());
-            }
-            let pitch = dequantize_pitch_snapshot(pitch_q);
-            entities.push(EntityState {
-                id,
-                position,
-                velocity,
-                yaw,
-                pitch,
-                health: r.read_bits(8)? as u8,
-                weapon: r.read_bits(WEAPON_BITS)? as u8,
-                on_ground: r.read_bool()?,
-                sliding: r.read_bool()?,
-                alive: r.read_bool()?,
-            });
-        }
-        r.finish()?;
-        Ok(Self {
-            tick,
-            last_command,
-            entities,
-        })
+        Ok(QuantizedSnapshot::decode_full(tick, data)?.to_snapshot())
     }
 
     /// Wraps the snapshot in a `Message::SnapshotFull`.
@@ -210,7 +369,8 @@ impl Snapshot {
         })
     }
 
-    /// Reads a `Message::SnapshotFull`.
+    /// Reads a `Message::SnapshotFull`. Deltas need a
+    /// [`SnapshotDecoder`], which holds their baselines.
     ///
     /// # Errors
     /// [`SnapshotError::WrongMessage`] for any other message, or a decode error.
@@ -287,6 +447,18 @@ mod tests {
             too_many.encode(),
             Err(SnapshotError::TooManyEntities(MAX_SNAPSHOT_ENTITIES + 1))
         );
+    }
+
+    #[test]
+    fn full_layout_is_179_bits_per_entity() {
+        let s = Snapshot {
+            tick: Tick(1),
+            last_command: None,
+            entities: (0..8).map(entity).collect(),
+        };
+        let bits = 1 + 8 + 8 * ENTITY_BITS;
+        assert_eq!(ENTITY_BITS, 179);
+        assert_eq!(s.encode_data().unwrap().len(), bits.div_ceil(8));
     }
 
     #[test]
