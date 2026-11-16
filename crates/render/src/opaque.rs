@@ -8,6 +8,7 @@ use crate::context::Context;
 use crate::cull::GpuInstance;
 use crate::frame::OwnedImage;
 use crate::gpu::{create_image, GpuBuffer};
+use crate::material::{MaterialTable, MATERIAL_TABLE_SIZE};
 use crate::mesh::{Aabb, ArenaLayout, MeshId, MeshRange, Vertex};
 use crate::RenderError;
 
@@ -20,8 +21,6 @@ pub(crate) const NORMAL_FORMAT: vk::Format = vk::Format::R8G8_UNORM;
 pub(crate) const ARENA_VERTICES: u32 = 1 << 20;
 /// Indices the arena holds (16 MiB).
 pub(crate) const ARENA_INDICES: u32 = 4 << 20;
-
-const SPIRV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/opaque.spv"));
 
 /// Opaque pass outputs, sized like the render target.
 pub(crate) struct GBuffer {
@@ -81,72 +80,156 @@ impl GBuffer {
     }
 }
 
-/// The opaque graphics pipeline (dynamic rendering, no descriptors).
+/// The opaque graphics pipeline (dynamic rendering) and the material table
+/// it reads (descriptor set 0, binding 0, uniform buffer).
 pub(crate) struct OpaquePipeline {
+    pub set_layout: vk::DescriptorSetLayout,
     pub layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
+    pub materials: MaterialBuffer,
 }
 
-/// Bytes of the push constant block (`jitter: vec2<f32>`).
-pub(crate) const PUSH_CONSTANT_SIZE: u32 = 8;
+/// Bytes of the push constant block (`jitter: vec2<f32>, time: f32, pad`).
+pub(crate) const PUSH_CONSTANT_SIZE: u32 = 16;
+/// Stages reading the push constant block.
+pub(crate) const PUSH_CONSTANT_STAGES: vk::ShaderStageFlags = vk::ShaderStageFlags::from_raw(
+    vk::ShaderStageFlags::VERTEX.as_raw() | vk::ShaderStageFlags::FRAGMENT.as_raw(),
+);
 
 impl OpaquePipeline {
-    pub(crate) fn new(ctx: &Context) -> Result<Self, RenderError> {
+    /// Builds the pipeline from the embedded SPIR-V and uploads `table`.
+    pub(crate) fn new(ctx: &mut Context, table: &MaterialTable) -> Result<Self, RenderError> {
         let device = &ctx.device;
-        let words: Vec<u32> = SPIRV
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
-        // SAFETY: SPIR-V produced and validated by naga at build time.
-        let module = unsafe {
-            device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)
+        let bindings = [vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+        // SAFETY: valid device and create info.
+        let set_layout = unsafe {
+            device.create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+                None,
+            )
         }?;
+        let set_layouts = [set_layout];
         let ranges = [vk::PushConstantRange::default()
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
+            .stage_flags(PUSH_CONSTANT_STAGES)
             .offset(0)
             .size(PUSH_CONSTANT_SIZE)];
         // SAFETY: valid device and create info.
         let layout = match unsafe {
             device.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&ranges),
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&set_layouts)
+                    .push_constant_ranges(&ranges),
                 None,
             )
         } {
             Ok(l) => l,
             Err(e) => {
-                // SAFETY: unused module.
-                unsafe { device.destroy_shader_module(module, None) };
+                // SAFETY: unused set layout.
+                unsafe { device.destroy_descriptor_set_layout(set_layout, None) };
                 return Err(e.into());
             }
         };
-        let pipeline = Self::create_pipeline(device, module, layout);
-        // SAFETY: a module may be destroyed once pipelines are created.
-        unsafe { device.destroy_shader_module(module, None) };
-        match pipeline {
-            Ok(pipeline) => Ok(Self { layout, pipeline }),
+        let pipeline = Self::create_pipeline(
+            device,
+            layout,
+            faset_shaders::OPAQUE_VS,
+            faset_shaders::OPAQUE_FS,
+        );
+        let pipeline = match pipeline {
+            Ok(p) => p,
             Err(e) => {
-                // SAFETY: unused layout.
-                unsafe { device.destroy_pipeline_layout(layout, None) };
+                // SAFETY: unused layouts.
+                unsafe {
+                    device.destroy_pipeline_layout(layout, None);
+                    device.destroy_descriptor_set_layout(set_layout, None);
+                }
+                return Err(e);
+            }
+        };
+        match MaterialBuffer::new(ctx, set_layout, table) {
+            Ok(materials) => Ok(Self {
+                set_layout,
+                layout,
+                pipeline,
+                materials,
+            }),
+            Err(e) => {
+                // SAFETY: unused pipeline and layouts.
+                unsafe {
+                    ctx.device.destroy_pipeline(pipeline, None);
+                    ctx.device.destroy_pipeline_layout(layout, None);
+                    ctx.device.destroy_descriptor_set_layout(set_layout, None);
+                }
                 Err(e)
             }
         }
     }
 
+    /// Swaps in a pipeline built from new SPIR-V. On error the current
+    /// pipeline stays. The GPU must be done with the current pipeline.
+    #[cfg(feature = "hot-reload")]
+    pub(crate) fn replace_shaders(
+        &mut self,
+        device: &ash::Device,
+        vs: &[u32],
+        fs: &[u32],
+    ) -> Result<(), RenderError> {
+        let new = Self::create_pipeline(device, self.layout, vs, fs)?;
+        let old = std::mem::replace(&mut self.pipeline, new);
+        // SAFETY: the caller waited for the device to be idle.
+        unsafe { device.destroy_pipeline(old, None) };
+        Ok(())
+    }
+
     fn create_pipeline(
         device: &ash::Device,
-        module: vk::ShaderModule,
         layout: vk::PipelineLayout,
+        vs: &[u32],
+        fs: &[u32],
+    ) -> Result<vk::Pipeline, RenderError> {
+        let module = |words: &[u32]| {
+            // SAFETY: SPIR-V produced and validated by naga.
+            unsafe {
+                device
+                    .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(words), None)
+            }
+        };
+        let vs_module = module(vs)?;
+        let fs_module = match module(fs) {
+            Ok(m) => m,
+            Err(e) => {
+                // SAFETY: unused module.
+                unsafe { device.destroy_shader_module(vs_module, None) };
+                return Err(e.into());
+            }
+        };
+        let pipeline = Self::create_pipeline_with(device, layout, vs_module, fs_module);
+        // SAFETY: modules may be destroyed once pipelines are created.
+        unsafe {
+            device.destroy_shader_module(vs_module, None);
+            device.destroy_shader_module(fs_module, None);
+        }
+        pipeline
+    }
+
+    fn create_pipeline_with(
+        device: &ash::Device,
+        layout: vk::PipelineLayout,
+        vs_module: vk::ShaderModule,
+        fs_module: vk::ShaderModule,
     ) -> Result<vk::Pipeline, RenderError> {
         let stages = [
             vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::VERTEX)
-                .module(module)
+                .module(vs_module)
                 .name(c"vs_main"),
             vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(module)
+                .module(fs_module)
                 .name(c"fs_main"),
         ];
         let bindings = [
@@ -240,12 +323,103 @@ impl OpaquePipeline {
         Ok(pipelines[0])
     }
 
-    pub(crate) fn destroy(&mut self, ctx: &Context) {
+    pub(crate) fn destroy(&mut self, ctx: &mut Context) {
+        self.materials.destroy(ctx);
         // SAFETY: the device is idle.
         unsafe {
             ctx.device.destroy_pipeline(self.pipeline, None);
             ctx.device.destroy_pipeline_layout(self.layout, None);
+            ctx.device
+                .destroy_descriptor_set_layout(self.set_layout, None);
         }
+    }
+}
+
+/// The material table on the GPU: a host-visible uniform buffer and the
+/// descriptor set that binds it.
+pub(crate) struct MaterialBuffer {
+    buffer: GpuBuffer,
+    pool: vk::DescriptorPool,
+    pub set: vk::DescriptorSet,
+}
+
+impl MaterialBuffer {
+    fn new(
+        ctx: &mut Context,
+        set_layout: vk::DescriptorSetLayout,
+        table: &MaterialTable,
+    ) -> Result<Self, RenderError> {
+        let mut buffer = GpuBuffer::new(
+            ctx,
+            "material-table",
+            MATERIAL_TABLE_SIZE,
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+            MemoryLocation::CpuToGpu,
+        )?;
+        let sizes = [vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::UNIFORM_BUFFER,
+            descriptor_count: 1,
+        }];
+        // SAFETY: valid device and create info.
+        let pool = match unsafe {
+            ctx.device.create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::default()
+                    .max_sets(1)
+                    .pool_sizes(&sizes),
+                None,
+            )
+        } {
+            Ok(p) => p,
+            Err(e) => {
+                buffer.destroy(ctx);
+                return Err(e.into());
+            }
+        };
+        let layouts = [set_layout];
+        // SAFETY: the pool has room for this one set.
+        let set = match unsafe {
+            ctx.device.allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(pool)
+                    .set_layouts(&layouts),
+            )
+        } {
+            Ok(sets) => sets[0],
+            Err(e) => {
+                // SAFETY: unused pool.
+                unsafe { ctx.device.destroy_descriptor_pool(pool, None) };
+                buffer.destroy(ctx);
+                return Err(e.into());
+            }
+        };
+        let infos = [vk::DescriptorBufferInfo {
+            buffer: buffer.buffer,
+            offset: 0,
+            range: MATERIAL_TABLE_SIZE,
+        }];
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .buffer_info(&infos);
+        // SAFETY: live set and buffer; the set is not in use yet.
+        unsafe { ctx.device.update_descriptor_sets(&[write], &[]) };
+        let mut out = Self { buffer, pool, set };
+        out.write(table);
+        Ok(out)
+    }
+
+    /// Copies `table` into the buffer. The GPU must not be reading it.
+    pub(crate) fn write(&mut self, table: &MaterialTable) {
+        let gpu = table.to_gpu();
+        let bytes: &[u8] = bytemuck::cast_slice(&gpu);
+        self.buffer.mapped()[..bytes.len()].copy_from_slice(bytes);
+    }
+
+    fn destroy(&mut self, ctx: &mut Context) {
+        // SAFETY: the device is idle; destroying the pool frees the set.
+        unsafe { ctx.device.destroy_descriptor_pool(self.pool, None) };
+        self.buffer.destroy(ctx);
     }
 }
 

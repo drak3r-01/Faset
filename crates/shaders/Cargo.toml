@@ -1,0 +1,17 @@
+[package]
+name = "faset-shaders"
+description = "WGSL shader sources, compiled to SPIR-V at build time and embedded."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Runtime WGSL -> SPIR-V compilation, for shader hot reload in dev builds.
+runtime = ["dep:naga"]
+
+[dependencies]
+naga = { version = "30", features = ["wgsl-in", "spv-out"], optional = true }
+
+[build-dependencies]
+naga = { version = "30", features = ["wgsl-in", "spv-out"] }
