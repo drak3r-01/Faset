@@ -10,8 +10,8 @@ publish.workspace = true
 faset-core.workspace = true
 faset-protocol.workspace = true
 thiserror.workspace = true
-hecs ="0.10"
-parry3d = "0.21"
+hecs = "0.10"
+parry3d = "0.31"
 
 [dev-dependencies]
 proptest.workspace = true
