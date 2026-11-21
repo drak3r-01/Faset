@@ -1,0 +1,22 @@
+// Ambience profile "space": black starry sky, very contrasted light, no fog.
+// Colours are linear RGB. See `render::AmbienceProfile`.
+(
+    sun: (color: (1.0, 1.0, 1.0), intensity: 0.95, direction: (0.7, 0.5, 0.5), source: Profile),
+    ambient: (ground: (0.0, 0.0, 0.0), sky: (0.02, 0.02, 0.03)),
+    ramp: (threshold: 0.1, softness: 0.01, shadow: (0.0, 0.0, 0.0)),
+    rim: (color: (0.15, 0.18, 0.25), power: 5.0),
+    fog: (color: (0.0, 0.0, 0.0), density: 0.0, falloff: 0.0, height: 0.0),
+    sky: (horizon: (0.0, 0.0, 0.0), zenith: (0.0, 0.0, 0.0), exponent: 1.0, stars: 1.5),
+    weather: (kind: Clear, intensity: 0.0, wind: 0.0, heat_haze: 0.0),
+    exposure: 1.0,
+    grading: (
+        lift: (0.0, 0.0, 0.0),
+        gamma: (1.0, 1.0, 1.0),
+        gain: (1.0, 1.0, 1.0),
+        saturation: 1.0,
+        hue_shift: 0.0,
+        bloom_threshold: 1.0,
+        bloom_intensity: 0.1,
+    ),
+    water: (shallow: (0.10, 0.45, 0.45), deep: (0.02, 0.10, 0.18), fog_density: 0.15, caustics: 0.0),
+)

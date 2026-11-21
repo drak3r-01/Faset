@@ -2,10 +2,11 @@
 //
 // Outputs: HDR colour (RGBA16F), motion vectors (RG16F, UV units per frame,
 // computed without jitter), world normals (RG8, octahedral).
-// Colour is the vertex colour times the procedural material colour, unlit
-// (lighting arrives in lot 2.4).
+// Albedo and emission are the vertex colour times the procedural material;
+// the stylised lighting model and height fog give the final colour.
 
 #include "materials.wgsl"
+#include "lighting.wgsl"
 
 struct Immediates {
     // Sub-pixel jitter in NDC units. Adding `jitter * w` to clip x/y is the
@@ -100,10 +101,11 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     // Derivatives first, in uniform control flow.
     let dpos = fwidth(in.world_pos);
     let normal = normalize(in.normal);
-    let material = material_color(in.material, in.world_pos, normal, dpos, imm.time);
+    let surface = material_surface(in.material, in.world_pos, normal, dpos, imm.time);
+    let lit = shade(in.color * surface.albedo, in.color * surface.emissive, normal, in.world_pos);
 
     var out: FragmentOut;
-    out.color = vec4<f32>(in.color * material, 1.0);
+    out.color = vec4<f32>(apply_fog(lit, in.world_pos), 1.0);
     out.motion = 0.5 * (in.clip.xy / in.clip.w - in.prev_clip.xy / in.prev_clip.w);
     out.normal = encode_octahedral(normal);
     return out;

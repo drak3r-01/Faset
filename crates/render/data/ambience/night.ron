@@ -1,0 +1,22 @@
+// Ambience profile "night": cold moonlight, dark blue ambient, starry sky.
+// Colours are linear RGB. See `render::AmbienceProfile`.
+(
+    sun: (color: (0.45, 0.55, 0.90), intensity: 0.35, direction: (-0.3, 0.7, -0.4), source: Profile),
+    ambient: (ground: (0.010, 0.012, 0.020), sky: (0.03, 0.04, 0.08)),
+    ramp: (threshold: 0.25, softness: 0.1, shadow: (0.0, 0.0, 0.05)),
+    rim: (color: (0.06, 0.08, 0.15), power: 3.0),
+    fog: (color: (0.02, 0.03, 0.06), density: 0.01, falloff: 0.08, height: 0.0),
+    sky: (horizon: (0.03, 0.04, 0.08), zenith: (0.0, 0.005, 0.02), exponent: 0.6, stars: 1.0),
+    weather: (kind: Clear, intensity: 0.0, wind: 1.0, heat_haze: 0.0),
+    exposure: 1.0,
+    grading: (
+        lift: (0.0, 0.0, 0.0),
+        gamma: (1.0, 1.0, 1.0),
+        gain: (1.0, 1.0, 1.0),
+        saturation: 0.9,
+        hue_shift: 0.0,
+        bloom_threshold: 0.8,
+        bloom_intensity: 0.2,
+    ),
+    water: (shallow: (0.02, 0.08, 0.10), deep: (0.0, 0.02, 0.05), fog_density: 0.2, caustics: 0.1),
+)

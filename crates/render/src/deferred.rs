@@ -63,8 +63,6 @@ impl RingCursor {
 
     /// Reserves `size` bytes aligned to `align` (a power of two); returns the
     /// offset, or `None` when the ring is full.
-    // Used from lot 2.2 (per-draw uniforms); only tests call it today.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn alloc(&mut self, size: u64, align: u64) -> Option<u64> {
         let offset = self.head.checked_next_multiple_of(align.max(1))?;
         let end = offset.checked_add(size)?;

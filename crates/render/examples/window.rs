@@ -2,14 +2,17 @@
 //! orbiting camera (jittered, reverse-Z). Resize it and minimise it; the log shows the frame
 //! count, which stops growing while minimised.
 //!
-//! `window [--no-vsync] [--seconds N]` (N = 0 runs until closed).
+//! Lit by a built-in ambience profile with one orbiting point light.
+//!
+//! `window [--no-vsync] [--seconds N] [--profile NAME]` (N = 0 runs until
+//! closed; NAME defaults to `day`).
 
 use std::time::{Duration, Instant};
 
 use faset_render::glam::{Mat4, Vec3};
 use faset_render::{
-    cube_mesh, jitter, perspective_reverse_z, Camera, Instance, MeshId, RenderConfig, RenderWorld,
-    Renderer, CUBE_FACE_TINTS,
+    cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, Instance, MeshId,
+    PointLight, RenderConfig, RenderWorld, Renderer, CUBE_FACE_TINTS,
 };
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -18,6 +21,7 @@ use winit::window::{Window, WindowId};
 
 struct App {
     cfg: RenderConfig,
+    ambience: AmbienceProfile,
     limit: Option<Duration>,
     start: Instant,
     last_log: Instant,
@@ -114,10 +118,18 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
+        let ambience = self.ambience;
+        let fog = ambience.fog.color;
         let world = RenderWorld {
-            clear_color: [0.05, 0.07, 0.1, 1.0],
+            clear_color: [fog[0], fog[1], fog[2], 1.0],
             camera,
             instances,
+            lights: vec![PointLight {
+                position: Vec3::new(3.0 * t.cos(), 1.5, 3.0 * t.sin()),
+                color: Vec3::new(3.0, 1.5, 0.5),
+                radius: 6.0,
+            }],
+            ambience,
         };
         if let Err(e) = renderer.render_frame(&world) {
             tracing::error!("frame failed: {e}");
@@ -153,6 +165,18 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
+    let profile = args
+        .iter()
+        .position(|a| a == "--profile")
+        .and_then(|i| args.get(i + 1))
+        .map_or("day", String::as_str);
+    let Some(ambience) = AmbienceProfile::builtin(profile) else {
+        tracing::error!(
+            "unknown profile `{profile}`, expected one of {:?}",
+            faset_render::BUILTIN_PROFILES
+        );
+        return;
+    };
 
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -161,6 +185,7 @@ fn main() {
             vsync,
             ..RenderConfig::default()
         },
+        ambience,
         limit: (seconds > 0).then(|| Duration::from_secs(seconds)),
         start: Instant::now(),
         last_log: Instant::now(),

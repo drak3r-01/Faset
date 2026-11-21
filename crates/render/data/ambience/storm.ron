@@ -1,0 +1,22 @@
+// Ambience profile "storm": dark diffuse light, grey fog, heavy rain and wind (2.7).
+// Colours are linear RGB. See `render::AmbienceProfile`.
+(
+    sun: (color: (0.60, 0.65, 0.75), intensity: 0.3, direction: (-0.2, 0.9, 0.3), source: Profile),
+    ambient: (ground: (0.060, 0.065, 0.070), sky: (0.16, 0.18, 0.22)),
+    ramp: (threshold: 0.4, softness: 0.3, shadow: (0.20, 0.22, 0.30)),
+    rim: (color: (0.04, 0.05, 0.07), power: 2.0),
+    fog: (color: (0.22, 0.24, 0.28), density: 0.04, falloff: 0.04, height: 0.0),
+    sky: (horizon: (0.22, 0.24, 0.28), zenith: (0.10, 0.11, 0.14), exponent: 0.7, stars: 0.0),
+    weather: (kind: Storm, intensity: 0.9, wind: 15.0, heat_haze: 0.0),
+    exposure: 1.0,
+    grading: (
+        lift: (0.0, 0.0, 0.0),
+        gamma: (1.0, 1.0, 1.0),
+        gain: (1.0, 1.0, 1.0),
+        saturation: 0.8,
+        hue_shift: 0.0,
+        bloom_threshold: 0.9,
+        bloom_intensity: 0.1,
+    ),
+    water: (shallow: (0.06, 0.20, 0.22), deep: (0.01, 0.05, 0.08), fog_density: 0.25, caustics: 0.1),
+)
