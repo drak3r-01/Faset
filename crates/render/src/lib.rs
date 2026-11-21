@@ -23,6 +23,10 @@
 //! reflects surfaces, storms flash lightning and queue [`ThunderEvent`]s for
 //! the audio lot ([`Renderer::take_thunder_events`]); [`WeatherSchedule`]
 //! blends keyframes over 10 to 30 s.
+//! Water ([`WaterParams`]: a rest height and up to eight Gerstner waves) is a
+//! displaced grid around the camera; below it ([`RenderWorld::underwater`])
+//! the height fog is replaced by a dense blue-green exponential fog, sunlit
+//! surfaces get animated caustics and suspended particles drift in the view.
 //! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
 
 mod ambience;
@@ -43,6 +47,7 @@ mod shadow;
 mod shelter;
 mod sky;
 mod target;
+mod water;
 mod weather;
 
 use std::path::Path;
@@ -62,6 +67,7 @@ use shadow::ShadowResources;
 use shelter::ShelterBuffer;
 use sky::SkyPipeline;
 use target::{Offscreen, Swapchain};
+use water::{GpuWater, WaterPipeline};
 use weather::{GpuWeather, WeatherPipeline};
 
 pub use ambience::{
@@ -86,6 +92,11 @@ pub use shelter::{ShelterError, ShelterMap, MAX_SHELTER_SIDE, NO_ROOF};
 pub use sky::{
     cell_has_star, hash_cell, henyey_greenstein, star_cell, sun_altitude_azimuth, sun_direction,
     SkyParams, STAR_COLS, STAR_ROWS, SUN_PHASE_G,
+};
+pub use water::{
+    angular_frequency, gerstner_displace, is_underwater, mote_position, underwater_profile,
+    wavenumber, GerstnerWave, WaterError, WaterParams, GRAVITY, GRID_CELLS, GRID_EXTENT, KIND_MOTE,
+    MAX_WAVES, MOTE_BOX, MOTE_COUNT, MOTE_VELOCITY,
 };
 pub use weather::{
     flash_envelope, lightning_flash, particle_count, particle_hash, particle_position,
@@ -151,6 +162,26 @@ pub struct RenderWorld {
     /// Particles and lightning animate with the time set by
     /// [`Renderer::set_material_time`]. Clear by default.
     pub weather: WeatherState,
+    /// The map's water, drawn as a surface displaced by Gerstner waves
+    /// (invalid parameters are ignored with a warning). Caustics need it.
+    pub water: Option<WaterParams>,
+    /// The camera is below the water surface: underwater fog, caustics and
+    /// suspended particles replace the height fog, and the sky is not drawn.
+    /// Keep it in sync with [`RenderWorld::update_underwater`]. The image
+    /// ripple of lot 2.9 reads this flag.
+    pub underwater: bool,
+}
+
+impl RenderWorld {
+    /// Sets [`RenderWorld::underwater`]: true exactly when the camera is
+    /// below the height of [`RenderWorld::water`] (false without water).
+    pub fn update_underwater(&mut self) {
+        let camera_y = self.camera.view.inverse().w_axis.y;
+        self.underwater = self
+            .water
+            .as_ref()
+            .is_some_and(|w| w.contains_camera_height(camera_y));
+    }
 }
 
 impl Default for RenderWorld {
@@ -164,6 +195,8 @@ impl Default for RenderWorld {
             sky: SkyParams::default(),
             draw_sky: false,
             weather: WeatherState::CLEAR,
+            water: None,
+            underwater: false,
         }
     }
 }
@@ -231,6 +264,9 @@ pub struct Renderer {
     opaque: OpaquePipeline,
     sky: SkyPipeline,
     weather: WeatherPipeline,
+    water: WaterPipeline,
+    /// True once invalid water parameters were reported.
+    water_warned: bool,
     /// Roofs that mask weather particles (none until `set_shelter_map`).
     shelter: ShelterBuffer,
     /// Thunder of the strikes since the last `take_thunder_events`.
@@ -326,6 +362,7 @@ impl Renderer {
         let mut opaque = None;
         let mut sky = None;
         let mut weather = None;
+        let mut water = None;
         let mut shelter = None;
         let target = result
             .and_then(|()| {
@@ -345,15 +382,19 @@ impl Renderer {
                 )?);
                 sky = Some(SkyPipeline::new(&ctx.device, pipeline.layout)?);
                 weather = Some(WeatherPipeline::new(&ctx.device, pipeline.layout)?);
+                water = Some(WaterPipeline::new(&ctx.device, pipeline.layout)?);
                 Ok(())
             })
             .and_then(|()| make_target(&mut ctx));
-        match (target, opaque, sky, weather, shelter, lighting, shadow) {
+        match (
+            target, opaque, sky, weather, water, shelter, lighting, shadow,
+        ) {
             (
                 Ok(target),
                 Some(opaque),
                 Some(sky),
                 Some(weather),
+                Some(water),
                 Some(shelter),
                 Some(lighting),
                 Some(shadow),
@@ -364,6 +405,8 @@ impl Renderer {
                 opaque,
                 sky,
                 weather,
+                water,
+                water_warned: false,
                 shelter,
                 thunder: Vec::new(),
                 last_weather_time: None,
@@ -383,11 +426,14 @@ impl Renderer {
                 material_time: 0.0,
                 ctx,
             }),
-            (result, opaque, sky, weather, shelter, lighting, shadow) => {
+            (result, opaque, sky, weather, water, shelter, lighting, shadow) => {
                 if let Some(mut s) = sky {
                     s.destroy(&ctx.device);
                 }
                 if let Some(mut w) = weather {
+                    w.destroy(&ctx.device);
+                }
+                if let Some(mut w) = water {
                     w.destroy(&ctx.device);
                 }
                 if let Some(mut s) = shelter {
@@ -596,13 +642,39 @@ impl Renderer {
         let (weathered, weathered_sky) = weather::apply(&world.ambience, &world.sky, state);
         let mut resolved = sky::resolve(&weathered, &weathered_sky, world.draw_sky, camera);
         weather::apply_flash(&mut resolved, flash);
-        let gpu_weather = GpuWeather::new(
+        let mut gpu_weather = GpuWeather::new(
             state,
             flash,
             resolved.gpu.horizon,
             &self.shelter.info,
             &view_proj,
         );
+        // Underwater, the uniform water fog replaces the height fog (and the
+        // weather's fog tint and the sky colour it would take).
+        let underwater = world.underwater;
+        if underwater {
+            resolved.ambience = underwater_profile(&resolved.ambience);
+            resolved.gpu.params[3] = 0.0;
+            gpu_weather.fog_tint[3] = 0.0;
+        }
+        let water = world.water.as_ref().filter(|w| match w.validate() {
+            Ok(()) => true,
+            Err(e) => {
+                if !self.water_warned {
+                    tracing::warn!("water ignored: {e}");
+                }
+                self.water_warned = true;
+                false
+            }
+        });
+        let gpu_water = GpuWater::new(&resolved.ambience.water, water, underwater);
+        let frame_clear = if underwater {
+            let fog = resolved.ambience.fog.color;
+            [fog[0], fog[1], fog[2], 1.0]
+        } else {
+            world.clear_color
+        };
+        let draw_sky = world.draw_sky && !underwater;
         let ambience = &resolved.ambience;
         let sun_dir = glam::Vec3::from_array(ambience.sun.direction).normalize_or(glam::Vec3::Y);
         let cascades = (ambience.sun.intensity > 0.0).then(|| {
@@ -664,6 +736,7 @@ impl Renderer {
             cascades.as_ref(),
             resolved.gpu,
             gpu_weather,
+            gpu_water,
             &mut self.light_overflow_warned,
         );
         let frame = &mut self.frames[slot];
@@ -743,7 +816,7 @@ impl Renderer {
             color: vk::ClearColorValue { float32: c },
         };
         let color_attachments = [
-            (gbuffer.hdr.view, clear_color(world.clear_color)),
+            (gbuffer.hdr.view, clear_color(frame_clear)),
             (gbuffer.motion.view, clear_color([0.0; 4])),
             (gbuffer.normal.view, clear_color([0.5, 0.5, 0.0, 0.0])),
         ]
@@ -1025,7 +1098,7 @@ impl Renderer {
                     );
                 }
             }
-            if world.draw_sky {
+            if draw_sky {
                 // Sky: a full-screen triangle at depth 0, so only pixels no
                 // mesh covered pass the depth test. Same layout, sets and
                 // push constants as the opaque draws above.
@@ -1045,8 +1118,10 @@ impl Renderer {
                 weather::particle_count(weather::KIND_RAIN, state.rain),
                 weather::particle_count(weather::KIND_SNOW, state.snow),
                 weather::particle_count(weather::KIND_SAND, state.sand),
+                if underwater { water::MOTE_COUNT } else { 0 },
             ];
-            if counts.iter().any(|&c| c > 0) {
+            // The water surface and the particles share this rendering.
+            if water.is_some() || counts.iter().any(|&c| c > 0) {
                 // The first rendering's colour and depth writes before this
                 // one's blending and depth reads.
                 device.cmd_pipeline_barrier(
@@ -1087,11 +1162,6 @@ impl Renderer {
                 self.ctx
                     .dynamic_rendering
                     .cmd_begin_rendering(frame.cmd, &weather_pass);
-                device.cmd_bind_pipeline(
-                    frame.cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    self.weather.pipeline,
-                );
                 device.cmd_set_viewport(frame.cmd, 0, &[viewport]);
                 device.cmd_set_scissor(frame.cmd, 0, &[full]);
                 device.cmd_bind_descriptor_sets(
@@ -1101,6 +1171,34 @@ impl Renderer {
                     0,
                     &[self.opaque.materials.set, lighting_set],
                     &[lighting_offset as u32],
+                );
+                if water.is_some() {
+                    let push: [u8; opaque::PUSH_CONSTANT_SIZE as usize] =
+                        bytemuck::cast([jitter.x, jitter.y, self.material_time, 0.0]);
+                    device.cmd_bind_pipeline(
+                        frame.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.water.pipeline,
+                    );
+                    device.cmd_push_constants(
+                        frame.cmd,
+                        self.opaque.layout,
+                        opaque::PUSH_CONSTANT_STAGES,
+                        0,
+                        &push,
+                    );
+                    device.cmd_draw(
+                        frame.cmd,
+                        water::GRID_CELLS * water::GRID_CELLS * 6,
+                        1,
+                        0,
+                        0,
+                    );
+                }
+                device.cmd_bind_pipeline(
+                    frame.cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.weather.pipeline,
                 );
                 for (kind, count) in (0u32..).zip(counts) {
                     if count == 0 {
@@ -1506,6 +1604,7 @@ impl Drop for Renderer {
         }
         self.sky.destroy(&self.ctx.device);
         self.weather.destroy(&self.ctx.device);
+        self.water.destroy(&self.ctx.device);
         self.shelter.destroy(&mut self.ctx);
         self.opaque.destroy(&mut self.ctx);
         self.lighting.destroy(&self.ctx);

@@ -10,9 +10,10 @@ use std::sync::Arc;
 
 use faset_render::glam::{Mat4, Vec2, Vec3};
 use faset_render::{
-    cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, Instance, MaterialTable,
-    MeshId, Pattern, PointLight, RenderConfig, RenderError, RenderWorld, Renderer, ShelterMap,
-    SkyParams, SunSource, WeatherState, BUILTIN_PROFILES, CUBE_FACE_TINTS, SHADOW_DISTANCE,
+    cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, GerstnerWave, Instance,
+    MaterialTable, MeshId, Pattern, PointLight, RenderConfig, RenderError, RenderWorld, Renderer,
+    ShelterMap, SkyParams, SunSource, WaterParams, WeatherState, BUILTIN_PROFILES, CUBE_FACE_TINTS,
+    SHADOW_DISTANCE,
 };
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -545,6 +546,27 @@ fn profile_reference(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/refs/profile_{name}.png"))
 }
 
+/// Water of the underwater scenes: the surface is 8 m above the ground.
+fn scene_water() -> WaterParams {
+    WaterParams {
+        height: 8.0,
+        waves: vec![
+            GerstnerWave {
+                amplitude: 0.3,
+                steepness: 0.5,
+                direction: Vec2::new(1.0, 0.2),
+                wavelength: 12.0,
+            },
+            GerstnerWave {
+                amplitude: 0.12,
+                steepness: 0.6,
+                direction: Vec2::new(-0.4, 1.0),
+                wavelength: 6.0,
+            },
+        ],
+    }
+}
+
 /// The ambience reference scene: a sand ground, rows of grey cubes receding
 /// into the fog, a brick block, lava, emissive and hologram props and four
 /// coloured point lights, lit by the built-in profile `name`.
@@ -617,6 +639,10 @@ fn render_profile(name: &str, path: &Path) {
         weather: WeatherState::CLEAR,
         sky: SkyParams::default(),
         draw_sky: name == "space",
+        // The underwater profile sits below a wavy surface, so it gets the
+        // water medium: fog, caustics and suspended particles.
+        water: (name == "underwater").then(scene_water),
+        underwater: name == "underwater",
     };
     renderer.render_frame(&world).unwrap();
     renderer.read_back_png(path).unwrap();
@@ -1736,5 +1762,117 @@ fn storm_flashes_and_queues_thunder() {
     let dark = mean_at(strike.start_s + 1.0);
     assert!(lit[2] > dark[2] + 0.1, "{lit:?} vs {dark:?}");
     assert_eq!(renderer.validation_message_count(), 0);
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+// ---------------------------------------------------------------------------
+// Water and underwater medium (lot 2.8)
+// ---------------------------------------------------------------------------
+
+fn look_at(eye: Vec3, target: Vec3) -> Camera {
+    let view = faset_render::glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
+    Camera::new(view, perspective_reverse_z(60f32.to_radians(), 1.0, 0.1))
+}
+
+/// Renders a ground plane at y = 0 seen from `eye` with the given water.
+fn render_water_scene(
+    eye: Vec3,
+    target: Vec3,
+    water: Option<WaterParams>,
+    caustics: f32,
+    time: f32,
+) -> image::RgbaImage {
+    let mut renderer = headless((128, 128));
+    renderer.set_material_time(time);
+    let (v, i) = cube_mesh(0.5, &[[200; 3]; 6], 2);
+    let ground = renderer.upload_mesh(&v, &i).unwrap();
+    let mut ambience = AmbienceProfile::builtin("underwater").unwrap();
+    ambience.water.caustics = caustics;
+    let mut world = RenderWorld {
+        camera: look_at(eye, target),
+        instances: vec![Instance::new(
+            ground,
+            0,
+            Mat4::from_translation(Vec3::new(0.0, -0.5, 0.0))
+                * Mat4::from_scale(Vec3::new(60.0, 1.0, 60.0)),
+        )],
+        ambience,
+        water,
+        ..RenderWorld::default()
+    };
+    world.update_underwater();
+    renderer.render_frame(&world).unwrap();
+    let path = out_path("water_scene.png");
+    renderer.read_back_png(&path).unwrap();
+    assert_eq!(renderer.validation_message_count(), 0);
+    load_rgba(&path)
+}
+
+#[test]
+fn underwater_flag_follows_the_camera_height() {
+    let mut world = RenderWorld {
+        water: Some(WaterParams {
+            height: 2.0,
+            waves: Vec::new(),
+        }),
+        ..RenderWorld::default()
+    };
+    for (y, expected) in [(1.9, true), (2.0, false), (6.0, false), (-3.0, true)] {
+        world.camera = look_at(Vec3::new(0.0, y, 5.0), Vec3::new(0.0, y, 0.0));
+        world.update_underwater();
+        assert_eq!(world.underwater, expected, "camera y = {y}");
+    }
+    world.water = None;
+    world.update_underwater();
+    assert!(!world.underwater);
+}
+
+#[test]
+fn water_surface_is_drawn_and_animates() {
+    let (messages, _guard) = capture_messages();
+    let eye = Vec3::new(0.0, 6.0, 10.0);
+    let target = Vec3::new(0.0, 0.0, -10.0);
+    let dry = render_water_scene(eye, target, None, 1.0, 1.0);
+    let wet = render_water_scene(eye, target, Some(scene_water_at(0.5)), 1.0, 1.0);
+    let later = render_water_scene(eye, target, Some(scene_water_at(0.5)), 1.0, 2.3);
+    assert!(max_channel_error(&dry, &wet) > 20, "the surface is visible");
+    let moved = wet
+        .pixels()
+        .zip(later.pixels())
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(moved > 500, "only {moved} pixels changed with time");
+    // Invalid water (fold-over) is ignored: the image is the dry one.
+    let mut bad = scene_water_at(0.5);
+    bad.waves[0].amplitude = 5.0;
+    let ignored = render_water_scene(eye, target, Some(bad), 1.0, 1.0);
+    assert_eq!(max_channel_error(&dry, &ignored), 0);
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+fn scene_water_at(height: f32) -> WaterParams {
+    WaterParams {
+        height,
+        ..scene_water()
+    }
+}
+
+/// Below the surface the fog, caustics and particles change the image;
+/// caustics only light what is under the water and move with time.
+#[test]
+fn underwater_medium_has_fog_and_animated_caustics() {
+    let (messages, _guard) = capture_messages();
+    let eye = Vec3::new(0.0, 3.0, 6.0);
+    let target = Vec3::new(0.0, 0.0, -4.0);
+    let water = Some(scene_water_at(8.0));
+    let lit = render_water_scene(eye, target, water.clone(), 1.0, 1.0);
+    let none = render_water_scene(eye, target, water.clone(), 0.0, 1.0);
+    assert!(max_channel_error(&lit, &none) > 10, "caustics are visible");
+    let later = render_water_scene(eye, target, water.clone(), 1.0, 2.0);
+    assert!(max_channel_error(&lit, &later) > 10, "caustics animate");
+    // The same scene above the surface (water below the ground) has none.
+    let above = render_water_scene(eye, target, Some(scene_water_at(-2.0)), 1.0, 1.0);
+    let above_none = render_water_scene(eye, target, Some(scene_water_at(-2.0)), 0.0, 1.0);
+    assert_eq!(max_channel_error(&above, &above_none), 0);
     assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
 }

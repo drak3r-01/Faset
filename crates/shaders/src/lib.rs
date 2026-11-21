@@ -66,6 +66,15 @@ mod tests {
     }
 
     #[test]
+    fn water_blobs_are_spirv() {
+        for blob in [WATER_VS, WATER_FS] {
+            assert!(blob.len() > 5);
+            assert_eq!(blob[0], SPIRV_MAGIC);
+        }
+        assert_ne!(WATER_VS, WATER_FS);
+    }
+
+    #[test]
     fn shadow_vertex_blob_is_spirv() {
         assert_eq!(SHADOW_VS[0], SPIRV_MAGIC);
         assert!(SHADOW_VS.len() > 5);

@@ -32,6 +32,7 @@ const TAU: f32 = 6.2831853;
 // Must match `render::weather`.
 const KIND_RAIN: u32 = 0u;
 const KIND_SNOW: u32 = 1u;
+const KIND_MOTE: u32 = 3u;
 const SNOW_SWAY: f32 = 0.35;
 
 // Same bits as `render::weather::particle_hash`.
@@ -44,6 +45,9 @@ fn box_size(kind: u32) -> f32 {
     if kind == KIND_SNOW {
         return 18.0;
     }
+    if kind == KIND_MOTE {
+        return 14.0;
+    }
     return 24.0;
 }
 
@@ -51,6 +55,10 @@ fn box_size(kind: u32) -> f32 {
 fn particle_velocity(kind: u32, wind: vec3<f32>) -> vec3<f32> {
     if kind == KIND_RAIN {
         return vec3<f32>(wind.x, -9.0 + wind.y, wind.z);
+    }
+    if kind == KIND_MOTE {
+        // Suspended particles of the underwater medium: a slow drift.
+        return vec3<f32>(0.05, 0.08, 0.03);
     }
     if kind == KIND_SNOW {
         return vec3<f32>(0.6 * wind.x, -1.3 + 0.6 * wind.y, 0.6 * wind.z);
@@ -122,7 +130,7 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     let o = cam - vec3<f32>(0.5 * b);
     let u = h + v * (t / b) - o / b;
     var p = (u - floor(u)) * b + o;
-    if kind == KIND_SNOW {
+    if kind == KIND_SNOW || kind == KIND_MOTE {
         p += snow_sway(index, t);
     }
 
@@ -132,7 +140,7 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     out.alpha = 0.0;
     // Collapsed: outside the clip volume, so the triangle is culled.
     out.position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
-    if sheltered(p) {
+    if kind != KIND_MOTE && sheltered(p) {
         return out;
     }
 
@@ -148,10 +156,13 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
 
     var world = p;
     var width = 0.0;
-    if kind == KIND_SNOW {
+    if kind == KIND_SNOW || kind == KIND_MOTE {
         let right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), view) + vec3<f32>(1.0e-6, 0.0, 0.0));
         let up = cross(view, right);
-        let radius = 0.025 + 0.0025 * dist;
+        var radius = 0.025 + 0.0025 * dist;
+        if kind == KIND_MOTE {
+            radius = 0.012 + 0.002 * dist;
+        }
         world = p + (right * corner.x + up * corner.y) * radius;
         width = radius;
     } else {
@@ -177,7 +188,7 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     var thin = 1.0;
     if kind == KIND_RAIN {
         thin = sqrt(min(1.0, 0.010 / width));
-    } else if kind != KIND_SNOW {
+    } else if kind != KIND_SNOW && kind != KIND_MOTE {
         thin = sqrt(min(1.0, 0.018 / width));
     }
 
@@ -204,6 +215,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let head = 0.3 + 0.7 * (0.5 * in.uv.y + 0.5);
         alpha *= 0.5 * across * head;
         colour = vec3<f32>(0.78, 0.85, 1.0) * env * 1.6;
+    } else if kind == KIND_MOTE {
+        let round = 1.0 - smoothstep(0.4, 1.0, length(in.uv));
+        alpha *= 0.55 * round;
+        colour = vec3<f32>(0.65, 0.95, 0.95) * env * 1.5;
     } else if kind == KIND_SNOW {
         let round = 1.0 - smoothstep(0.55, 1.0, length(in.uv));
         alpha *= 0.9 * round;

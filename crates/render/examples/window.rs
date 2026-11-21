@@ -133,6 +133,8 @@ impl App {
             sky: SkyParams::default(),
             draw_sky: true,
             weather: WeatherState::CLEAR,
+            water: None,
+            underwater: false,
         };
         if let Err(e) = renderer.render_frame(&world) {
             tracing::error!("frame failed: {e}");

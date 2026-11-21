@@ -84,6 +84,18 @@ struct Lighting {
     shelter_dims: vec4<f32>,
     // Unjittered clip-from-world of this frame.
     clip_from_world: mat4x4<f32>,
+    // Water, see `render::water::GpuWater`.
+    // x surface height, y 1 when the camera is underwater, z caustics
+    // strength, w wave count.
+    water_params: vec4<f32>,
+    // rgb shallow colour, w underwater fog density.
+    water_shallow: vec4<f32>,
+    // rgb deep colour.
+    water_deep: vec4<f32>,
+    // xy unit direction, z wavenumber, w angular frequency of each wave.
+    water_wave_dir: array<vec4<f32>, 8>,
+    // x amplitude, y steepness of each wave.
+    water_wave_amp: array<vec4<f32>, 8>,
 }
 
 const SHADOW_MAP_SIZE: f32 = 2048.0;
