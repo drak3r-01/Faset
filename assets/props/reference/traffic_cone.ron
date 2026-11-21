@@ -1,0 +1,9 @@
+Prop(
+    id: "traffic_cone",
+    tags: ["decor", "urban"],
+    collision: ConvexHull,
+    parts: [
+        Box(size: (0.4, 0.04, 0.4), at: (0.0, 0.02, 0.0), color: "rubber"),
+        Cone(radius: 0.16, height: 0.6, sides: 12, at: (0.0, 0.34, 0.0), color: "accent1", pattern: Stripes),
+    ],
+)

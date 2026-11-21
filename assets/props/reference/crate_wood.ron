@@ -1,0 +1,10 @@
+Prop(
+    id: "crate_wood",
+    tags: ["cover", "urban"],
+    collision: Box,
+    parts: [
+        Box(size: (1.0, 1.0, 1.0), color: "wood", pattern: Planks),
+        Repeat(count: 4, rotate_y: 90.0, part:
+            Box(size: (0.08, 1.02, 0.08), at: (0.5, 0.0, 0.5), color: "wood_dark")),
+    ],
+)

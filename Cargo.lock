@@ -109,6 +109,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "asset-tool"
+version = "0.0.1-rc.1"
+dependencies = [
+ "anyhow",
+ "faset-assets",
+ "faset-render",
+ "image",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -534,6 +546,18 @@ checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "faset-assets"
+version = "0.0.1-rc.1"
+dependencies = [
+ "faset-core",
+ "proptest",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

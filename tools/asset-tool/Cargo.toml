@@ -1,0 +1,19 @@
+[package]
+name = "asset-tool"
+description = "Validates mesh recipes and renders thumbnails and a contact sheet."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "asset-tool"
+path = "src/main.rs"
+
+[dependencies]
+faset-assets.workspace = true
+faset-render.workspace = true
+anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

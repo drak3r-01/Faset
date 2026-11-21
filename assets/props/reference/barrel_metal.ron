@@ -1,0 +1,10 @@
+Prop(
+    id: "barrel_metal",
+    tags: ["cover", "industrial"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 0.3, height: 0.9, sides: 12, at: (0.0, 0.45, 0.0), color: "accent3"),
+        Cylinder(radius: 0.32, height: 0.07, sides: 12, at: (0.0, 0.25, 0.0), color: "metal_dark"),
+        Cylinder(radius: 0.32, height: 0.07, sides: 12, at: (0.0, 0.65, 0.0), color: "metal_dark"),
+    ],
+)

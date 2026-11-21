@@ -1,0 +1,14 @@
+Prop(
+    id: "lamp_post",
+    tags: ["decor", "urban"],
+    collision: Compound,
+    parts: [
+        Revolve(
+            profile: [(0.0, 0.0), (0.2, 0.0), (0.2, 0.1), (0.06, 0.15), (0.06, 3.8), (0.0, 3.8)],
+            sides: 8,
+            color: "metal_dark",
+        ),
+        Box(size: (0.5, 0.06, 0.16), at: (0.18, 3.85, 0.0), color: "metal"),
+        Box(size: (0.4, 0.04, 0.12), at: (0.18, 3.8, 0.0), color: "white", pattern: Emissive),
+    ],
+)
