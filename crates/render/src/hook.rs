@@ -99,3 +99,21 @@ pub struct GpuHandles {
     pub physical: vk::PhysicalDevice,
     pub queue_family: u32,
 }
+
+/// Frame-graph pass 9: the hook through which an interface crate (`faset-ui`)
+/// draws on top of the finished frame.
+///
+/// It runs after the post chain (and after the upscaler, pass 6) and after
+/// the scene was copied to the target, so it always draws at the display
+/// resolution and the render scale does not affect it. A renderer without a
+/// UI pass behaves exactly as before.
+pub trait UiPass {
+    /// Records the draws onto `target`, the swapchain or offscreen image at
+    /// the display resolution.
+    ///
+    /// On entry `target` is in `COLOR_ATTACHMENT_OPTIMAL` and holds the scene;
+    /// it must be left in that layout. The pass begins and ends its own
+    /// dynamic rendering (load op `LOAD`) and must not assume `ctx.cmd` is
+    /// inside a rendering. Its colour format is `target.format` (sRGB).
+    fn execute(&mut self, ctx: &mut FrameCtx<'_>, target: &ImageHandle);
+}

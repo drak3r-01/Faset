@@ -36,6 +36,9 @@
 //! meshes, sky and water), depth and a reactive mask (weather particles) it
 //! reads, and its output has the display size. The `faset-upscale` crate
 //! implements it (native, temporal anti-aliasing, FSR 1).
+//! An optional pass 9 ([`Renderer::set_ui_pass`], [`UiPass`]) draws the
+//! interface on the finished frame at the display resolution; the `faset-ui`
+//! crate implements it.
 //! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
 
 mod ambience;
@@ -92,7 +95,7 @@ pub use camera::{
 };
 pub use cull::Instance;
 pub use faset_core::glam;
-pub use hook::{FrameCtx, GpuHandles, ImageHandle, UpscaleInputs, UpscalePass};
+pub use hook::{FrameCtx, GpuHandles, ImageHandle, UiPass, UpscaleInputs, UpscalePass};
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::ShaderWatcher;
 pub use lighting::{height_fog, point_light_attenuation, PointLight, MAX_POINT_LIGHTS};
@@ -297,6 +300,9 @@ pub struct Renderer {
     /// Pass 6, between the scene and the post chain (none: the scene is
     /// drawn at the display resolution). See [`Renderer::set_upscaler`].
     upscaler: Option<Box<dyn UpscalePass>>,
+    /// Pass 9, after the post chain, at the display resolution (none: no
+    /// interface). See [`Renderer::set_ui_pass`].
+    ui_pass: Option<Box<dyn UiPass>>,
     /// The next frame discards the upscaler's temporal history.
     reset_history: bool,
     /// Seconds between frames, as given to the upscaler.
@@ -443,6 +449,7 @@ impl Renderer {
                 water_warned: false,
                 post: None,
                 upscaler: None,
+                ui_pass: None,
                 reset_history: false,
                 frame_time: 1.0 / 60.0,
                 shelter,
@@ -835,7 +842,7 @@ impl Renderer {
         let device = &self.ctx.device;
 
         // Pick the image to draw into.
-        let (image, image_index) = match &mut self.target {
+        let (image, image_index, target_handle) = match &mut self.target {
             Target::Windowed(w) => {
                 let sc = w.swapchain.as_ref().expect("checked above");
                 // SAFETY: live swapchain; the semaphore is unsignalled because
@@ -859,9 +866,23 @@ impl Renderer {
                     }
                     Err(e) => return Err(e.into()),
                 };
-                (sc.images[index as usize], Some(index))
+                let handle = ImageHandle {
+                    image: sc.images[index as usize],
+                    view: sc.views[index as usize],
+                    extent: sc.extent,
+                    format: sc.format,
+                };
+                (handle.image, Some(index), handle)
             }
-            Target::Headless(o) => (o.image.image, None),
+            Target::Headless(o) => {
+                let handle = ImageHandle {
+                    image: o.image.image,
+                    view: o.image.view,
+                    extent: o.extent,
+                    format: target::OFFSCREEN_FORMAT,
+                };
+                (handle.image, None, handle)
+            }
         };
 
         let gbuffer = self.gbuffer.as_ref().expect("created above");
@@ -998,12 +1019,21 @@ impl Renderer {
                 vk::PipelineStageFlags::TRANSFER,
             )
         };
+        let has_ui = self.ui_pass.is_some();
         let final_barrier = [ImageBarrier {
             image,
             aspect: color,
-            old: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            old: if has_ui {
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+            } else {
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL
+            },
             new: final_layout,
-            src_access: vk::AccessFlags::TRANSFER_WRITE,
+            src_access: if has_ui {
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+            } else {
+                vk::AccessFlags::TRANSFER_WRITE
+            },
             dst_access: final_access,
         }];
         let viewport = vk::Viewport {
@@ -1459,10 +1489,40 @@ impl Renderer {
                 &[blit],
                 filter,
             );
+            let mut final_src_stage = vk::PipelineStageFlags::TRANSFER;
+            if let Some(ui) = self.ui_pass.as_mut() {
+                // Pass 9: the interface, drawn at the display resolution
+                // straight onto the target, after the blit: the render scale
+                // and the post chain never touch it.
+                image_barriers(
+                    device,
+                    frame.cmd,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                    &[ImageBarrier {
+                        image,
+                        aspect: color,
+                        old: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        new: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                        src_access: vk::AccessFlags::TRANSFER_WRITE,
+                        dst_access: vk::AccessFlags::COLOR_ATTACHMENT_READ
+                            | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                    }],
+                );
+                let mut frame_ctx = FrameCtx {
+                    device,
+                    cmd: frame.cmd,
+                    slot,
+                    frames_in_flight: FRAMES_IN_FLIGHT,
+                    frame_index: self.frame_index,
+                };
+                ui.execute(&mut frame_ctx, &target_handle);
+                final_src_stage = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
+            }
             image_barriers(
                 device,
                 frame.cmd,
-                vk::PipelineStageFlags::TRANSFER,
+                final_src_stage,
                 final_stage,
                 &final_barrier,
             );
@@ -1710,6 +1770,17 @@ impl Renderer {
         Ok(())
     }
 
+    /// Installs pass 9, the interface, or removes it (`None`, the default).
+    /// It is recorded after the post chain, straight onto the display
+    /// resolution target, so the render scale does not affect it (see
+    /// [`UiPass`]). The previous pass is dropped after the GPU went idle.
+    pub fn set_ui_pass(&mut self, pass: Option<Box<dyn UiPass>>) -> Result<(), RenderError> {
+        // SAFETY: valid device; makes the old pass's resources unused.
+        unsafe { self.ctx.device.device_wait_idle() }?;
+        self.ui_pass = pass;
+        Ok(())
+    }
+
     /// True while an upscaler is installed.
     pub fn has_upscaler(&self) -> bool {
         self.upscaler.is_some()
@@ -1912,6 +1983,7 @@ impl Drop for Renderer {
         }
         // The upscaler frees its own Vulkan objects, so before the device.
         self.upscaler = None;
+        self.ui_pass = None;
         for garbage in self.deferred.take_all() {
             garbage.destroy(&mut self.ctx);
         }
