@@ -537,6 +537,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "faset-client"
+version = "0.0.1-rc.1"
+dependencies = [
+ "faset-core",
+ "faset-net",
+ "faset-protocol",
+ "faset-server",
+ "faset-sim",
+ "proptest",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "faset-core"
 version = "0.0.1-rc.1"
 dependencies = [
