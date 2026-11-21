@@ -7,6 +7,7 @@
     rim: (color: (0.15, 0.18, 0.25), power: 5.0),
     fog: (color: (0.0, 0.0, 0.0), density: 0.0, falloff: 0.0, height: 0.0),
     sky: (horizon: (0.0, 0.0, 0.0), zenith: (0.0, 0.0, 0.0), exponent: 1.0, stars: 1.5),
+    shadow: (depth_bias: 1.0, slope_bias: 1.5, normal_offset: 1.0),
     weather: (kind: Clear, intensity: 0.0, wind: 0.0, heat_haze: 0.0),
     exposure: 1.0,
     grading: (

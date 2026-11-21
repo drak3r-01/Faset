@@ -77,6 +77,34 @@ pub struct Fog {
     pub height: f32,
 }
 
+/// Sun shadow bias, in texels of the cascade the fragment falls in, so the
+/// same values work for the three cascades.
+///
+/// The shadow lookup moves the receiver towards the sun by
+/// `(depth_bias + slope_bias * tan(theta)) * texel` metres and out along its
+/// normal by `normal_offset * sin(theta) * texel` metres, where `theta` is the
+/// angle between the normal and the sun direction.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShadowBias {
+    /// Constant depth bias, >= 0.
+    pub depth_bias: f32,
+    /// Slope-scaled depth bias, per unit of `tan(theta)`, >= 0.
+    pub slope_bias: f32,
+    /// Offset along the surface normal, scaled by `sin(theta)`, >= 0.
+    pub normal_offset: f32,
+}
+
+impl Default for ShadowBias {
+    fn default() -> Self {
+        Self {
+            depth_bias: 1.0,
+            slope_bias: 1.5,
+            normal_offset: 1.0,
+        }
+    }
+}
+
 /// Sky colours (consumed by lot 2.6).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -153,6 +181,9 @@ pub struct AmbienceProfile {
     pub rim: Rim,
     pub fog: Fog,
     pub sky: Sky,
+    /// Cascaded sun shadow bias; optional in RON files.
+    #[serde(default)]
+    pub shadow: ShadowBias,
     pub weather: Weather,
     /// Exposure multiplier, > 0 (applied by tonemapping, lot 2.9).
     pub exposure: f32,
@@ -241,6 +272,9 @@ impl AmbienceProfile {
         check(self.fog.falloff >= 0.0, "fog.falloff < 0")?;
         check(self.sky.exponent > 0.0, "sky.exponent <= 0")?;
         check(self.sky.stars >= 0.0, "sky.stars < 0")?;
+        check(self.shadow.depth_bias >= 0.0, "shadow.depth_bias < 0")?;
+        check(self.shadow.slope_bias >= 0.0, "shadow.slope_bias < 0")?;
+        check(self.shadow.normal_offset >= 0.0, "shadow.normal_offset < 0")?;
         check(
             unit(self.weather.intensity),
             "weather.intensity outside [0, 1]",
@@ -297,6 +331,11 @@ impl AmbienceProfile {
                 exponent: f(a.sky.exponent, b.sky.exponent),
                 stars: f(a.sky.stars, b.sky.stars),
             },
+            shadow: ShadowBias {
+                depth_bias: f(a.shadow.depth_bias, b.shadow.depth_bias),
+                slope_bias: f(a.shadow.slope_bias, b.shadow.slope_bias),
+                normal_offset: f(a.shadow.normal_offset, b.shadow.normal_offset),
+            },
             weather: Weather {
                 kind: pick(a.weather.kind, b.weather.kind),
                 intensity: f(a.weather.intensity, b.weather.intensity),
@@ -349,6 +388,12 @@ impl AmbienceProfile {
         out.extend(&mut k.horizon);
         out.extend(&mut k.zenith);
         out.extend([&mut k.exponent, &mut k.stars]);
+        let sh = &mut self.shadow;
+        out.extend([
+            &mut sh.depth_bias,
+            &mut sh.slope_bias,
+            &mut sh.normal_offset,
+        ]);
         let w = &mut self.weather;
         out.extend([&mut w.intensity, &mut w.wind, &mut w.heat_haze]);
         out.push(&mut self.exposure);
@@ -404,6 +449,7 @@ impl Default for AmbienceProfile {
                 exponent: 1.0,
                 stars: 0.0,
             },
+            shadow: ShadowBias::default(),
             weather: Weather {
                 kind: WeatherKind::Clear,
                 intensity: 0.0,
@@ -460,13 +506,14 @@ mod tests {
     #[test]
     fn out_of_range_values_are_rejected() {
         let base = AmbienceProfile::builtin("day").unwrap();
-        let bad: [fn(&mut AmbienceProfile); 6] = [
+        let bad: [fn(&mut AmbienceProfile); 7] = [
             |p| p.fog.density = -0.01,
             |p| p.ramp.threshold = 1.5,
             |p| p.ramp.softness = -0.1,
             |p| p.sun.direction = [0.0; 3],
             |p| p.rim.power = 0.0,
             |p| p.sun.color[1] = f32::NAN,
+            |p| p.shadow.slope_bias = -1.0,
         ];
         for edit in bad {
             let mut p = base;

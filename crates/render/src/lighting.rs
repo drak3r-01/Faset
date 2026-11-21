@@ -6,12 +6,13 @@
 
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
-use faset_core::glam::Vec3;
+use faset_core::glam::{Mat4, Vec3};
 
 use crate::ambience::AmbienceProfile;
 use crate::context::Context;
 use crate::deferred::FRAMES_IN_FLIGHT;
 use crate::frame::FrameData;
+use crate::shadow::{ShadowCascades, ShadowResources, CASCADE_COUNT};
 use crate::RenderError;
 
 /// Point lights the shader reads; extra lights are dropped.
@@ -95,6 +96,14 @@ pub(crate) struct GpuLighting {
     /// x number of point lights.
     pub counts: [u32; 4],
     pub lights: [GpuPointLight; MAX_POINT_LIGHTS],
+    /// Clip-from-world of each sun shadow cascade, column-major.
+    pub shadow_matrices: [[f32; 16]; CASCADE_COUNT],
+    /// xyz far view depth of each cascade, w 1 when the sun casts shadows.
+    pub shadow_splits: [f32; 4],
+    /// xyz world size of one shadow texel of each cascade.
+    pub shadow_texel: [f32; 4],
+    /// x depth bias, y slope bias, z normal offset, in texels.
+    pub shadow_bias: [f32; 4],
 }
 
 /// Bytes of [`GpuLighting`].
@@ -103,7 +112,10 @@ pub(crate) const LIGHTING_SIZE: u64 = std::mem::size_of::<GpuLighting>() as u64;
 /// `minUniformBufferOffsetAlignment` Vulkan allows).
 pub(crate) const LIGHTING_ALIGN: u64 = 256;
 
-const _: () = assert!(std::mem::size_of::<GpuLighting>() == 11 * 16 + MAX_POINT_LIGHTS * 32);
+const _: () = assert!(
+    std::mem::size_of::<GpuLighting>()
+        == 11 * 16 + MAX_POINT_LIGHTS * 32 + CASCADE_COUNT * 64 + 3 * 16
+);
 
 fn rgb(c: [f32; 3]) -> [f32; 4] {
     [c[0], c[1], c[2], 0.0]
@@ -112,10 +124,13 @@ fn rgb(c: [f32; 3]) -> [f32; 4] {
 /// Builds the uniform block. Lights past [`MAX_POINT_LIGHTS`] are dropped;
 /// one warning is logged when the list starts overflowing (`warned` keeps
 /// that state between frames and clears once the list fits again).
+/// `cascades` are the sun shadow cascades of the frame, `None` when the sun
+/// casts no shadows.
 pub(crate) fn pack_lighting(
     ambience: &AmbienceProfile,
     lights: &[PointLight],
     camera_pos: Vec3,
+    cascades: Option<&ShadowCascades>,
     warned: &mut bool,
 ) -> GpuLighting {
     if lights.len() > MAX_POINT_LIGHTS {
@@ -141,6 +156,18 @@ pub(crate) fn pack_lighting(
     let a = ambience;
     let sun_dir = Vec3::from_array(a.sun.direction).normalize_or(Vec3::Y);
     let sun_color = Vec3::from_array(a.sun.color) * a.sun.intensity;
+    let (shadow_matrices, shadow_splits, shadow_texel) = match cascades {
+        Some(c) => (
+            c.matrices.map(|m| m.to_cols_array()),
+            [c.splits[0], c.splits[1], c.splits[2], 1.0],
+            [c.texel_size(0), c.texel_size(1), c.texel_size(2), 0.0],
+        ),
+        None => (
+            [Mat4::IDENTITY.to_cols_array(); CASCADE_COUNT],
+            [0.0; 4],
+            [0.0; 4],
+        ),
+    };
     GpuLighting {
         camera_pos: camera_pos.extend(0.0).to_array(),
         sun_dir: sun_dir.extend(0.0).to_array(),
@@ -159,6 +186,15 @@ pub(crate) fn pack_lighting(
         fog_params: [a.fog.falloff, a.fog.height, 0.0, 0.0],
         counts: [used.len() as u32, 0, 0, 0],
         lights: gpu_lights,
+        shadow_matrices,
+        shadow_splits,
+        shadow_texel,
+        shadow_bias: [
+            a.shadow.depth_bias,
+            a.shadow.slope_bias,
+            a.shadow.normal_offset,
+            0.0,
+        ],
     }
 }
 
@@ -171,13 +207,24 @@ pub(crate) struct LightingBindings {
 }
 
 impl LightingBindings {
-    pub(crate) fn new(ctx: &Context, frames: &[FrameData]) -> Result<Self, RenderError> {
+    pub(crate) fn new(
+        ctx: &Context,
+        frames: &[FrameData],
+        shadow: &ShadowResources,
+    ) -> Result<Self, RenderError> {
         let device = &ctx.device;
-        let bindings = [vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+        let binding = |index, ty| {
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(index)
+                .descriptor_type(ty)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        };
+        let bindings = [
+            binding(0, vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC),
+            binding(1, vk::DescriptorType::SAMPLED_IMAGE),
+            binding(2, vk::DescriptorType::SAMPLER),
+        ];
         // SAFETY: valid device and create info.
         let set_layout = unsafe {
             device.create_descriptor_set_layout(
@@ -185,10 +232,21 @@ impl LightingBindings {
                 None,
             )
         }?;
-        let sizes = [vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-            descriptor_count: FRAMES_IN_FLIGHT as u32,
-        }];
+        let frames_in_flight = FRAMES_IN_FLIGHT as u32;
+        let sizes = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                descriptor_count: frames_in_flight,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: frames_in_flight,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLER,
+                descriptor_count: frames_in_flight,
+            },
+        ];
         // SAFETY: valid device and create info.
         let pool = match unsafe {
             device.create_descriptor_pool(
@@ -233,13 +291,36 @@ impl LightingBindings {
                 offset: 0,
                 range: LIGHTING_SIZE,
             }];
-            let write = vk::WriteDescriptorSet::default()
-                .dst_set(*set)
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .buffer_info(&infos);
-            // SAFETY: live set and buffer; the set is not in use yet.
-            unsafe { device.update_descriptor_sets(&[write], &[]) };
+            let map = [vk::DescriptorImageInfo {
+                sampler: vk::Sampler::null(),
+                image_view: shadow.array_view,
+                image_layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            }];
+            let sampler = [vk::DescriptorImageInfo {
+                sampler: shadow.sampler,
+                image_view: vk::ImageView::null(),
+                image_layout: vk::ImageLayout::UNDEFINED,
+            }];
+            let writes = [
+                vk::WriteDescriptorSet::default()
+                    .dst_set(*set)
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                    .buffer_info(&infos),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(*set)
+                    .dst_binding(1)
+                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                    .image_info(&map),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(*set)
+                    .dst_binding(2)
+                    .descriptor_type(vk::DescriptorType::SAMPLER)
+                    .image_info(&sampler),
+            ];
+            // SAFETY: live set, buffer, view and sampler; the set is not in
+            // use yet.
+            unsafe { device.update_descriptor_sets(&writes, &[]) };
         }
         Ok(Self {
             set_layout,
@@ -311,20 +392,36 @@ mod tests {
         let lights: Vec<PointLight> = (0..40).map(light).collect();
         let mut warned = false;
         let profile = AmbienceProfile::default();
-        let gpu = pack_lighting(&profile, &lights, Vec3::ZERO, &mut warned);
+        let gpu = pack_lighting(&profile, &lights, Vec3::ZERO, None, &mut warned);
         assert_eq!(gpu.counts[0], 32);
         assert_eq!(gpu.lights[31].position_radius, [31.0, 1.0, 0.0, 5.0]);
         assert_eq!(count.load(Ordering::SeqCst), 1);
         // Later frames with the same list do not warn again...
-        pack_lighting(&profile, &lights, Vec3::ZERO, &mut warned);
+        pack_lighting(&profile, &lights, Vec3::ZERO, None, &mut warned);
         assert_eq!(count.load(Ordering::SeqCst), 1);
         // ...until the list fitted in between.
-        let gpu = pack_lighting(&profile, &lights[..3], Vec3::ZERO, &mut warned);
+        let gpu = pack_lighting(&profile, &lights[..3], Vec3::ZERO, None, &mut warned);
         assert_eq!(gpu.counts[0], 3);
         assert_eq!(gpu.lights[3], GpuPointLight::zeroed());
         assert_eq!(count.load(Ordering::SeqCst), 1);
-        pack_lighting(&profile, &lights, Vec3::ZERO, &mut warned);
+        pack_lighting(&profile, &lights, Vec3::ZERO, None, &mut warned);
         assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn shadow_block_carries_cascades_and_bias() {
+        let profile = AmbienceProfile::builtin("day").unwrap();
+        let camera = crate::Camera::default();
+        let cascades = crate::fit_cascades(&camera, Vec3::Y, 0.1, 100.0);
+        let mut warned = false;
+        let gpu = pack_lighting(&profile, &[], Vec3::ZERO, Some(&cascades), &mut warned);
+        assert_eq!(gpu.shadow_splits[3], 1.0);
+        assert_eq!(gpu.shadow_splits[..3], cascades.splits);
+        assert_eq!(gpu.shadow_matrices[1], cascades.matrices[1].to_cols_array());
+        assert_eq!(gpu.shadow_texel[2], cascades.texel_size(2));
+        assert_eq!(gpu.shadow_bias[..3], [1.0, 1.5, 1.0]);
+        let off = pack_lighting(&profile, &[], Vec3::ZERO, None, &mut warned);
+        assert_eq!(off.shadow_splits, [0.0; 4]);
     }
 
     #[test]

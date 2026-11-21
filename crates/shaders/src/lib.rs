@@ -48,6 +48,12 @@ mod tests {
     }
 
     #[test]
+    fn shadow_vertex_blob_is_spirv() {
+        assert_eq!(SHADOW_VS[0], SPIRV_MAGIC);
+        assert!(SHADOW_VS.len() > 5);
+    }
+
+    #[test]
     fn sources_are_present() {
         let dir = std::path::Path::new(SOURCE_DIR);
         let pre = preprocess::preprocess_file(dir, "opaque.wgsl").unwrap();

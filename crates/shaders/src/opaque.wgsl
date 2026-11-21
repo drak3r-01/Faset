@@ -102,7 +102,13 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let dpos = fwidth(in.world_pos);
     let normal = normalize(in.normal);
     let surface = material_surface(in.material, in.world_pos, normal, dpos, imm.time);
-    let lit = shade(in.color * surface.albedo, in.color * surface.emissive, normal, in.world_pos);
+    let lit = shade(
+        in.color * surface.albedo,
+        in.color * surface.emissive,
+        normal,
+        in.world_pos,
+        in.clip.w,
+    );
 
     var out: FragmentOut;
     out.color = vec4<f32>(apply_fog(lit, in.world_pos), 1.0);
