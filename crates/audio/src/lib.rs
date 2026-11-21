@@ -2,6 +2,9 @@
 //! 3D spatialisation. Units: metres, seconds. Y up, -Z forward.
 //!
 //! Playback runs on the thread managed by kira; this crate adds no thread.
+//!
+//! Dependency note: kira pulls in the unmaintained `paste` (RUSTSEC-2024-0436), ignored
+//! in `deny.toml`; re-check when kira drops it.
 
 #![forbid(unsafe_code)]
 
