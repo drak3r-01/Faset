@@ -247,6 +247,44 @@ pub(crate) unsafe fn transition(
     }
 }
 
+/// Moves a depth image between layouts, with conservative stages.
+///
+/// # Safety
+/// `cmd` must be recording on a queue of `device`.
+#[cfg(any(feature = "fsr3", feature = "dlss"))]
+pub(crate) unsafe fn depth_transition(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    image: vk::Image,
+    old: vk::ImageLayout,
+    new: vk::ImageLayout,
+) {
+    let barrier = vk::ImageMemoryBarrier::default()
+        .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
+        .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+        .old_layout(old)
+        .new_layout(new)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .image(image)
+        .subresource_range(vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::DEPTH,
+            ..color_range()
+        });
+    // SAFETY: forwarded.
+    unsafe {
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[barrier],
+        );
+    }
+}
+
 /// Descriptor set and pipeline layout of passes that read `images` sampled
 /// images (bindings `0..images`) and a sampler (binding `images`), and take
 /// [`PUSH_BYTES`] of fragment push constants.

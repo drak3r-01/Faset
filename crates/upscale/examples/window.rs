@@ -1,14 +1,16 @@
 //! Manual check of the upscalers (the J2 scene): a low-poly scene with sky,
 //! optional rain and an orbiting camera, shown through the chosen upscaler.
 //!
-//! `window [--upscaler native|taa|fsr1|fsr3] [--quality QUALITY] [--no-vsync]
-//!         [--seconds N] [--weather]`
+//! `window [--upscaler native|taa|fsr1|fsr3|dlss] [--quality QUALITY]
+//!         [--no-vsync] [--seconds N] [--weather]`
 //!
 //! QUALITY is `quality`, `balanced`, `performance`, `ultra`, `native` or
 //! `free:S` (a render scale S in [0.5, 1], Native and FSR 1 only). Defaults:
 //! FSR 1 at `balanced`. N = 0 runs until the window is closed. `fsr3` needs
-//! `amd_fidelityfx_vk.dll` next to the executable (Windows x86_64); without
-//! it the example falls back to FSR 1 and logs why.
+//! `amd_fidelityfx_vk.dll` next to the executable (Windows x86_64); `dlss`
+//! needs a build with the `dlss` feature, `nvngx_dlss.dll` next to the
+//! executable (the build copies it there) and an RTX GPU. Without them the
+//! example falls back to FSR 1 and logs why.
 
 use std::time::{Duration, Instant};
 
@@ -211,8 +213,9 @@ fn main() {
         "taa" => UpscalerKind::Taa,
         "fsr1" => UpscalerKind::Fsr1,
         "fsr3" => UpscalerKind::Fsr3,
+        "dlss" => UpscalerKind::Dlss,
         other => {
-            tracing::error!("unknown upscaler `{other}`, expected native, taa, fsr1 or fsr3");
+            tracing::error!("unknown upscaler `{other}`, expected native, taa, fsr1, fsr3 or dlss");
             return;
         }
     };
