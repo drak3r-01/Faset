@@ -1,0 +1,10 @@
+Prop(
+    id: "satellite_panel",
+    tags: ["decoration", "space"],
+    collision: Box,
+    parts: [
+        Box(size: (0.6, 0.6, 0.6), at: (0.0, 0.3, 0.0), color: "metal"),
+        Box(size: (1.8, 0.04, 0.6), at: (-1.2, 0.3, 0.0), color: "accent2", pattern: Grid),
+        Box(size: (1.8, 0.04, 0.6), at: (1.2, 0.3, 0.0), color: "accent2", pattern: Grid),
+    ],
+)

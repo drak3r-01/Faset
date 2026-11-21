@@ -1,0 +1,10 @@
+Prop(
+    id: "bubble_vent",
+    tags: ["decoration", "underwater"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 0.4, height: 0.5, sides: 8, at: (0.0, 0.25, 0.0), color: "stone", pattern: Noise),
+        Sphere(radius: 0.12, subdivisions: 0, at: (0.0, 0.7, 0.0), color: "white", pattern: Ripples),
+        Sphere(radius: 0.08, subdivisions: 0, at: (0.1, 0.95, 0.0), color: "white", pattern: Ripples),
+    ],
+)

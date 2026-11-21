@@ -1,0 +1,12 @@
+Prop(
+    id: "traffic_light",
+    tags: ["decoration", "urban"],
+    collision: Box,
+    parts: [
+        Box(size: (0.08, 2.4, 0.08), at: (0.0, 1.2, 0.0), color: "metal_dark"),
+        Box(size: (0.3, 0.9, 0.3), at: (0.0, 2.3, 0.0), color: "rubber"),
+        Sphere(radius: 0.08, subdivisions: 0, at: (0.0, 2.55, 0.17), color: "accent3", pattern: Emissive),
+        Sphere(radius: 0.08, subdivisions: 0, at: (0.0, 2.3, 0.17), color: "accent4", pattern: Emissive),
+        Sphere(radius: 0.08, subdivisions: 0, at: (0.0, 2.05, 0.17), color: "accent1", pattern: Emissive),
+    ],
+)

@@ -1,0 +1,13 @@
+Prop(
+    id: "thorn_bush",
+    tags: ["obstacle", "nature"],
+    collision: ConvexHull,
+    seed: Some(6),
+    parts: [
+        Jitter(amount: 0.12, parts: [
+            Sphere(radius: 0.5, subdivisions: 1, at: (0.0, 0.4, 0.0), color: "foliage_dark", pattern: Noise),
+        ]),
+        Cone(radius: 0.08, height: 0.4, sides: 4, at: (0.3, 0.7, 0.2), color: "wood_dark"),
+        Cone(radius: 0.08, height: 0.4, sides: 4, at: (-0.3, 0.6, -0.1), color: "wood_dark"),
+    ],
+)

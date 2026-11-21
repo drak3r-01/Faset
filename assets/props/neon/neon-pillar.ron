@@ -1,0 +1,9 @@
+Prop(
+    id: "neon_pillar",
+    tags: ["cover", "neon"],
+    collision: Box,
+    parts: [
+        Box(size: (0.6, 2.4, 0.6), at: (0.0, 1.2, 0.0), color: "rubber", pattern: Grid),
+        Box(size: (0.66, 0.1, 0.66), at: (0.0, 2.45, 0.0), color: "accent3", pattern: Emissive),
+    ],
+)

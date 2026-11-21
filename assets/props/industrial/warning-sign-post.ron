@@ -1,0 +1,9 @@
+Prop(
+    id: "warning_sign_post",
+    tags: ["decoration", "industrial"],
+    collision: Box,
+    parts: [
+        Box(size: (0.08, 2.0, 0.08), at: (0.0, 1.0, 0.0), color: "metal_dark"),
+        Box(size: (0.6, 0.6, 0.05), at: (0.0, 1.8, 0.0), color: "accent4", pattern: Checker),
+    ],
+)

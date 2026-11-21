@@ -1,0 +1,9 @@
+Prop(
+    id: "smokestack",
+    tags: ["decoration", "industrial"],
+    collision: Compound,
+    parts: [
+        Cylinder(radius: 0.5, height: 6.0, sides: 10, at: (0.0, 3.0, 0.0), color: "brick"),
+        Cylinder(radius: 0.6, height: 0.2, sides: 10, at: (0.0, 6.1, 0.0), color: "concrete"),
+    ],
+)

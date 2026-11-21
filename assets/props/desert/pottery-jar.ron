@@ -1,0 +1,9 @@
+Prop(
+    id: "pottery_jar",
+    tags: ["decoration", "desert"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 0.22, height: 0.5, sides: 8, at: (0.0, 0.25, 0.0), color: "brick"),
+        Cylinder(radius: 0.1, height: 0.15, sides: 8, at: (0.0, 0.57, 0.0), color: "brick"),
+    ],
+)

@@ -1,0 +1,11 @@
+Prop(
+    id: "cardboard_stack",
+    tags: ["cover", "urban"],
+    collision: Box,
+    seed: Some(2),
+    parts: [
+        Box(size: (1.0, 0.8, 0.8), at: (0.0, 0.4, 0.0), color: "sand", pattern: Planks),
+        Box(size: (0.8, 0.6, 0.7), at: (0.1, 1.1, 0.05), color: "sand"),
+        Box(size: (0.5, 0.4, 0.5), at: (0.2, 1.6, 0.1), color: "wood"),
+    ],
+)

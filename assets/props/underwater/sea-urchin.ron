@@ -1,0 +1,10 @@
+Prop(
+    id: "sea_urchin",
+    tags: ["obstacle", "underwater"],
+    collision: ConvexHull,
+    parts: [
+        Sphere(radius: 0.3, subdivisions: 1, at: (0.0, 0.3, 0.0), color: "accent3"),
+        Repeat(count: 6, rotate_y: 60.0, offset: (0.0, 0.0, 0.0), part:
+            Cone(radius: 0.04, height: 0.4, sides: 3, at: (0.2, 0.3, 0.0), color: "accent4")),
+    ],
+)

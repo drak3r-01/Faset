@@ -1,0 +1,10 @@
+Prop(
+    id: "sea_mine",
+    tags: ["obstacle", "underwater"],
+    collision: ConvexHull,
+    parts: [
+        Sphere(radius: 0.5, subdivisions: 1, at: (0.0, 0.8, 0.0), color: "metal_dark"),
+        Repeat(count: 4, rotate_y: 90.0, offset: (0.0, 0.0, 0.0), part:
+            Cone(radius: 0.06, height: 0.3, sides: 4, at: (0.5, 0.8, 0.0), color: "rubber")),
+    ],
+)

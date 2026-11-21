@@ -1,0 +1,12 @@
+Prop(
+    id: "potted_plant",
+    tags: ["decoration", "interior"],
+    collision: ConvexHull,
+    seed: Some(10),
+    parts: [
+        Cylinder(radius: 0.22, height: 0.4, sides: 8, at: (0.0, 0.2, 0.0), color: "brick"),
+        Jitter(amount: 0.05, parts: [
+            Sphere(radius: 0.4, subdivisions: 1, at: (0.0, 0.9, 0.0), color: "foliage", pattern: Noise),
+        ]),
+    ],
+)

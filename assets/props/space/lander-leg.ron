@@ -1,0 +1,10 @@
+Prop(
+    id: "lander_leg",
+    tags: ["decoration", "space"],
+    collision: Box,
+    parts: [
+        Box(size: (0.1, 1.2, 0.1), at: (0.0, 0.6, 0.0), color: "metal"),
+        Box(size: (0.8, 0.08, 0.8), at: (0.0, 0.04, 0.0), color: "metal_dark"),
+        Ramp(size: (0.4, 0.3, 0.4), at: (0.0, 0.0, 0.5), color: "metal_dark"),
+    ],
+)

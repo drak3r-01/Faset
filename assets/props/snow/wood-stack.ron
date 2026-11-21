@@ -1,0 +1,10 @@
+Prop(
+    id: "wood_stack",
+    tags: ["decoration", "snow"],
+    collision: Box,
+    parts: [
+        Repeat(count: 3, rotate_y: 0.0, offset: (0.0, 0.25, 0.0), part:
+            Box(size: (1.4, 0.22, 0.4), at: (0.0, 0.11, 0.0), color: "wood", pattern: Planks)),
+        Box(size: (1.4, 0.1, 0.4), at: (0.0, 0.85, 0.0), color: "white"),
+    ],
+)

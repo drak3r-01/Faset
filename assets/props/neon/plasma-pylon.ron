@@ -1,0 +1,9 @@
+Prop(
+    id: "plasma_pylon",
+    tags: ["obstacle", "neon"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 0.18, height: 2.2, sides: 6, at: (0.0, 1.1, 0.0), color: "metal_dark"),
+        Sphere(radius: 0.28, subdivisions: 1, at: (0.0, 2.3, 0.0), color: "accent3", pattern: Ripples),
+    ],
+)

@@ -1,0 +1,12 @@
+Prop(
+    id: "tree_oak",
+    tags: ["cover", "nature"],
+    collision: Compound,
+    seed: Some(21),
+    parts: [
+        Group(height_var: 0.15, parts: [
+            Cylinder(radius: 0.25, height: 2.0, sides: 6, at: (0.0, 1.0, 0.0), color: "wood_dark"),
+            Sphere(radius: 1.4, subdivisions: 1, at: (0.0, 2.6, 0.0), color: "foliage", pattern: Noise),
+        ]),
+    ],
+)

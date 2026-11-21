@@ -1,0 +1,9 @@
+Prop(
+    id: "gear_wheel",
+    tags: ["decoration", "industrial"],
+    collision: None,
+    parts: [
+        Torus(major_radius: 0.9, minor_radius: 0.14, major_segments: 12, minor_segments: 4, at: (0.0, 1.0, 0.0), color: "metal"),
+        Cylinder(radius: 0.2, height: 0.3, sides: 8, at: (0.0, 1.0, 0.0), color: "metal_dark"),
+    ],
+)

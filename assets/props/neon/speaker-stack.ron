@@ -1,0 +1,10 @@
+Prop(
+    id: "speaker_stack",
+    tags: ["cover", "neon"],
+    collision: Box,
+    parts: [
+        Box(size: (1.0, 1.2, 0.8), at: (0.0, 0.6, 0.0), color: "rubber"),
+        Cylinder(radius: 0.2, height: 0.05, sides: 10, at: (0.0, 0.8, 0.41), color: "accent1", pattern: Emissive),
+        Cylinder(radius: 0.2, height: 0.05, sides: 10, at: (0.0, 0.3, 0.41), color: "accent1", pattern: Emissive),
+    ],
+)

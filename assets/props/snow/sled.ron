@@ -1,0 +1,12 @@
+Prop(
+    id: "sled",
+    tags: ["decoration", "snow"],
+    collision: Box,
+    parts: [
+        Box(size: (1.0, 0.1, 0.6), at: (0.0, 0.25, 0.0), color: "accent3"),
+        Box(size: (0.08, 0.2, 0.08), at: (-0.4, 0.1, -0.25), color: "metal"),
+        Box(size: (0.08, 0.2, 0.08), at: (0.4, 0.1, -0.25), color: "metal"),
+        Box(size: (0.08, 0.2, 0.08), at: (-0.4, 0.1, 0.25), color: "metal"),
+        Box(size: (0.08, 0.2, 0.08), at: (0.4, 0.1, 0.25), color: "metal"),
+    ],
+)

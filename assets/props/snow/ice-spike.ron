@@ -1,0 +1,9 @@
+Prop(
+    id: "ice_spike",
+    tags: ["obstacle", "snow"],
+    collision: ConvexHull,
+    parts: [
+        Cone(radius: 0.4, height: 2.2, sides: 6, at: (0.0, 1.1, 0.0), color: "accent2", pattern: Water),
+        Cone(radius: 0.25, height: 1.0, sides: 6, at: (0.5, 0.5, 0.2), color: "accent2", pattern: Water),
+    ],
+)

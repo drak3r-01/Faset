@@ -1,0 +1,11 @@
+Prop(
+    id: "pipe_wall",
+    tags: ["cover", "industrial"],
+    collision: Box,
+    parts: [
+        Box(size: (2.6, 0.1, 0.1), at: (0.0, 0.5, 0.0), color: "metal"),
+        Box(size: (2.6, 0.1, 0.1), at: (0.0, 1.1, 0.0), color: "metal"),
+        Repeat(count: 4, rotate_y: 0.0, offset: (0.8, 0.0, 0.0), part:
+            Box(size: (0.12, 1.5, 0.12), at: (-1.1, 0.75, 0.0), color: "metal_dark")),
+    ],
+)

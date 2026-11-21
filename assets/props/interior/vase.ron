@@ -1,0 +1,9 @@
+Prop(
+    id: "vase",
+    tags: ["decoration", "interior"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 0.18, height: 0.5, sides: 8, at: (0.0, 0.25, 0.0), color: "accent1"),
+        Cylinder(radius: 0.08, height: 0.25, sides: 8, at: (0.0, 0.6, 0.0), color: "accent1"),
+    ],
+)

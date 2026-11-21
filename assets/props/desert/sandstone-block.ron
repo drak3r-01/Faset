@@ -1,0 +1,9 @@
+Prop(
+    id: "sandstone_block",
+    tags: ["cover", "desert"],
+    collision: Box,
+    parts: [
+        Box(size: (1.6, 1.4, 1.6), at: (0.0, 0.7, 0.0), color: "sand", pattern: Noise),
+        Box(size: (1.8, 0.2, 1.8), at: (0.0, 1.5, 0.0), color: "stone"),
+    ],
+)

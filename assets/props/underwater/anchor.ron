@@ -1,0 +1,10 @@
+Prop(
+    id: "anchor",
+    tags: ["decoration", "underwater"],
+    collision: Box,
+    parts: [
+        Box(size: (0.12, 1.6, 0.12), at: (0.0, 0.8, 0.0), color: "metal_dark"),
+        Torus(major_radius: 0.25, minor_radius: 0.05, major_segments: 8, minor_segments: 4, at: (0.0, 1.6, 0.0), color: "metal_dark"),
+        Box(size: (0.9, 0.12, 0.12), at: (0.0, 0.3, 0.0), color: "metal_dark"),
+    ],
+)

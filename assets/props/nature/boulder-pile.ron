@@ -1,0 +1,13 @@
+Prop(
+    id: "boulder_pile",
+    tags: ["cover", "nature"],
+    collision: Compound,
+    seed: Some(8),
+    parts: [
+        Jitter(amount: 0.15, parts: [
+            Sphere(radius: 0.7, subdivisions: 0, at: (-0.5, 0.5, 0.0), color: "stone", pattern: Noise),
+            Sphere(radius: 0.5, subdivisions: 0, at: (0.5, 0.35, 0.3), color: "stone", pattern: Noise),
+            Sphere(radius: 0.45, subdivisions: 0, at: (0.1, 0.9, -0.2), color: "stone", pattern: Noise),
+        ]),
+    ],
+)

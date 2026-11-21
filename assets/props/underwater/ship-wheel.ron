@@ -1,0 +1,11 @@
+Prop(
+    id: "ship_wheel",
+    tags: ["decoration", "underwater"],
+    collision: None,
+    parts: [
+        Torus(major_radius: 0.5, minor_radius: 0.05, major_segments: 10, minor_segments: 4, at: (0.0, 0.6, 0.0), color: "wood"),
+        Repeat(count: 4, rotate_y: 45.0, offset: (0.0, 0.0, 0.0), part:
+            Box(size: (1.0, 0.05, 0.05), at: (0.0, 0.6, 0.0), color: "wood_dark")),
+        Cylinder(radius: 0.1, height: 0.2, sides: 6, at: (0.0, 0.6, 0.0), color: "wood_dark"),
+    ],
+)

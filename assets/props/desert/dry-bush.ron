@@ -1,0 +1,12 @@
+Prop(
+    id: "dry_bush",
+    tags: ["decoration", "desert"],
+    collision: None,
+    seed: Some(29),
+    parts: [
+        Jitter(amount: 0.05, parts: [
+            Sphere(radius: 0.35, subdivisions: 0, at: (0.0, 0.3, 0.0), color: "wood_dark", pattern: Noise),
+            Sphere(radius: 0.25, subdivisions: 0, at: (0.3, 0.2, 0.2), color: "wood", pattern: Noise),
+        ]),
+    ],
+)

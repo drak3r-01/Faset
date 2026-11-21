@@ -1,0 +1,14 @@
+Prop(
+    id: "snowy_pine",
+    tags: ["decoration", "snow"],
+    collision: Compound,
+    seed: Some(11),
+    parts: [
+        Group(height_var: 0.3, parts: [
+            Cylinder(radius: 0.18, height: 1.2, sides: 6, at: (0.0, 0.6, 0.0), color: "wood_dark"),
+            Cone(radius: 1.1, height: 1.6, sides: 8, at: (0.0, 1.6, 0.0), color: "foliage_dark"),
+            Cone(radius: 0.8, height: 1.4, sides: 8, at: (0.0, 2.5, 0.0), color: "foliage_dark"),
+            Cone(radius: 0.5, height: 1.1, sides: 8, at: (0.0, 3.3, 0.0), color: "white"),
+        ]),
+    ],
+)

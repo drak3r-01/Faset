@@ -1,0 +1,12 @@
+Prop(
+    id: "tree_birch",
+    tags: ["decoration", "nature"],
+    collision: Compound,
+    seed: Some(31),
+    parts: [
+        Group(height_var: 0.2, parts: [
+            Cylinder(radius: 0.14, height: 2.4, sides: 6, at: (0.0, 1.2, 0.0), color: "white"),
+            Sphere(radius: 0.8, subdivisions: 1, at: (0.0, 2.6, 0.0), color: "foliage"),
+        ]),
+    ],
+)

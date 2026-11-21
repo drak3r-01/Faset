@@ -1,0 +1,10 @@
+Prop(
+    id: "sand_ramp",
+    tags: ["obstacle", "desert"],
+    collision: Box,
+    parts: [
+        Ramp(size: (2.0, 0.6, 2.0), at: (0.0, 0.0, 0.0), color: "sand"),
+        Box(size: (2.0, 0.4, 2.0), at: (0.0, -0.2, 0.0), color: "stone"),
+        Box(size: (0.3, 0.6, 2.0), at: (0.85, 0.3, 0.0), color: "sand"),
+    ],
+)

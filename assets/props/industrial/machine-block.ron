@@ -1,0 +1,10 @@
+Prop(
+    id: "machine_block",
+    tags: ["cover", "industrial"],
+    collision: Box,
+    parts: [
+        Box(size: (1.8, 1.2, 1.0), at: (0.0, 0.6, 0.0), color: "metal", pattern: Noise),
+        Box(size: (0.6, 0.4, 0.4), at: (-0.5, 1.4, 0.0), color: "metal_dark"),
+        Box(size: (0.3, 0.3, 0.3), at: (0.5, 1.35, 0.2), color: "accent1"),
+    ],
+)

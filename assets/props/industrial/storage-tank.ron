@@ -1,0 +1,10 @@
+Prop(
+    id: "storage_tank",
+    tags: ["cover", "industrial"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 1.0, height: 2.4, sides: 12, at: (0.0, 1.2, 0.0), color: "metal"),
+        Sphere(radius: 1.0, subdivisions: 0, at: (0.0, 2.4, 0.0), color: "metal"),
+        Sphere(radius: 1.0, subdivisions: 0, at: (0.0, 0.0, 0.0), color: "metal_dark"),
+    ],
+)

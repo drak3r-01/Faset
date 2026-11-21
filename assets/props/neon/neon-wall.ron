@@ -1,0 +1,10 @@
+Prop(
+    id: "neon_wall",
+    tags: ["cover", "neon"],
+    collision: Box,
+    parts: [
+        Box(size: (3.0, 1.8, 0.3), at: (0.0, 0.9, 0.0), color: "rubber"),
+        Box(size: (2.6, 0.2, 0.05), at: (0.0, 1.2, 0.2), color: "accent2", pattern: Emissive),
+        Box(size: (2.6, 0.2, 0.05), at: (0.0, 0.6, 0.2), color: "accent3", pattern: Emissive),
+    ],
+)

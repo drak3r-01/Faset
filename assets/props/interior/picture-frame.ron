@@ -1,0 +1,9 @@
+Prop(
+    id: "picture_frame",
+    tags: ["decoration", "interior"],
+    collision: None,
+    parts: [
+        Box(size: (0.8, 0.6, 0.04), at: (0.0, 1.5, 0.0), color: "wood_dark"),
+        Box(size: (0.66, 0.46, 0.02), at: (0.0, 1.5, 0.02), color: "sand"),
+    ],
+)

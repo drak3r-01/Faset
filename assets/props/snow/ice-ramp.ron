@@ -1,0 +1,10 @@
+Prop(
+    id: "ice_ramp",
+    tags: ["obstacle", "snow"],
+    collision: Box,
+    parts: [
+        Ramp(size: (2.0, 0.8, 2.0), at: (0.0, 0.0, 0.0), color: "accent2", pattern: Water),
+        Box(size: (2.0, 0.3, 2.0), at: (0.0, -0.15, 0.0), color: "white"),
+        Box(size: (0.3, 0.8, 2.0), at: (0.85, 0.4, 0.0), color: "accent2"),
+    ],
+)

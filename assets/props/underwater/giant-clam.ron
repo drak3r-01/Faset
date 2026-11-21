@@ -1,0 +1,11 @@
+Prop(
+    id: "giant_clam",
+    tags: ["obstacle", "underwater"],
+    collision: ConvexHull,
+    parts: [
+        Group(scale: (1.0, 0.5, 1.0), parts: [
+            Sphere(radius: 0.8, subdivisions: 1, at: (0.0, 0.4, 0.0), color: "accent2", pattern: Ripples),
+        ]),
+        Box(size: (1.2, 0.2, 0.6), at: (0.0, 0.4, 0.0), color: "white"),
+    ],
+)

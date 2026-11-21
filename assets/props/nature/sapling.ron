@@ -1,0 +1,12 @@
+Prop(
+    id: "sapling",
+    tags: ["decoration", "nature"],
+    collision: None,
+    seed: Some(41),
+    parts: [
+        Group(height_var: 0.25, parts: [
+            Cylinder(radius: 0.04, height: 0.8, sides: 4, at: (0.0, 0.4, 0.0), color: "wood_dark"),
+            Cone(radius: 0.35, height: 0.8, sides: 6, at: (0.0, 0.9, 0.0), color: "foliage"),
+        ]),
+    ],
+)

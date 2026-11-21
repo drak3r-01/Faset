@@ -1,0 +1,10 @@
+Prop(
+    id: "neon_bench",
+    tags: ["decoration", "neon"],
+    collision: Box,
+    parts: [
+        Box(size: (1.6, 0.1, 0.5), at: (0.0, 0.45, 0.0), color: "accent2", pattern: Emissive),
+        Box(size: (0.08, 0.45, 0.4), at: (-0.7, 0.22, 0.0), color: "rubber"),
+        Box(size: (0.08, 0.45, 0.4), at: (0.7, 0.22, 0.0), color: "rubber"),
+    ],
+)

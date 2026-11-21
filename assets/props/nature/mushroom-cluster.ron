@@ -1,0 +1,11 @@
+Prop(
+    id: "mushroom_cluster",
+    tags: ["decoration", "nature"],
+    collision: None,
+    parts: [
+        Cylinder(radius: 0.06, height: 0.3, sides: 6, at: (0.0, 0.15, 0.0), color: "white"),
+        Sphere(radius: 0.18, subdivisions: 0, at: (0.0, 0.32, 0.0), color: "accent3"),
+        Cylinder(radius: 0.04, height: 0.2, sides: 6, at: (0.2, 0.1, 0.1), color: "white"),
+        Sphere(radius: 0.12, subdivisions: 0, at: (0.2, 0.22, 0.1), color: "accent4"),
+    ],
+)

@@ -1,0 +1,10 @@
+Prop(
+    id: "dining_table",
+    tags: ["cover", "interior"],
+    collision: Box,
+    parts: [
+        Box(size: (1.8, 0.08, 1.0), at: (0.0, 0.75, 0.0), color: "wood", pattern: Planks),
+        Repeat(count: 4, rotate_y: 0.0, offset: (0.0, 0.0, 0.0), part:
+            Box(size: (0.08, 0.72, 0.08), at: (0.75, 0.36, 0.42), color: "wood_dark")),
+    ],
+)

@@ -1,0 +1,14 @@
+Prop(
+    id: "frozen_boulder",
+    tags: ["cover", "snow"],
+    collision: ConvexHull,
+    seed: Some(15),
+    parts: [
+        Jitter(amount: 0.15, parts: [
+            Sphere(radius: 0.9, subdivisions: 1, at: (0.0, 0.7, 0.0), color: "stone", pattern: Noise),
+        ]),
+        Group(scale: (1.0, 0.4, 1.0), parts: [
+            Sphere(radius: 1.1, subdivisions: 1, at: (0.0, 0.8, 0.0), color: "white"),
+        ]),
+    ],
+)

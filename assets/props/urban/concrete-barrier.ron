@@ -1,0 +1,9 @@
+Prop(
+    id: "concrete_barrier",
+    tags: ["cover", "urban"],
+    collision: Box,
+    parts: [
+        Box(size: (2.0, 0.9, 0.6), at: (0.0, 0.45, 0.0), color: "concrete", pattern: Noise),
+        Box(size: (2.04, 0.1, 0.64), at: (0.0, 0.92, 0.0), color: "concrete"),
+    ],
+)

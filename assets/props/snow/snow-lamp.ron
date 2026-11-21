@@ -1,0 +1,10 @@
+Prop(
+    id: "snow_lamp",
+    tags: ["decoration", "snow"],
+    collision: Box,
+    parts: [
+        Box(size: (0.1, 2.2, 0.1), at: (0.0, 1.1, 0.0), color: "metal_dark"),
+        Box(size: (0.3, 0.3, 0.3), at: (0.0, 2.3, 0.0), color: "metal"),
+        Sphere(radius: 0.16, subdivisions: 0, at: (0.0, 2.3, 0.0), color: "accent4", pattern: Emissive),
+    ],
+)

@@ -1,0 +1,11 @@
+Prop(
+    id: "bush",
+    tags: ["cover", "nature"],
+    collision: ConvexHull,
+    seed: Some(4),
+    parts: [
+        Jitter(amount: 0.1, parts: [
+            Sphere(radius: 0.7, subdivisions: 1, at: (0.0, 0.5, 0.0), color: "foliage", pattern: Noise),
+        ]),
+    ],
+)
