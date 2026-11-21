@@ -940,6 +940,7 @@ dependencies = [
  "faset-shaders",
  "gpu-allocator",
  "image",
+ "libloading",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",

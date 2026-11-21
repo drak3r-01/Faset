@@ -18,10 +18,14 @@ pub enum UpscalerKind {
     Taa,
     /// FidelityFX Super Resolution 1: purely spatial, runs everywhere.
     Fsr1,
+    /// FidelityFX Super Resolution 3 (temporal), through AMD's library loaded
+    /// at runtime (feature `fsr3`, Windows x86_64 only). Not in
+    /// [`UpscalerKind::ALL`]: it is offered only when its probe passes.
+    Fsr3,
 }
 
 impl UpscalerKind {
-    /// Every upscaler of this crate, FSR 1 last.
+    /// The upscalers of this crate that run on every GPU, FSR 1 last.
     pub const ALL: [Self; 3] = [Self::Native, Self::Taa, Self::Fsr1];
 
     /// The upscaler every failure falls back to.
@@ -32,13 +36,14 @@ impl UpscalerKind {
             Self::Native => "Native",
             Self::Taa => "TAA",
             Self::Fsr1 => "FSR 1",
+            Self::Fsr3 => "FSR 3",
         }
     }
 
     /// True when the result depends on previous frames: the scene must be
     /// jittered and the FXAA fallback is skipped.
     pub fn is_temporal(self) -> bool {
-        matches!(self, Self::Taa)
+        matches!(self, Self::Taa | Self::Fsr3)
     }
 
     /// True when the free render scale applies ([`crate::effective_quality`]).
@@ -156,12 +161,15 @@ impl<C> Registry<C> {
 }
 
 impl Registry<GpuHandles> {
-    /// Native, TAA and FSR 1, all built on the renderer's device.
+    /// Native, TAA and FSR 1, all built on the renderer's device, and FSR 3
+    /// with the `fsr3` feature (available only where its library loads).
     pub fn builtin() -> Self {
         let mut registry = Self::new();
         for kind in UpscalerKind::ALL {
             registry.register(Box::new(Builtin(kind)));
         }
+        #[cfg(feature = "fsr3")]
+        registry.register(Box::new(crate::ffx::Fsr3Backend::system()));
         registry
     }
 
@@ -197,6 +205,13 @@ impl Backend<GpuHandles> for Builtin {
             UpscalerKind::Native => Box::new(crate::native::Native::new(gpu)?),
             UpscalerKind::Taa => Box::new(crate::taa::Taa::new(gpu)?),
             UpscalerKind::Fsr1 => Box::new(crate::fsr1::Fsr1::new(gpu)?),
+            // Registered by its own backend, never as a built-in.
+            UpscalerKind::Fsr3 => {
+                return Err(UpscaleError::Unavailable {
+                    kind: self.0,
+                    reason: "not a built-in upscaler".into(),
+                })
+            }
         })
     }
 }
@@ -348,7 +363,10 @@ mod tests {
     #[test]
     fn kinds_describe_themselves() {
         assert!(UpscalerKind::Taa.is_temporal());
+        assert!(UpscalerKind::Fsr3.is_temporal());
         assert!(!UpscalerKind::Fsr1.is_temporal());
+        assert!(!UpscalerKind::Fsr3.supports_free_scale());
+        assert!(!UpscalerKind::ALL.contains(&UpscalerKind::Fsr3));
         assert!(UpscalerKind::Native.supports_free_scale());
         assert!(!UpscalerKind::Taa.supports_free_scale());
     }

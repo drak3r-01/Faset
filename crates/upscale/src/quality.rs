@@ -83,11 +83,15 @@ pub fn scaled_extent(display: Extent2D, quality: Quality) -> Extent2D {
 
 /// The quality an upscaler really uses for a requested one.
 ///
-/// FSR 1 honours every level. Native honours the free scale and 100 %, and
-/// treats a preset as 100 %. TAA does not upscale: it always runs at 100 %.
+/// FSR 1 honours every level. FSR 3 honours the presets and 100 % (native
+/// anti-aliasing) and treats a free scale as 100 %. Native honours the free
+/// scale and 100 %, and treats a preset as 100 %. TAA does not upscale: it
+/// always runs at 100 %.
 pub fn effective_quality(kind: UpscalerKind, requested: Quality) -> Quality {
     match (kind, requested) {
         (UpscalerKind::Fsr1, q) => q,
+        (UpscalerKind::Fsr3, Quality::Free(_)) => Quality::Native,
+        (UpscalerKind::Fsr3, q) => q,
         (UpscalerKind::Native, Quality::Free(s)) => Quality::Free(clamp_free_scale(s)),
         _ => Quality::Native,
     }
@@ -167,6 +171,11 @@ mod tests {
             effective_quality(UpscalerKind::Taa, preset),
             Quality::Native
         );
+        // FSR 3: presets as given, no free scale.
+        for q in Quality::PRESETS {
+            assert_eq!(effective_quality(UpscalerKind::Fsr3, q), q);
+        }
+        assert_eq!(effective_quality(UpscalerKind::Fsr3, free), Quality::Native);
         // Out of range free scales are clamped.
         assert_eq!(
             effective_quality(UpscalerKind::Native, Quality::Free(0.1)),
