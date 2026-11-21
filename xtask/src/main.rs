@@ -195,9 +195,28 @@ fn package() -> Result<()> {
     Ok(())
 }
 
-/// Map validation. Stub until the map crates exist (lot 3.x).
+/// Validates every native map of `assets/maps` with `map-tool`.
 fn maps_validate() -> Result<()> {
-    println!("maps validate: 0 maps found");
+    let dir = Path::new("assets/maps");
+    let mut maps: Vec<_> = match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "ron"))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    maps.sort();
+    println!("maps validate: {} maps found", maps.len());
+    let mut failed = 0;
+    for map in &maps {
+        let path = map.to_string_lossy();
+        if cargo(&["run", "-q", "-p", "map-tool", "--", "validate", &path]).is_err() {
+            failed += 1;
+        }
+    }
+    if failed > 0 {
+        bail!("{failed} map(s) failed validation");
+    }
     Ok(())
 }
 
