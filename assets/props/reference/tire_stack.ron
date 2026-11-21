@@ -1,0 +1,10 @@
+Prop(
+    id: "tire_stack",
+    tags: ["cover", "industrial"],
+    collision: ConvexHull,
+    parts: [
+        Repeat(count: 3, offset: (0.0, 0.26, 0.0), part:
+            Torus(major_radius: 0.35, minor_radius: 0.13, major_segments: 8, minor_segments: 4,
+                  at: (0.0, 0.13, 0.0), color: "rubber")),
+    ],
+)

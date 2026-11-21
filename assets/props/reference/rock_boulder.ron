@@ -1,0 +1,13 @@
+Prop(
+    id: "rock_boulder",
+    tags: ["cover", "nature"],
+    collision: ConvexHull,
+    seed: Some(3),
+    parts: [
+        Group(scale: (1.0, 0.7, 1.2), parts: [
+            Jitter(amount: 0.18, parts: [
+                Sphere(radius: 0.8, subdivisions: 1, at: (0.0, 0.5, 0.0), color: "stone", pattern: Noise),
+            ]),
+        ]),
+    ],
+)

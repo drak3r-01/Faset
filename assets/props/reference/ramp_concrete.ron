@@ -1,0 +1,15 @@
+Prop(
+    id: "ramp_concrete",
+    tags: ["traversal", "urban"],
+    collision: Compound,
+    parts: [
+        Ramp(size: (2.0, 1.0, 3.0), at: (0.0, 0.5, 1.5), color: "concrete", pattern: Noise),
+        Extrude(
+            polygon: [(-1.0, -1.5), (1.0, -1.5), (1.0, 0.0), (0.0, 0.0), (0.0, -0.75), (-1.0, -0.75)],
+            height: 0.1,
+            at: (0.0, 1.05, 0.0),
+            color: "stone",
+            pattern: Tiles,
+        ),
+    ],
+)
