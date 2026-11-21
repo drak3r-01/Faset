@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["xtask", "probe", "crates/core", "crates/protocol", "crates/sim", "crates/net", "crates/render", "crates/server", "crates/shaders", "crates/client", "crates/assets", "tools/asset-tool"]
+members = ["xtask", "probe", "crates/core", "crates/protocol", "crates/sim", "crates/net", "crates/render", "crates/server", "crates/shaders", "crates/client", "crates/dedicated", "crates/assets", "tools/asset-tool"]
 
 [workspace.package]
 version = "0.0.1-rc.1"

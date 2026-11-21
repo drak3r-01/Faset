@@ -1,0 +1,26 @@
+[package]
+name = "dedicated"
+description = "Headless dedicated server executable: server.toml and CLI configuration, stdin console, clean shutdown."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "dedicated"
+path = "src/main.rs"
+
+[dependencies]
+faset-core.workspace = true
+faset-protocol.workspace = true
+faset-sim.workspace = true
+faset-net.workspace = true
+faset-server.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+ctrlc = { version = "3", features = ["termination"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

@@ -1,0 +1,21 @@
+# Example dedicated server configuration. Every key is optional; command-line
+# arguments override this file. Copy it next to the executable as `server.toml`.
+
+# Server name shown in logs (and later in the server browser).
+name = "Faset server"
+# UDP port to listen on.
+port = 7777
+# Maximum players, humans and bots together (1 to 64).
+max_players = 16
+# Game mode id sent to clients in the handshake.
+mode = 0
+# Maps played in order. Names resolve against the maps embedded in the binary,
+# then the `maps/` folder next to the executable.
+rotation = ["test-arena"]
+# Seconds each map is played before the rotation advances.
+rotation_seconds = 300
+# Number of bots and their skill (0 to 10).
+bots = 0
+bot_level = 5
+# Join password; empty means none. Stored only: enforcement needs a server API.
+password = ""

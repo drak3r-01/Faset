@@ -14,6 +14,17 @@ services:
       - xwin:/cache/xwin
     tty: false
 
+  # Dedicated server image (`dev.ps1 run-server`): no graphics dependency.
+  server:
+    build:
+      context: .
+      target: server-runtime
+    image: faset-server
+    ports:
+      - "7777:7777/udp"
+    stdin_open: true
+    tty: true
+
 volumes:
   cargo-registry:
   cargo-git:
