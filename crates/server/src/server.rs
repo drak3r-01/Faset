@@ -8,10 +8,12 @@ use faset_core::{NetId, Tick, DT, TICK_RATE};
 use faset_net::{Channel, PeerId, ServerEvent};
 use faset_protocol::quant::{dequantize_pitch_command, dequantize_yaw};
 use faset_protocol::{InputCommand, Message, PROTOCOL_VERSION};
+use faset_sim::world::Hooks;
 use faset_sim::World;
 
 use crate::commands::CommandBuffer;
 use crate::config::{ConfigError, ServerConfig};
+use crate::lag_compensation::{FireCommand, Hitbox, LagCompensation, ShotOutcome};
 use crate::link::ServerTransport;
 use crate::snapshot::{EntityState, InputPacket, Snapshot, SnapshotEncoder};
 
@@ -99,6 +101,26 @@ pub struct Server {
     notices: VecDeque<ServerNotice>,
     next_player: u16,
     snapshot_acc: u32,
+    /// One second of hitbox history per player.
+    lag: LagCompensation,
+}
+
+/// Sim system 9: records every active player's hitboxes, labelled with the
+/// world tick after the step (the label of the snapshot of that state).
+struct HistoryRecorder<'a> {
+    lag: &'a mut LagCompensation,
+    players: &'a BTreeMap<NetId, Player>,
+}
+
+impl Hooks for HistoryRecorder<'_> {
+    fn record_collision_history(&mut self, world: &World) {
+        // The sim exposes no posture yet: every player stands (lots 4.x).
+        let hitboxes = self
+            .players
+            .keys()
+            .filter_map(|&id| Some((id, Hitbox::standing(world.position(id)?))));
+        self.lag.record(world.tick().next(), hitboxes);
+    }
 }
 
 impl std::fmt::Debug for Server {
@@ -134,6 +156,7 @@ impl Server {
             notices: VecDeque::new(),
             next_player: 1,
             snapshot_acc: 0,
+            lag: LagCompensation::new(),
         })
     }
 
@@ -194,6 +217,32 @@ impl Server {
         true
     }
 
+    /// The hitbox history of every player.
+    #[must_use]
+    pub fn lag_compensation(&self) -> &LagCompensation {
+        &self.lag
+    }
+
+    /// Smoothed round trip of a human player's connection in seconds; 0 for
+    /// a bot, `None` for an unknown player.
+    #[must_use]
+    pub fn player_rtt(&self, player: NetId) -> Option<f64> {
+        let p = self.players.get(&player)?;
+        Some(
+            p.conn
+                .map_or(0.0, |(link, peer)| self.links[link].listener.rtt(peer)),
+        )
+    }
+
+    /// Casts a hitscan shot of `shooter` with lag compensation (see
+    /// [`LagCompensation::rewind_and_cast`]), using the shooter's measured
+    /// round trip. `None` for an unknown shooter or before the first tick.
+    pub fn rewind_and_cast(&mut self, shooter: NetId, fire: &FireCommand) -> Option<ShotOutcome> {
+        let rtt = self.player_rtt(shooter)? as f32;
+        self.lag
+            .rewind_and_cast(self.world.statics(), shooter, fire, rtt)
+    }
+
     /// Runs the real-time loop: one [`tick`](Self::tick) per 1/60 s, paced
     /// by a [`TickClock`](crate::TickClock), until `stop` returns true
     /// (checked before every wait).
@@ -238,7 +287,13 @@ impl Server {
                 inputs.push((id, cmd));
             }
         }
-        self.world.step(&inputs);
+        self.world.step_with(
+            &inputs,
+            &mut HistoryRecorder {
+                lag: &mut self.lag,
+                players: &self.players,
+            },
+        );
         for (&id, p) in &mut self.players {
             if let Some(pos) = self.world.position(id) {
                 p.velocity = (pos - p.last_position) / DT;
@@ -539,6 +594,34 @@ mod tests {
         assert_eq!(e.weapon, 2);
         assert!((e.velocity.z + 5.0).abs() < 0.05);
         assert_eq!(snap.tick, Tick(60));
+    }
+
+    #[test]
+    fn every_tick_records_the_hitboxes_under_the_snapshot_label() {
+        let mut s = Server::new(ServerConfig::default(), Vec::new()).unwrap();
+        let id = s.add_bot(Box::new(Walker)).unwrap();
+        for _ in 0..90 {
+            s.tick();
+        }
+        let lag = s.lag_compensation();
+        assert_eq!(lag.now(), Some(s.world().tick()));
+        assert_eq!(lag.history(id).count(), crate::HISTORY_TICKS);
+        let hb = lag.authoritative(id).unwrap();
+        assert_eq!(hb.position, s.world().position(id).unwrap());
+        assert_eq!(s.player_rtt(id), Some(0.0));
+        // A bot shooting straight up hits nothing and leaves no trace.
+        let fire = FireCommand {
+            view_tick: Tick(85),
+            view_fraction: 0.5,
+            direction: Vec3::Y,
+            range: 50.0,
+        };
+        let out = s.rewind_and_cast(id, &fire).unwrap();
+        assert!(out.hit.is_none());
+        assert_eq!(s.lag_compensation().hitbox(id), Some(hb));
+        assert!(s.disconnect(id));
+        s.tick();
+        assert_eq!(s.lag_compensation().history(id).count(), 0);
     }
 
     #[test]

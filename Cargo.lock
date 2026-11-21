@@ -604,6 +604,7 @@ dependencies = [
  "faset-net",
  "faset-protocol",
  "faset-sim",
+ "parry3d",
  "proptest",
  "thiserror 2.0.21",
  "tracing",

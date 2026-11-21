@@ -1,6 +1,6 @@
 [package]
 name = "faset-client"
-description = "Game client: clock synchronization, local prediction, reconciliation and correction smoothing."
+description = "Game client: clock synchronization, local prediction, reconciliation, correction smoothing and remote interpolation."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

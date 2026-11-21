@@ -19,11 +19,16 @@
 //! 3. client loads the map (only the fingerprint is checked for now);
 //! 4. client sends `Ready`;
 //! 5. server spawns the player and sends a full snapshot.
+//!
+//! Every tick also records each player's hitboxes in a one-second history
+//! ([`lag_compensation`]); [`Server::rewind_and_cast`] casts a hitscan shot
+//! against the other players as the shooter saw them.
 #![forbid(unsafe_code)]
 
 mod clock;
 mod commands;
 mod config;
+pub mod lag_compensation;
 mod link;
 mod server;
 pub mod snapshot;
@@ -33,6 +38,10 @@ pub use commands::CommandBuffer;
 pub use config::{
     build_fingerprint, map_fingerprint, ConfigError, Limits, MapConfig, ServerConfig,
     MAX_SNAPSHOT_RATE, MIN_SNAPSHOT_RATE,
+};
+pub use lag_compensation::{
+    BodyPart, FireCommand, Hit, Hitbox, LagCompensation, ShotOutcome, CONSISTENCY_SLACK,
+    EYE_HEIGHT, HEAD_RADIUS, HISTORY_TICKS, MAX_REWIND,
 };
 pub use link::ServerTransport;
 pub use server::{Bot, RejectReason, Server, ServerNotice};
