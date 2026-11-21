@@ -27,6 +27,9 @@
 //! displaced grid around the camera; below it ([`RenderWorld::underwater`])
 //! the height fog is replaced by a dense blue-green exponential fog, sunlit
 //! surfaces get animated caustics and suspended particles drift in the view.
+//! The optional post chain ([`Renderer::set_post_settings`], [`PostSettings`],
+//! [`PostParams`]) runs on the HDR buffer: contours, bloom, ACES tonemapping,
+//! grading, screen effects and FXAA, each switchable and driven by the profile.
 //! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
 
 mod ambience;
@@ -42,6 +45,7 @@ mod lighting;
 mod material;
 mod mesh;
 mod opaque;
+mod post;
 mod select;
 mod shadow;
 mod shelter;
@@ -63,6 +67,7 @@ use frame::{FrameData, Garbage};
 use gpu::{image_barriers, GpuBuffer, ImageBarrier};
 use lighting::{pack_lighting, LightingBindings, LIGHTING_ALIGN, LIGHTING_SIZE};
 use opaque::{GBuffer, MeshArena, OpaquePipeline};
+use post::{PostChain, PostInputs};
 use shadow::ShadowResources;
 use shelter::ShelterBuffer;
 use sky::SkyPipeline;
@@ -85,6 +90,10 @@ pub use hot_reload::ShaderWatcher;
 pub use lighting::{height_fog, point_light_attenuation, PointLight, MAX_POINT_LIGHTS};
 pub use material::{Material, MaterialError, MaterialTable, Pattern};
 pub use mesh::{cube_mesh, Aabb, CubeFaceColors, MeshId, Vertex, CUBE_FACE_TINTS};
+pub use post::{
+    aces_tonemap, bloom_extents, tonemap_pixel, PostParams, PostSettings, ScreenEffects,
+    BLOOM_LEVELS,
+};
 pub use shadow::{
     cascade_splits, fit_cascades, ShadowCascades, CASCADE_COUNT, SHADOW_DISTANCE, SHADOW_MAP_SIZE,
 };
@@ -170,6 +179,11 @@ pub struct RenderWorld {
     /// Keep it in sync with [`RenderWorld::update_underwater`]. The image
     /// ripple of lot 2.9 reads this flag.
     pub underwater: bool,
+    /// Gameplay screen effects (damage flash, speed lines) of the post chain.
+    pub screen: ScreenEffects,
+    /// Replaces the post parameters otherwise derived from the ambience
+    /// profile ([`PostParams::from_profile`]) and `screen`.
+    pub post: Option<PostParams>,
 }
 
 impl RenderWorld {
@@ -197,6 +211,8 @@ impl Default for RenderWorld {
             weather: WeatherState::CLEAR,
             water: None,
             underwater: false,
+            screen: ScreenEffects::default(),
+            post: None,
         }
     }
 }
@@ -267,6 +283,9 @@ pub struct Renderer {
     water: WaterPipeline,
     /// True once invalid water parameters were reported.
     water_warned: bool,
+    /// The post-processing chain; `None` (the default) copies the HDR buffer
+    /// straight to the target. See [`Renderer::set_post_settings`].
+    post: Option<PostChain>,
     /// Roofs that mask weather particles (none until `set_shelter_map`).
     shelter: ShelterBuffer,
     /// Thunder of the strikes since the last `take_thunder_events`.
@@ -407,6 +426,7 @@ impl Renderer {
                 weather,
                 water,
                 water_warned: false,
+                post: None,
                 shelter,
                 thunder: Vec::new(),
                 last_weather_time: None,
@@ -676,6 +696,27 @@ impl Renderer {
         };
         let draw_sky = world.draw_sky && !underwater;
         let ambience = &resolved.ambience;
+        // Post chain: parameters from the (weathered) profile plus gameplay effects.
+        let post_params = world.post.unwrap_or_else(|| PostParams {
+            damage_flash: world.screen.damage_flash,
+            speed_lines: world.screen.speed_lines,
+            ..PostParams::from_profile(ambience, underwater)
+        });
+        let post_active = self
+            .post
+            .as_ref()
+            .is_some_and(|p| p.is_active(&post_params));
+        if post_active {
+            let g = self.gbuffer.as_ref().expect("created above");
+            let inputs = PostInputs {
+                hdr: g.hdr.image,
+                hdr_view: g.hdr.view,
+                depth_view: g.depth.view,
+                normal_view: g.normal.view,
+            };
+            let post = self.post.as_mut().expect("checked above");
+            post.ensure_targets(&mut self.ctx, g.extent, &inputs)?;
+        }
         let sun_dir = glam::Vec3::from_array(ambience.sun.direction).normalize_or(glam::Vec3::Y);
         let cascades = (ambience.sun.intensity > 0.0).then(|| {
             let fit_camera = self.shadow_camera.as_ref().unwrap_or(camera);
@@ -857,14 +898,20 @@ impl Renderer {
             src_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
             dst_access: vk::AccessFlags::SHADER_READ | vk::AccessFlags::TRANSFER_READ,
         };
-        let end_barriers = [
-            ImageBarrier {
-                image: gbuffer.hdr.image,
-                aspect: color,
-                old: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                new: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                src_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                dst_access: vk::AccessFlags::TRANSFER_READ,
+        // With the post chain the HDR buffer (and the depth) are sampled first;
+        // the chain's result is moved to TRANSFER_SRC before the blit.
+        let mut end_barriers = vec![
+            if post_active {
+                shader_read(gbuffer.hdr.image)
+            } else {
+                ImageBarrier {
+                    image: gbuffer.hdr.image,
+                    aspect: color,
+                    old: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    new: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    src_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                    dst_access: vk::AccessFlags::TRANSFER_READ,
+                }
             },
             shader_read(gbuffer.motion.image),
             shader_read(gbuffer.normal.image),
@@ -877,6 +924,16 @@ impl Renderer {
                 dst_access: vk::AccessFlags::TRANSFER_WRITE,
             },
         ];
+        if post_active {
+            end_barriers.push(ImageBarrier {
+                image: gbuffer.depth.image,
+                aspect: vk::ImageAspectFlags::DEPTH,
+                old: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                new: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                src_access: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dst_access: vk::AccessFlags::SHADER_READ,
+            });
+        }
         let corner = vk::Offset3D {
             x: extent.width as i32,
             y: extent.height as i32,
@@ -1220,13 +1277,49 @@ impl Renderer {
             image_barriers(
                 device,
                 frame.cmd,
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::TRANSFER | vk::PipelineStageFlags::FRAGMENT_SHADER,
                 &end_barriers,
             );
+            let mut blit_source = gbuffer.hdr.image;
+            if post_active {
+                let chain = self.post.as_ref().expect("checked above");
+                let near = camera.proj.w_axis.z;
+                let near = if near > 0.0 { near } else { 0.1 };
+                let inputs = PostInputs {
+                    hdr: gbuffer.hdr.image,
+                    hdr_view: gbuffer.hdr.view,
+                    depth_view: gbuffer.depth.view,
+                    normal_view: gbuffer.normal.view,
+                };
+                blit_source = chain.record(
+                    &self.ctx,
+                    frame.cmd,
+                    &inputs,
+                    &post_params,
+                    near,
+                    self.material_time,
+                );
+                image_barriers(
+                    device,
+                    frame.cmd,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::PipelineStageFlags::TRANSFER,
+                    &[ImageBarrier {
+                        image: blit_source,
+                        aspect: color,
+                        old: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        new: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        src_access: vk::AccessFlags::MEMORY_WRITE,
+                        dst_access: vk::AccessFlags::TRANSFER_READ,
+                    }],
+                );
+            }
             device.cmd_blit_image(
                 frame.cmd,
-                gbuffer.hdr.image,
+                blit_source,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -1439,6 +1532,25 @@ impl Renderer {
         Ok(())
     }
 
+    /// Turns the post-processing chain on with `settings`, or off with `None`
+    /// (the default: the HDR buffer is copied to the target untouched, so
+    /// colours stay linear and un-tonemapped). The chain is built at the first
+    /// call; later calls only change which effects run.
+    pub fn set_post_settings(&mut self, settings: Option<PostSettings>) -> Result<(), RenderError> {
+        match (settings, &mut self.post) {
+            (None, slot) => {
+                if let Some(mut chain) = slot.take() {
+                    // SAFETY: valid device; makes the chain unused.
+                    unsafe { self.ctx.device.device_wait_idle() }?;
+                    chain.destroy(&mut self.ctx);
+                }
+            }
+            (Some(s), Some(chain)) => chain.settings = s,
+            (Some(s), slot @ None) => *slot = Some(PostChain::new(&self.ctx, s)?),
+        }
+        Ok(())
+    }
+
     /// Sets the time, in seconds, that animates water, lava, emissive and
     /// hologram materials from the next frame on (0 at creation).
     pub fn set_material_time(&mut self, seconds: f32) {
@@ -1604,6 +1716,9 @@ impl Drop for Renderer {
         }
         self.sky.destroy(&self.ctx.device);
         self.weather.destroy(&self.ctx.device);
+        if let Some(mut p) = self.post.take() {
+            p.destroy(&mut self.ctx);
+        }
         self.water.destroy(&self.ctx.device);
         self.shelter.destroy(&mut self.ctx);
         self.opaque.destroy(&mut self.ctx);
