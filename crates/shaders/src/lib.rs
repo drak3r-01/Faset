@@ -48,6 +48,15 @@ mod tests {
     }
 
     #[test]
+    fn sky_blobs_are_spirv() {
+        for blob in [SKY_VS, SKY_FS] {
+            assert!(blob.len() > 5);
+            assert_eq!(blob[0], SPIRV_MAGIC);
+        }
+        assert_ne!(SKY_VS, SKY_FS);
+    }
+
+    #[test]
     fn shadow_vertex_blob_is_spirv() {
         assert_eq!(SHADOW_VS[0], SPIRV_MAGIC);
         assert!(SHADOW_VS.len() > 5);

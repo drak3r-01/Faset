@@ -13,8 +13,8 @@ pub enum SunSource {
     /// `Sun::direction` as written in the profile.
     #[default]
     Profile,
-    /// Computed from the map time and latitude (lot 2.6). Until then the
-    /// renderer uses `Sun::direction`.
+    /// Computed from the map time, latitude and declination of the frame's
+    /// `SkyParams`; the sky colours and ambient follow the time of day too.
     TimeOfDay,
 }
 
@@ -67,7 +67,8 @@ pub struct Rim {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fog {
-    /// Linear RGB (replaced by the sky colour in the view direction in 2.6).
+    /// Linear RGB. Replaced by the sky colour in the view direction when the
+    /// sky is drawn (`RenderWorld::draw_sky`).
     pub color: [f32; 3],
     /// Density at `height`, per metre, >= 0; 0 disables fog.
     pub density: f32,
@@ -105,7 +106,8 @@ impl Default for ShadowBias {
     }
 }
 
-/// Sky colours (consumed by lot 2.6).
+/// Sky colours and star brightness (a midday look when the sun source is
+/// the time of day).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sky {
@@ -115,6 +117,11 @@ pub struct Sky {
     pub exponent: f32,
     /// Star brightness, >= 0.
     pub stars: f32,
+    /// Space-scene strength in [0, 1]: 1 adds a nebula and planet discs and
+    /// keeps the sun and stars visible below the horizon; 0 (the default when
+    /// absent from a RON file) is an atmospheric sky.
+    #[serde(default)]
+    pub space: f32,
 }
 
 /// Weather kind (consumed by lot 2.7).
@@ -272,6 +279,7 @@ impl AmbienceProfile {
         check(self.fog.falloff >= 0.0, "fog.falloff < 0")?;
         check(self.sky.exponent > 0.0, "sky.exponent <= 0")?;
         check(self.sky.stars >= 0.0, "sky.stars < 0")?;
+        check(unit(self.sky.space), "sky.space outside [0, 1]")?;
         check(self.shadow.depth_bias >= 0.0, "shadow.depth_bias < 0")?;
         check(self.shadow.slope_bias >= 0.0, "shadow.slope_bias < 0")?;
         check(self.shadow.normal_offset >= 0.0, "shadow.normal_offset < 0")?;
@@ -330,6 +338,7 @@ impl AmbienceProfile {
                 zenith: v(a.sky.zenith, b.sky.zenith),
                 exponent: f(a.sky.exponent, b.sky.exponent),
                 stars: f(a.sky.stars, b.sky.stars),
+                space: f(a.sky.space, b.sky.space),
             },
             shadow: ShadowBias {
                 depth_bias: f(a.shadow.depth_bias, b.shadow.depth_bias),
@@ -387,7 +396,7 @@ impl AmbienceProfile {
         let k = &mut self.sky;
         out.extend(&mut k.horizon);
         out.extend(&mut k.zenith);
-        out.extend([&mut k.exponent, &mut k.stars]);
+        out.extend([&mut k.exponent, &mut k.stars, &mut k.space]);
         let sh = &mut self.shadow;
         out.extend([
             &mut sh.depth_bias,
@@ -448,6 +457,7 @@ impl Default for AmbienceProfile {
                 zenith: [0.0; 3],
                 exponent: 1.0,
                 stars: 0.0,
+                space: 0.0,
             },
             shadow: ShadowBias::default(),
             weather: Weather {

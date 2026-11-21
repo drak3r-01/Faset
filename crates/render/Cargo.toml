@@ -20,6 +20,8 @@ tracing = "0.1"
 faset-shaders.workspace = true
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"
+# Serde support for `SkyParams::wind` (the same glam as `faset_core::glam`).
+glam = { workspace = true, features = ["serde"] }
 
 [features]
 # Dev only: `ShaderWatcher` recompiles edited WGSL and swaps the pipeline.

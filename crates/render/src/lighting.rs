@@ -13,6 +13,7 @@ use crate::context::Context;
 use crate::deferred::FRAMES_IN_FLIGHT;
 use crate::frame::FrameData;
 use crate::shadow::{ShadowCascades, ShadowResources, CASCADE_COUNT};
+use crate::sky::GpuSky;
 use crate::RenderError;
 
 /// Point lights the shader reads; extra lights are dropped.
@@ -104,6 +105,9 @@ pub(crate) struct GpuLighting {
     pub shadow_texel: [f32; 4],
     /// x depth bias, y slope bias, z normal offset, in texels.
     pub shadow_bias: [f32; 4],
+    /// Procedural sky: colours, stars, clouds and the camera data the sky
+    /// pass needs (lot 2.6).
+    pub sky: GpuSky,
 }
 
 /// Bytes of [`GpuLighting`].
@@ -114,7 +118,11 @@ pub(crate) const LIGHTING_ALIGN: u64 = 256;
 
 const _: () = assert!(
     std::mem::size_of::<GpuLighting>()
-        == 11 * 16 + MAX_POINT_LIGHTS * 32 + CASCADE_COUNT * 64 + 3 * 16
+        == 11 * 16
+            + MAX_POINT_LIGHTS * 32
+            + CASCADE_COUNT * 64
+            + 3 * 16
+            + std::mem::size_of::<GpuSky>()
 );
 
 fn rgb(c: [f32; 3]) -> [f32; 4] {
@@ -125,12 +133,14 @@ fn rgb(c: [f32; 3]) -> [f32; 4] {
 /// one warning is logged when the list starts overflowing (`warned` keeps
 /// that state between frames and clears once the list fits again).
 /// `cascades` are the sun shadow cascades of the frame, `None` when the sun
-/// casts no shadows.
+/// casts no shadows. `sky` is the frame's sky block
+/// ([`crate::sky::resolve`]); `ambience` is the resolved profile.
 pub(crate) fn pack_lighting(
     ambience: &AmbienceProfile,
     lights: &[PointLight],
     camera_pos: Vec3,
     cascades: Option<&ShadowCascades>,
+    sky: GpuSky,
     warned: &mut bool,
 ) -> GpuLighting {
     if lights.len() > MAX_POINT_LIGHTS {
@@ -195,6 +205,7 @@ pub(crate) fn pack_lighting(
             a.shadow.normal_offset,
             0.0,
         ],
+        sky,
     }
 }
 
@@ -392,19 +403,47 @@ mod tests {
         let lights: Vec<PointLight> = (0..40).map(light).collect();
         let mut warned = false;
         let profile = AmbienceProfile::default();
-        let gpu = pack_lighting(&profile, &lights, Vec3::ZERO, None, &mut warned);
+        let gpu = pack_lighting(
+            &profile,
+            &lights,
+            Vec3::ZERO,
+            None,
+            GpuSky::zeroed(),
+            &mut warned,
+        );
         assert_eq!(gpu.counts[0], 32);
         assert_eq!(gpu.lights[31].position_radius, [31.0, 1.0, 0.0, 5.0]);
         assert_eq!(count.load(Ordering::SeqCst), 1);
         // Later frames with the same list do not warn again...
-        pack_lighting(&profile, &lights, Vec3::ZERO, None, &mut warned);
+        pack_lighting(
+            &profile,
+            &lights,
+            Vec3::ZERO,
+            None,
+            GpuSky::zeroed(),
+            &mut warned,
+        );
         assert_eq!(count.load(Ordering::SeqCst), 1);
         // ...until the list fitted in between.
-        let gpu = pack_lighting(&profile, &lights[..3], Vec3::ZERO, None, &mut warned);
+        let gpu = pack_lighting(
+            &profile,
+            &lights[..3],
+            Vec3::ZERO,
+            None,
+            GpuSky::zeroed(),
+            &mut warned,
+        );
         assert_eq!(gpu.counts[0], 3);
         assert_eq!(gpu.lights[3], GpuPointLight::zeroed());
         assert_eq!(count.load(Ordering::SeqCst), 1);
-        pack_lighting(&profile, &lights, Vec3::ZERO, None, &mut warned);
+        pack_lighting(
+            &profile,
+            &lights,
+            Vec3::ZERO,
+            None,
+            GpuSky::zeroed(),
+            &mut warned,
+        );
         assert_eq!(count.load(Ordering::SeqCst), 2);
     }
 
@@ -414,13 +453,27 @@ mod tests {
         let camera = crate::Camera::default();
         let cascades = crate::fit_cascades(&camera, Vec3::Y, 0.1, 100.0);
         let mut warned = false;
-        let gpu = pack_lighting(&profile, &[], Vec3::ZERO, Some(&cascades), &mut warned);
+        let gpu = pack_lighting(
+            &profile,
+            &[],
+            Vec3::ZERO,
+            Some(&cascades),
+            GpuSky::zeroed(),
+            &mut warned,
+        );
         assert_eq!(gpu.shadow_splits[3], 1.0);
         assert_eq!(gpu.shadow_splits[..3], cascades.splits);
         assert_eq!(gpu.shadow_matrices[1], cascades.matrices[1].to_cols_array());
         assert_eq!(gpu.shadow_texel[2], cascades.texel_size(2));
         assert_eq!(gpu.shadow_bias[..3], [1.0, 1.5, 1.0]);
-        let off = pack_lighting(&profile, &[], Vec3::ZERO, None, &mut warned);
+        let off = pack_lighting(
+            &profile,
+            &[],
+            Vec3::ZERO,
+            None,
+            GpuSky::zeroed(),
+            &mut warned,
+        );
         assert_eq!(off.shadow_splits, [0.0; 4]);
     }
 

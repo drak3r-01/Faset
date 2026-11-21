@@ -12,7 +12,11 @@
 //! ambient, rim, height fog) is driven by the [`AmbienceProfile`] and the
 //! [`PointLight`]s of the [`RenderWorld`]. The sun casts shadows through
 //! three texel-snapped cascades ([`fit_cascades`]) drawn in a first pass.
-//! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
+//! A procedural sky (gradient, sun, moon, stars, clouds, and a nebula with
+//! planets in space profiles) fills the pixels no mesh covers when
+//! [`RenderWorld::draw_sky`] is set; its time of day, latitude and clouds come
+//! from [`SkyParams`], and with `SunSource::TimeOfDay` the sun, the sky and
+//! the ambient light follow the map time. With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
 
 mod ambience;
 mod camera;
@@ -29,6 +33,7 @@ mod mesh;
 mod opaque;
 mod select;
 mod shadow;
+mod sky;
 mod target;
 
 use std::path::Path;
@@ -45,6 +50,7 @@ use gpu::{image_barriers, GpuBuffer, ImageBarrier};
 use lighting::{pack_lighting, LightingBindings, LIGHTING_ALIGN, LIGHTING_SIZE};
 use opaque::{GBuffer, MeshArena, OpaquePipeline};
 use shadow::ShadowResources;
+use sky::SkyPipeline;
 use target::{Offscreen, Swapchain};
 
 pub use ambience::{
@@ -64,6 +70,10 @@ pub use material::{Material, MaterialError, MaterialTable, Pattern};
 pub use mesh::{cube_mesh, Aabb, CubeFaceColors, MeshId, Vertex, CUBE_FACE_TINTS};
 pub use shadow::{
     cascade_splits, fit_cascades, ShadowCascades, CASCADE_COUNT, SHADOW_DISTANCE, SHADOW_MAP_SIZE,
+};
+pub use sky::{
+    cell_has_star, hash_cell, henyey_greenstein, star_cell, sun_altitude_azimuth, sun_direction,
+    SkyParams, STAR_COLS, STAR_ROWS, SUN_PHASE_G,
 };
 
 /// Which physical device to use.
@@ -112,6 +122,12 @@ pub struct RenderWorld {
     /// Lighting and fog parameters. The default (neutral) profile leaves
     /// surfaces at albedo plus emission.
     pub ambience: AmbienceProfile,
+    /// Map time, latitude and cloud settings of the sky.
+    pub sky: SkyParams,
+    /// Draws the procedural sky where no mesh covers a pixel, and makes the
+    /// fog take the sky colour. Off by default: those pixels then keep
+    /// `clear_color` and the fog its profile colour.
+    pub draw_sky: bool,
 }
 
 impl Default for RenderWorld {
@@ -122,6 +138,8 @@ impl Default for RenderWorld {
             instances: Vec::new(),
             lights: Vec::new(),
             ambience: AmbienceProfile::default(),
+            sky: SkyParams::default(),
+            draw_sky: false,
         }
     }
 }
@@ -187,6 +205,7 @@ pub struct Renderer {
     target: Target,
     deferred: DeferredQueue<Garbage>,
     opaque: OpaquePipeline,
+    sky: SkyPipeline,
     shadow: ShadowResources,
     lighting: LightingBindings,
     /// Fits the cascades to this camera instead of the view camera.
@@ -274,25 +293,28 @@ impl Renderer {
         let mut shadow = None;
         let mut lighting = None;
         let mut opaque = None;
+        let mut sky = None;
         let target = result
             .and_then(|()| {
                 let maps = shadow.insert(ShadowResources::new(&mut ctx)?);
                 let bindings = lighting.insert(LightingBindings::new(&ctx, &frames, maps)?);
                 let layout = bindings.set_layout;
-                opaque = Some(OpaquePipeline::new(
+                let pipeline = opaque.insert(OpaquePipeline::new(
                     &mut ctx,
                     &MaterialTable::builtin(),
                     layout,
                 )?);
+                sky = Some(SkyPipeline::new(&ctx.device, pipeline.layout)?);
                 Ok(())
             })
             .and_then(|()| make_target(&mut ctx));
-        match (target, opaque, lighting, shadow) {
-            (Ok(target), Some(opaque), Some(lighting), Some(shadow)) => Ok(Self {
+        match (target, opaque, sky, lighting, shadow) {
+            (Ok(target), Some(opaque), Some(sky), Some(lighting), Some(shadow)) => Ok(Self {
                 frames,
                 target,
                 deferred: DeferredQueue::new(),
                 opaque,
+                sky,
                 shadow,
                 lighting,
                 shadow_camera: None,
@@ -309,7 +331,10 @@ impl Renderer {
                 material_time: 0.0,
                 ctx,
             }),
-            (result, opaque, lighting, shadow) => {
+            (result, opaque, sky, lighting, shadow) => {
+                if let Some(mut s) = sky {
+                    s.destroy(&ctx.device);
+                }
                 if let Some(mut p) = opaque {
                     p.destroy(&mut ctx);
                 }
@@ -502,9 +527,11 @@ impl Renderer {
         // Sun shadow cascades, and the casters of each one (culled against
         // the cascade volume, so casters outside the view are kept). Their
         // instances are appended after the view's.
-        let sun_dir =
-            glam::Vec3::from_array(world.ambience.sun.direction).normalize_or(glam::Vec3::Y);
-        let cascades = (world.ambience.sun.intensity > 0.0).then(|| {
+        // The map time sets the sun (and the sky colours) of the frame.
+        let resolved = sky::resolve(&world.ambience, &world.sky, world.draw_sky, camera);
+        let ambience = &resolved.ambience;
+        let sun_dir = glam::Vec3::from_array(ambience.sun.direction).normalize_or(glam::Vec3::Y);
+        let cascades = (ambience.sun.intensity > 0.0).then(|| {
             let fit_camera = self.shadow_camera.as_ref().unwrap_or(camera);
             let near = fit_camera.proj.w_axis.z;
             let near = if near > 0.0 { near } else { 0.1 };
@@ -557,10 +584,11 @@ impl Renderer {
         // Lighting block, written into this frame's uniform ring.
         let camera_pos = camera.view.inverse().w_axis.truncate();
         let lighting_block = pack_lighting(
-            &world.ambience,
+            ambience,
             &world.lights,
             camera_pos,
             cascades.as_ref(),
+            resolved.gpu,
             &mut self.light_overflow_warned,
         );
         let frame = &mut self.frames[slot];
@@ -922,6 +950,17 @@ impl Renderer {
                     );
                 }
             }
+            if world.draw_sky {
+                // Sky: a full-screen triangle at depth 0, so only pixels no
+                // mesh covered pass the depth test. Same layout, sets and
+                // push constants as the opaque draws above.
+                device.cmd_bind_pipeline(
+                    frame.cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.sky.pipeline,
+                );
+                device.cmd_draw(frame.cmd, 3, 1, 0, 0);
+            }
             self.ctx.dynamic_rendering.cmd_end_rendering(frame.cmd);
             image_barriers(
                 device,
@@ -1265,6 +1304,7 @@ impl Drop for Renderer {
         if let Some(mut a) = self.arena.take() {
             a.destroy(&mut self.ctx);
         }
+        self.sky.destroy(&self.ctx.device);
         self.opaque.destroy(&mut self.ctx);
         self.lighting.destroy(&self.ctx);
         self.shadow.destroy(&mut self.ctx);
