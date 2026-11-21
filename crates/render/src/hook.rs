@@ -10,6 +10,8 @@
 use ash::vk;
 use faset_core::glam::Vec2;
 
+use crate::DeviceExtensions;
+
 /// A borrowed image: the renderer or the upscaler owns the memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageHandle {
@@ -98,6 +100,9 @@ pub struct GpuHandles {
     pub device: ash::Device,
     pub physical: vk::PhysicalDevice,
     pub queue_family: u32,
+    /// Optional extensions the device was created with (DLSS needs the
+    /// three of them, see [`DeviceExtensions::dlss_ready`]).
+    pub extensions: DeviceExtensions,
 }
 
 /// Frame-graph pass 9: the hook through which an interface crate (`faset-ui`)

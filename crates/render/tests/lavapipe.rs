@@ -10,10 +10,10 @@ use std::sync::Arc;
 
 use faset_render::glam::{Mat4, Vec2, Vec3};
 use faset_render::{
-    cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, GerstnerWave, Instance,
-    MaterialTable, MeshId, Pattern, PointLight, PostParams, PostSettings, RenderConfig,
-    RenderError, RenderWorld, Renderer, ScreenEffects, ShelterMap, SkyParams, SunSource,
-    WaterParams, WeatherState, BUILTIN_PROFILES, CUBE_FACE_TINTS, SHADOW_DISTANCE,
+    cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, DeviceExtensions,
+    GerstnerWave, Instance, MaterialTable, MeshId, Pattern, PointLight, PostParams, PostSettings,
+    RenderConfig, RenderError, RenderWorld, Renderer, ScreenEffects, ShelterMap, SkyParams,
+    SunSource, WaterParams, WeatherState, BUILTIN_PROFILES, CUBE_FACE_TINTS, SHADOW_DISTANCE,
 };
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -208,6 +208,55 @@ fn zero_sized_headless_renderer_is_valid() {
         renderer.resize(16, 16);
         renderer.render_frame(&RenderWorld::default()).unwrap();
         assert_eq!(renderer.frames_rendered(), 1);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// The optional NVX and push-descriptor extensions are enabled exactly when
+/// the device offers them (lavapipe offers some, an NVIDIA GPU all three),
+/// and a device without them is created all the same.
+#[test]
+fn optional_extensions_are_enabled_when_offered() {
+    let (messages, _guard) = capture_messages();
+    {
+        let renderer = headless((16, 16));
+        let handles = renderer.gpu_handles();
+        assert_eq!(handles.extensions, renderer.device_extensions());
+
+        // SAFETY: the physical device belongs to the instance.
+        let offered = unsafe {
+            handles
+                .instance
+                .enumerate_device_extension_properties(handles.physical)
+        }
+        .unwrap();
+        let offered = DeviceExtensions::from_offered(
+            offered
+                .iter()
+                .filter_map(|e| e.extension_name_as_c_str().ok()),
+        );
+        assert_eq!(renderer.device_extensions(), offered);
+
+        // The check the upscaler does: the command of an extension only
+        // resolves on a device created with it.
+        let commands = [
+            (c"vkCreateCuModuleNVX", offered.nvx_binary_import),
+            (c"vkGetImageViewHandleNVX", offered.nvx_image_view_handle),
+            (c"vkCmdPushDescriptorSetKHR", offered.khr_push_descriptor),
+        ];
+        for (command, enabled) in commands {
+            // SAFETY: a live device and a null-terminated command name.
+            let found = unsafe {
+                handles
+                    .instance
+                    .get_device_proc_addr(handles.device.handle(), command.as_ptr())
+            };
+            assert_eq!(found.is_some(), enabled, "{command:?}");
+        }
+        assert_eq!(
+            renderer.device_extensions().dlss_ready(),
+            renderer.device_extensions().missing().is_empty()
+        );
     }
     assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
 }

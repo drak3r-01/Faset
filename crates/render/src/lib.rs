@@ -46,6 +46,7 @@ mod camera;
 mod context;
 mod cull;
 mod deferred;
+mod extensions;
 mod frame;
 mod gpu;
 mod hook;
@@ -94,6 +95,7 @@ pub use camera::{
     JITTER_SAMPLES,
 };
 pub use cull::Instance;
+pub use extensions::DeviceExtensions;
 pub use faset_core::glam;
 pub use hook::{FrameCtx, GpuHandles, ImageHandle, UiPass, UpscaleInputs, UpscalePass};
 #[cfg(feature = "hot-reload")]
@@ -1753,7 +1755,15 @@ impl Renderer {
             device: self.ctx.device.clone(),
             physical: self.ctx.physical,
             queue_family: self.ctx.queue_family,
+            extensions: self.ctx.extensions,
         }
+    }
+
+    /// The optional device extensions (`VK_NVX_binary_import`,
+    /// `VK_NVX_image_view_handle`, `VK_KHR_push_descriptor`) the device was
+    /// created with: those the GPU offers, none being required.
+    pub fn device_extensions(&self) -> DeviceExtensions {
+        self.ctx.extensions
     }
 
     /// Installs the pass between the scene and the post chain, or removes it
