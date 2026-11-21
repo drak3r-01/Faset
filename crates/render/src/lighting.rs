@@ -14,6 +14,7 @@ use crate::deferred::FRAMES_IN_FLIGHT;
 use crate::frame::FrameData;
 use crate::shadow::{ShadowCascades, ShadowResources, CASCADE_COUNT};
 use crate::sky::GpuSky;
+use crate::water::GpuWater;
 use crate::weather::GpuWeather;
 use crate::RenderError;
 
@@ -111,6 +112,8 @@ pub(crate) struct GpuLighting {
     pub sky: GpuSky,
     /// Weather, lightning and the shelter map header (lot 2.7).
     pub weather: GpuWeather,
+    /// Water surface, waves and underwater medium (lot 2.8).
+    pub water: GpuWater,
 }
 
 /// Bytes of [`GpuLighting`].
@@ -127,6 +130,7 @@ const _: () = assert!(
             + 3 * 16
             + std::mem::size_of::<GpuSky>()
             + std::mem::size_of::<GpuWeather>()
+            + std::mem::size_of::<GpuWater>()
 );
 
 fn rgb(c: [f32; 3]) -> [f32; 4] {
@@ -139,7 +143,8 @@ fn rgb(c: [f32; 3]) -> [f32; 4] {
 /// `cascades` are the sun shadow cascades of the frame, `None` when the sun
 /// casts no shadows. `sky` is the frame's sky block
 /// ([`crate::sky::resolve`]); `ambience` is the resolved profile; `weather`
-/// is the frame's weather block.
+/// is the frame's weather block and `water` the frame's water block.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn pack_lighting(
     ambience: &AmbienceProfile,
     lights: &[PointLight],
@@ -147,6 +152,7 @@ pub(crate) fn pack_lighting(
     cascades: Option<&ShadowCascades>,
     sky: GpuSky,
     weather: GpuWeather,
+    water: GpuWater,
     warned: &mut bool,
 ) -> GpuLighting {
     if lights.len() > MAX_POINT_LIGHTS {
@@ -213,6 +219,7 @@ pub(crate) fn pack_lighting(
         ],
         sky,
         weather,
+        water,
     }
 }
 
@@ -460,6 +467,7 @@ mod tests {
             None,
             GpuSky::zeroed(),
             GpuWeather::zeroed(),
+            GpuWater::zeroed(),
             &mut warned,
         );
         assert_eq!(gpu.counts[0], 32);
@@ -473,6 +481,7 @@ mod tests {
             None,
             GpuSky::zeroed(),
             GpuWeather::zeroed(),
+            GpuWater::zeroed(),
             &mut warned,
         );
         assert_eq!(count.load(Ordering::SeqCst), 1);
@@ -484,6 +493,7 @@ mod tests {
             None,
             GpuSky::zeroed(),
             GpuWeather::zeroed(),
+            GpuWater::zeroed(),
             &mut warned,
         );
         assert_eq!(gpu.counts[0], 3);
@@ -496,6 +506,7 @@ mod tests {
             None,
             GpuSky::zeroed(),
             GpuWeather::zeroed(),
+            GpuWater::zeroed(),
             &mut warned,
         );
         assert_eq!(count.load(Ordering::SeqCst), 2);
@@ -514,6 +525,7 @@ mod tests {
             Some(&cascades),
             GpuSky::zeroed(),
             GpuWeather::zeroed(),
+            GpuWater::zeroed(),
             &mut warned,
         );
         assert_eq!(gpu.shadow_splits[3], 1.0);
@@ -528,6 +540,7 @@ mod tests {
             None,
             GpuSky::zeroed(),
             GpuWeather::zeroed(),
+            GpuWater::zeroed(),
             &mut warned,
         );
         assert_eq!(off.shadow_splits, [0.0; 4]);

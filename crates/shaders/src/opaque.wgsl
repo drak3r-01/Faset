@@ -8,6 +8,7 @@
 #include "materials.wgsl"
 #include "lighting.wgsl"
 #include "wet.wgsl"
+#include "caustics.wgsl"
 
 struct Immediates {
     // Sub-pixel jitter in NDC units. Adding `jitter * w` to clip x/y is the
@@ -111,7 +112,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
         normal,
         in.world_pos,
         in.clip.w,
-    );
+    ) + wet.albedo * caustic_light(in.world_pos, normal, dpos, imm.time);
 
     var out: FragmentOut;
     out.color = vec4<f32>(apply_fog(mix(lit, wet.reflection, wet.weight), in.world_pos), 1.0);
