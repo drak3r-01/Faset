@@ -898,14 +898,18 @@ name = "faset-client"
 version = "0.0.1-rc.1"
 dependencies = [
  "faset-core",
+ "faset-mapfmt",
  "faset-net",
  "faset-protocol",
+ "faset-render",
  "faset-server",
  "faset-sim",
  "if-addrs",
+ "image",
  "proptest",
  "thiserror 2.0.21",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -992,6 +996,7 @@ name = "faset-sim"
 version = "0.0.1-rc.1"
 dependencies = [
  "faset-core",
+ "faset-mapfmt",
  "faset-protocol",
  "hecs",
  "parry3d",

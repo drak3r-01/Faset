@@ -17,6 +17,8 @@
 //!   [`HISTORY_TICKS`] commands and predicted states, reconciles them against
 //!   server snapshots (replaying with the same simulation code) and hides
 //!   corrections behind a decaying [`VisualOffset`].
+//! * [`map_load`]: turns a map file into collisions and render meshes (steps 1
+//!   to 3 of the map load pipeline) and uploads the meshes.
 //! * [`interpolation`]: shows remote entities a deliberate delay in the
 //!   past with Hermite interpolation between snapshots, extrapolating for at
 //!   most a quarter of a second, and gives the [`ViewTime`] a fire command
@@ -40,6 +42,7 @@ pub mod clock;
 pub mod discovery;
 pub mod hosting;
 pub mod interpolation;
+pub mod map_load;
 pub mod prediction;
 
 pub use clock::{
@@ -56,6 +59,7 @@ pub use interpolation::{
     RemoteInterpolation, RemoteState, RemoteView, SampleMode, ViewTime, BUFFER_SNAPSHOTS,
     DEFAULT_SNAPSHOT_INTERVAL, MAX_EXTRAPOLATION,
 };
+pub use map_load::{load_map, LoadedMap, MapLoadError};
 pub use prediction::{
     AuthoritativeState, HistoryEntry, PredictedState, Prediction, PredictionError,
     PredictionHistory, ReconcileOutcome, Tolerance, VisualOffset, COMMANDS_PER_PACKET,
