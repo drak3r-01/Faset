@@ -5,13 +5,16 @@
 //! Building is deterministic: the same recipe, palette and seed give the
 //! same mesh. Units are metres, Y up, -Z forward.
 
+pub mod anim;
 mod build;
+pub mod character;
 mod error;
 mod mesh;
 mod palette;
 mod prims;
 mod recipe;
 mod validate;
+pub mod viewmodel;
 
 pub use build::build_mesh;
 pub use error::{BuildError, RecipeError};
