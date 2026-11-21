@@ -13,6 +13,10 @@
 //!   is reprojected with the motion vectors, clamped to the 3 x 3
 //!   neighbourhood in YCoCg and blended at 10 %.
 //! * [`Fsr1`]: FidelityFX Super Resolution 1, a WGSL port of EASU and RCAS.
+//! * [`UpscalerKind::Fsr3`] (feature `fsr3`, on by default): FidelityFX Super
+//!   Resolution 3.1 through AMD's official library, loaded at runtime on
+//!   Windows x86_64 when `amd_fidelityfx_vk.dll` sits next to the
+//!   executable; unavailable elsewhere.
 //!
 //! [`Registry`] lists the upscalers a GPU can run and falls back to FSR 1
 //! when one fails. Hand the result to [`faset_render::Renderer::set_upscaler`]
@@ -35,6 +39,8 @@
 
 mod bridge;
 mod error;
+#[cfg(feature = "fsr3")]
+mod ffx;
 mod fsr1;
 mod gpu;
 mod native;

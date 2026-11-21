@@ -1,10 +1,15 @@
 [package]
 name = "faset-upscale"
-description = "Upscalers of the renderer: the Upscaler trait, render scale, temporal anti-aliasing and FSR 1."
+description = "Upscalers of the renderer: the Upscaler trait, render scale, temporal anti-aliasing, FSR 1 and FSR 3 (runtime-loaded)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[features]
+default = ["fsr3"]
+# FSR 3 through AMD's FidelityFX API library, loaded at runtime (Windows x86_64).
+fsr3 = ["dep:libloading"]
 
 [dependencies]
 faset-render.workspace = true
@@ -14,6 +19,7 @@ tracing.workspace = true
 ash = "0.38"
 bytemuck = { version = "1.25", features = ["derive"] }
 gpu-allocator = { version = "0.28", default-features = false, features = ["std", "vulkan"] }
+libloading = { version = "0.8", optional = true }
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
