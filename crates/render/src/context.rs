@@ -10,7 +10,7 @@ use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::select::{self, Candidate, DeviceKind};
-use crate::{GpuPreference, RenderError};
+use crate::{DeviceExtensions, GpuPreference, RenderError};
 
 const VALIDATION_LAYER: &CStr = c"VK_LAYER_KHRONOS_validation";
 
@@ -43,6 +43,8 @@ pub(crate) struct Context {
     pub queue: vk::Queue,
     pub queue_family: u32,
     pub dynamic_rendering: khr::dynamic_rendering::Device,
+    /// Optional extensions the device was created with.
+    pub extensions: DeviceExtensions,
     pub allocator: ManuallyDrop<Allocator>,
 }
 
@@ -76,6 +78,18 @@ fn has_device_extension(instance: &Instance, physical: vk::PhysicalDevice, name:
     unsafe { instance.enumerate_device_extension_properties(physical) }
         .map(|exts| exts.iter().any(|e| e.extension_name_as_c_str() == Ok(name)))
         .unwrap_or(false)
+}
+
+/// The optional extensions `physical` offers (none when the query fails).
+fn optional_extensions(instance: &Instance, physical: vk::PhysicalDevice) -> DeviceExtensions {
+    // SAFETY: `physical` was enumerated from `instance`.
+    let offered =
+        unsafe { instance.enumerate_device_extension_properties(physical) }.unwrap_or_default();
+    DeviceExtensions::from_offered(
+        offered
+            .iter()
+            .filter_map(|e| e.extension_name_as_c_str().ok()),
+    )
 }
 
 impl Context {
@@ -203,6 +217,10 @@ impl Context {
         if has_device_extension(&instance, physical, khr::portability_subset::NAME) {
             device_exts.push(khr::portability_subset::NAME.as_ptr());
         }
+        // Optional: whatever the device offers, never a reason to fail.
+        let extensions = optional_extensions(&instance, physical);
+        extensions.log();
+        device_exts.extend(extensions.to_enable().into_iter().map(CStr::as_ptr));
         let priorities = [1.0f32];
         let queue_info = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(queue_family)
@@ -252,6 +270,7 @@ impl Context {
             queue,
             queue_family,
             dynamic_rendering,
+            extensions,
             allocator: ManuallyDrop::new(allocator),
         })
     }
