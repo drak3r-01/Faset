@@ -24,6 +24,10 @@ use faset_protocol::{InputCommand, Message, PROTOCOL_VERSION};
 use faset_server::{build_fingerprint, InputPacket, Server, ServerConfig, SnapshotDecoder};
 use faset_sim::StaticWorld;
 
+mod fleet;
+#[allow(unused_imports)]
+pub use fleet::*;
+
 pub type Link = ConditionedTransport<MemoryTransport>;
 
 /// Client frame length: four frames per server tick (240 Hz).
@@ -124,6 +128,9 @@ impl PredictedClient {
             (r.id, state)
         });
         self.remotes.on_snapshot(snap.tick, self.now, remotes);
+        if let Some(render) = self.remotes.render_time(self.now, self.clock.jitter()) {
+            self.remotes.prune(render);
+        }
         let Some(e) = snap.entity(me) else { return };
         self.clock.observe_rtt(self.endpoint.rtt());
         let server = AuthoritativeState {
