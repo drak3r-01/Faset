@@ -1,0 +1,54 @@
+Map(
+    format_version: 1,
+    meta: (
+        name: "Cargo",
+        author: "Faset",
+        description: "Two container yards facing each other across a flooded dock.",
+        modes: ["fps"],
+        players: (2, 12),
+    ),
+    theme: (
+        ambience: "sunset",
+        sky: "clear",
+        weather: [(from_s: 0.0, weather: "clear"), (from_s: 300.0, weather: "rain")],
+        palette: "industrial",
+    ),
+    physics: (
+        gravity: 9.81,
+    ),
+    symmetry: Rotate180,
+    prefabs: [
+        (name: "container_stack", brushes: [Box(min: (0, 0, 0), max: (12, 5, 5), material: "container_blue"), Box(min: (0, 5, 0), max: (12, 10, 5), material: "container_red")], props: [(recipe: "barrel_oil", at: (1.0, 0.0, 3.5), yaw: 0.0)], place: [(at: (-30, 0, -20)), (at: (-20, 0, 10), turns: 1)]),
+    ],
+    brushes: [
+        Box(min: (-80, -2, -60), max: (80, 0, 0), material: "concrete"),
+        Box(min: (4, 0, -6), max: (10, 3, -3), material: "container_red"),
+        Wedge(min: (10, 0, -6), max: (14, 3, -3), rise: NegX, material: "metal"),
+        Cylinder(min: (-4, 0, -24), max: (0, 8, -20), axis: Y, sides: 12, material: "metal"),
+        Prism(points: [(20, -10), (28, -10), (24, -16)], y_min: 0, y_max: 4, material: "concrete"),
+        Stairs(min: (-16, 0, -12), max: (-10, 6, -6), rise: PosZ, steps: 6, material: "metal"),
+    ],
+    props: [
+        (recipe: "crate_wood", at: (2.0, 0.0, -5.0), yaw: 15.0),
+        (recipe: "crate_wood", at: (2.5, 0.0, -6.5), yaw: 40.0, scale: 0.8),
+    ],
+    spawns: [
+        (at: (-36.0, 0.0, -26.0), yaw: 45.0, team: A),
+        (at: (-30.0, 0.0, -26.0), yaw: 30.0, team: A),
+    ],
+    pickups: [
+        (kind: Health, at: (0.0, 0.5, -10.0), respawn_s: 30),
+        (kind: Weapon("rocket_launcher"), at: (-8.0, 3.5, -9.0), respawn_s: 45),
+    ],
+    zones: [
+        Box(min: (-80, -12, -60), max: (80, -6, 0), kind: KillVolume),
+        Box(min: (-6, -2, -3), max: (6, -1, 0), kind: Water),
+        Box(min: (-24, 0, -4), max: (-22, 1, -2), kind: JumpPad(velocity: (0.0, 12.0, 4.0))),
+        Box(min: (30, 0, -30), max: (32, 4, -28), kind: Teleporter(target: (-20.0, 0.0, -20.0), yaw: 90.0)),
+        Box(min: (-4, 10, -8), max: (4, 20, -2), kind: LowGravity(scale: 0.4)),
+        Box(min: (-2, 0, -2), max: (2, 4, 0), kind: Objective(id: "flag_a")),
+    ],
+    lights: [
+        (at: (0.0, 6.0, -12.0), color: (1.0, 0.8, 0.6), intensity: 2.0, range: 18.0),
+    ],
+)
