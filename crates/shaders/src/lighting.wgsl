@@ -51,6 +51,24 @@ struct Lighting {
     shadow_texel: vec4<f32>,
     // x depth bias, y slope bias, z normal offset (all in texels).
     shadow_bias: vec4<f32>,
+    // Procedural sky, see `render::sky::GpuSky`.
+    // rgb horizon colour, w horizon-to-zenith exponent.
+    sky_horizon: vec4<f32>,
+    // rgb zenith colour, w star brightness.
+    sky_zenith: vec4<f32>,
+    // xyz unit vector towards the moon, w moon brightness.
+    sky_moon: vec4<f32>,
+    // x cloud cover, y star density, z space strength, w 1 when the sky is
+    // drawn (fog then takes the sky colour).
+    sky_params: vec4<f32>,
+    // xy wind, z daylight in [0, 1].
+    sky_wind: vec4<f32>,
+    // xy view-space ray slope per unit of NDC (1 / P00, 1 / P11).
+    sky_ray: vec4<f32>,
+    // World-from-view rotation (no translation) and the previous frame's
+    // unjittered clip-from-world.
+    sky_world_from_view: mat4x4<f32>,
+    sky_prev_view_proj: mat4x4<f32>,
 }
 
 const SHADOW_MAP_SIZE: f32 = 2048.0;
@@ -161,7 +179,20 @@ fn fog_factor(world_pos: vec3<f32>) -> f32 {
     return 1.0 - exp(-density * exp(-k * (y_cam - h0)) * path);
 }
 
-// Applies fog to a lit colour.
+// Sky colour of the horizon-to-zenith gradient in unit direction `v`:
+//   mix(horizon, zenith, max(v.y, 0)^k)
+fn sky_gradient(v: vec3<f32>) -> vec3<f32> {
+    let t = pow(max(v.y, 1.0e-6), lighting.sky_horizon.w);
+    return mix(lighting.sky_horizon.rgb, lighting.sky_zenith.rgb, t);
+}
+
+// Applies fog to a lit colour. When the sky is drawn the fog takes the sky
+// colour in the direction of the fragment, so distant geometry melts into it.
 fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
-    return mix(color, lighting.fog_color.rgb, clamp(fog_factor(world_pos), 0.0, 1.0));
+    var fog_rgb = lighting.fog_color.rgb;
+    if lighting.sky_params.w > 0.5 {
+        let ray = world_pos - lighting.camera_pos.xyz;
+        fog_rgb = sky_gradient(ray / max(length(ray), 1.0e-6));
+    }
+    return mix(color, fog_rgb, clamp(fog_factor(world_pos), 0.0, 1.0));
 }

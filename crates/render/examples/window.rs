@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use faset_render::glam::{Mat4, Vec3};
 use faset_render::{
     cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, Instance, MeshId,
-    PointLight, RenderConfig, RenderWorld, Renderer, CUBE_FACE_TINTS,
+    PointLight, RenderConfig, RenderWorld, Renderer, SkyParams, CUBE_FACE_TINTS,
 };
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -130,6 +130,8 @@ impl App {
                 radius: 6.0,
             }],
             ambience,
+            sky: SkyParams::default(),
+            draw_sky: true,
         };
         if let Err(e) = renderer.render_frame(&world) {
             tracing::error!("frame failed: {e}");

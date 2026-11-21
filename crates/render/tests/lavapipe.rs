@@ -11,8 +11,8 @@ use std::sync::Arc;
 use faset_render::glam::{Mat4, Vec2, Vec3};
 use faset_render::{
     cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, Instance, MaterialTable,
-    MeshId, Pattern, PointLight, RenderConfig, RenderError, RenderWorld, Renderer,
-    BUILTIN_PROFILES, CUBE_FACE_TINTS, SHADOW_DISTANCE,
+    MeshId, Pattern, PointLight, RenderConfig, RenderError, RenderWorld, Renderer, SkyParams,
+    SunSource, BUILTIN_PROFILES, CUBE_FACE_TINTS, SHADOW_DISTANCE,
 };
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -607,12 +607,15 @@ fn render_profile(name: &str, path: &Path) {
     let proj = perspective_reverse_z(60f32.to_radians(), 1.0, 0.1);
     let fog = ambience.fog.color;
     let world = RenderWorld {
-        // The horizon blends into the fog (the sky arrives in lot 2.6).
+        // Without a sky the horizon blends into the fog; the space profile
+        // draws its sky: nebula, planets and stars.
         clear_color: [fog[0], fog[1], fog[2], 1.0],
         camera: Camera::new(view, proj),
         instances,
         lights,
         ambience,
+        sky: SkyParams::default(),
+        draw_sky: name == "space",
     };
     renderer.render_frame(&world).unwrap();
     renderer.read_back_png(path).unwrap();
@@ -1163,4 +1166,257 @@ fn shadow_edges_do_not_shimmer_while_the_cascades_move() {
     }
     assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
     let _ = std::fs::remove_file(out);
+}
+
+// ---------------------------------------------------------------------------
+// Procedural sky (lot 2.6)
+// ---------------------------------------------------------------------------
+
+/// Name, hour, camera azimuth and pitch (degrees; azimuth from -Z towards
+/// +X) of the four time-of-day references.
+type SkyShot = (&'static str, f32, f32, f32);
+
+const SKY_SHOTS: [SkyShot; 4] = [
+    ("sky_06", 6.0, 90.0, 12.0),
+    ("sky_12", 12.0, 180.0, 20.0),
+    ("sky_18", 18.0, 270.0, 12.0),
+    ("sky_00", 0.0, 180.0, 30.0),
+];
+
+fn sky_reference(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/refs/{name}.png"))
+}
+
+/// The "day" profile driven by the map time, with stars for the night.
+fn tod_ambience() -> AmbienceProfile {
+    let mut a = AmbienceProfile::builtin("day").expect("built-in profile");
+    a.sun.source = SunSource::TimeOfDay;
+    a.sky.stars = 1.0;
+    a
+}
+
+/// Camera at eye height looking along compass azimuth `az` (from -Z towards
+/// +X) and `pitch`, both in degrees; also returns the horizontal forward
+/// vector.
+fn sky_camera(az: f32, pitch: f32) -> (Camera, Vec3) {
+    let (az, pitch) = (az.to_radians(), pitch.to_radians());
+    let dir = Vec3::new(az.sin() * pitch.cos(), pitch.sin(), -az.cos() * pitch.cos());
+    let eye = Vec3::new(0.0, 1.6, 0.0);
+    let view = faset_render::glam::camera::rh::view::look_at_mat4(eye, eye + dir, Vec3::Y);
+    let proj = perspective_reverse_z(70f32.to_radians(), 1.0, 0.1);
+    (Camera::new(view, proj), Vec3::new(az.sin(), 0.0, -az.cos()))
+}
+
+/// A sand ground and three cubes below a sky of the given hour.
+fn render_sky(time_h: f32, az: f32, pitch: f32, cover: f32, path: &Path) {
+    let mut renderer = headless((256, 256));
+    renderer.set_material_time(PROFILE_TIME);
+    let mut mesh = |material: u8| {
+        let (v, i) = cube_mesh(0.5, &[[230; 3]; 6], material);
+        renderer.upload_mesh(&v, &i).unwrap()
+    };
+    let (ground, cube) = (mesh(2), mesh(0));
+    let (camera, forward) = sky_camera(az, pitch);
+    let right = forward.cross(Vec3::Y);
+    let at = |ahead: f32, side: f32| Vec3::new(0.0, 0.5, 0.0) + forward * ahead + right * side;
+    let mut instances = vec![Instance::new(
+        ground,
+        0,
+        Mat4::from_translation(Vec3::new(0.0, -0.5, 0.0))
+            * Mat4::from_scale(Vec3::new(400.0, 1.0, 400.0)),
+    )];
+    for (ahead, side) in [(9.0, -2.5), (12.0, 1.5), (30.0, 6.0)] {
+        instances.push(Instance::new(
+            cube,
+            0,
+            Mat4::from_translation(at(ahead, side)),
+        ));
+    }
+    let world = RenderWorld {
+        camera,
+        instances,
+        ambience: tod_ambience(),
+        sky: SkyParams {
+            time_h,
+            latitude_deg: 45.0,
+            cloud_cover: cover,
+            ..SkyParams::default()
+        },
+        draw_sky: true,
+        ..RenderWorld::default()
+    };
+    // Twice, so both frame slots are used.
+    for _ in 0..2 {
+        renderer.render_frame(&world).unwrap();
+    }
+    renderer.read_back_png(path).unwrap();
+    assert_eq!(renderer.validation_message_count(), 0);
+}
+
+fn render_sky_shot(shot: SkyShot, path: &Path) {
+    let (_, time, az, pitch) = shot;
+    render_sky(time, az, pitch, 0.45, path);
+}
+
+#[test]
+fn time_of_day_skies_match_references() {
+    let (messages, _guard) = capture_messages();
+    let mut failures = Vec::new();
+    for shot in SKY_SHOTS {
+        let out = out_path(&format!("{}.png", shot.0));
+        render_sky_shot(shot, &out);
+        let error = max_channel_error(&load_rgba(&out), &load_rgba(&sky_reference(shot.0)));
+        if error > 1 {
+            failures.push(format!(
+                "{}: max channel error {error} (output: {})",
+                shot.0,
+                out.display()
+            ));
+        } else {
+            let _ = std::fs::remove_file(out);
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Regenerates the four time-of-day references from lavapipe renders.
+/// Inspect the images before committing them.
+#[test]
+#[ignore = "regenerates tests/refs/sky_*.png"]
+fn bless_sky_references() {
+    for shot in SKY_SHOTS {
+        render_sky_shot(shot, &sky_reference(shot.0));
+    }
+}
+
+fn mean_rgb(img: &image::RgbaImage, x0: u32, y0: u32, x1: u32, y1: u32) -> [f32; 3] {
+    let mut sum = [0.0; 3];
+    let mut n = 0.0;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let p = img.get_pixel(x, y).0;
+            for (s, c) in sum.iter_mut().zip(p) {
+                *s += srgb_decode(c);
+            }
+            n += 1.0;
+        }
+    }
+    sum.map(|s| s / n)
+}
+
+/// The sky differs between the four hours, is bright by day and dark at
+/// night, and a mesh in front of it hides it.
+#[test]
+fn sky_changes_with_the_hour_and_meshes_occlude_it() {
+    let (messages, _guard) = capture_messages();
+    let top = |shot: SkyShot| {
+        let out = out_path(&format!("{}-top.png", shot.0));
+        render_sky_shot(shot, &out);
+        let img = load_rgba(&out);
+        let _ = std::fs::remove_file(out);
+        // Upper part of the image: sky only.
+        mean_rgb(&img, 0, 0, 256, 40)
+    };
+    let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let [dawn, noon, dusk, night] = SKY_SHOTS.map(top);
+    assert!(luma(noon) > 3.0 * luma(night), "{noon:?} vs {night:?}");
+    assert!(luma(noon) > 0.1 && luma(night) < 0.05);
+    assert!(luma(dawn) < luma(noon) && luma(dusk) < luma(noon));
+
+    // The cube at 9 m, 2.5 m to the left, hides the sky; above it is sky.
+    let out = out_path("sky-occlusion.png");
+    render_sky(12.0, 180.0, 20.0, 0.0, &out);
+    let img = load_rgba(&out);
+    let _ = std::fs::remove_file(out);
+    let (camera, forward) = sky_camera(180.0, 20.0);
+    let right = forward.cross(Vec3::Y);
+    let cube = Vec3::new(0.0, 0.5, 0.0) + forward * 9.0 - right * 2.5;
+    let (cx, cy) = pixel_of(&camera, cube, 256);
+    let on_cube = img.get_pixel(cx, cy).0;
+    let sky_above = img.get_pixel(cx, 10).0;
+    assert_ne!(on_cube[..3], sky_above[..3]);
+    assert!(sky_above[2] > sky_above[0], "blue sky");
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Cloud cover 0 is a clear sky whatever the time; clouds move with the
+/// wind (the animation time) and change the image.
+#[test]
+fn clouds_scroll_with_time_and_cover_zero_is_clear() {
+    let (messages, _guard) = capture_messages();
+    let shot = |cover: f32, time: f32| {
+        let mut renderer = headless((128, 128));
+        renderer.set_material_time(time);
+        let (camera, _) = sky_camera(180.0, 40.0);
+        let mut ambience = tod_ambience();
+        ambience.sky.stars = 0.0;
+        let world = RenderWorld {
+            camera,
+            ambience,
+            sky: SkyParams {
+                cloud_cover: cover,
+                wind: Vec2::new(40.0, 10.0),
+                ..SkyParams::default()
+            },
+            draw_sky: true,
+            ..RenderWorld::default()
+        };
+        renderer.render_frame(&world).unwrap();
+        let out = out_path(&format!("clouds-{cover}-{time}.png"));
+        renderer.read_back_png(&out).unwrap();
+        assert_eq!(renderer.validation_message_count(), 0);
+        let img = load_rgba(&out);
+        let _ = std::fs::remove_file(out);
+        img
+    };
+    let clear_a = shot(0.0, 0.0);
+    let clear_b = shot(0.0, 50.0);
+    assert_eq!(
+        max_channel_error(&clear_a, &clear_b),
+        0,
+        "clear sky is static"
+    );
+    let cloudy_a = shot(0.6, 0.0);
+    let cloudy_b = shot(0.6, 50.0);
+    assert!(
+        max_channel_error(&cloudy_a, &clear_a) > 20,
+        "clouds are visible"
+    );
+    assert!(max_channel_error(&cloudy_a, &cloudy_b) > 20, "clouds move");
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// With the sun driven by the map time, the cascades follow it: the shadow
+/// of a box lands on different ground pixels in the morning and afternoon.
+#[test]
+fn time_of_day_sun_moves_the_shadow() {
+    let (messages, _guard) = capture_messages();
+    let render = |time: f32| {
+        let mut renderer = headless((256, 256));
+        let instances = shadow_scene(&mut renderer);
+        let mut world = shadow_world(instances);
+        world.ambience.sun.source = SunSource::TimeOfDay;
+        world.sky = SkyParams {
+            time_h: time,
+            latitude_deg: 40.0,
+            ..SkyParams::default()
+        };
+        renderer.render_frame(&world).unwrap();
+        let out = out_path(&format!("tod-shadow-{time}.png"));
+        renderer.read_back_png(&out).unwrap();
+        assert_eq!(renderer.validation_message_count(), 0);
+        let img = load_rgba(&out);
+        let _ = std::fs::remove_file(out);
+        img
+    };
+    let morning = render(9.0);
+    let afternoon = render(15.0);
+    let differing = morning
+        .pixels()
+        .zip(afternoon.pixels())
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(differing > 2000, "only {differing} pixels differ");
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
 }
