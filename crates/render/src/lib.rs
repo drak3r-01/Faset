@@ -10,7 +10,8 @@
 //! material id (see [`MaterialTable`]); shaders come from `faset-shaders`.
 //! The stylised lighting model (banded sun and point lights, hemispheric
 //! ambient, rim, height fog) is driven by the [`AmbienceProfile`] and the
-//! [`PointLight`]s of the [`RenderWorld`].
+//! [`PointLight`]s of the [`RenderWorld`]. The sun casts shadows through
+//! three texel-snapped cascades ([`fit_cascades`]) drawn in a first pass.
 //! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
 
 mod ambience;
@@ -27,6 +28,7 @@ mod material;
 mod mesh;
 mod opaque;
 mod select;
+mod shadow;
 mod target;
 
 use std::path::Path;
@@ -42,11 +44,12 @@ use frame::{FrameData, Garbage};
 use gpu::{image_barriers, GpuBuffer, ImageBarrier};
 use lighting::{pack_lighting, LightingBindings, LIGHTING_ALIGN, LIGHTING_SIZE};
 use opaque::{GBuffer, MeshArena, OpaquePipeline};
+use shadow::ShadowResources;
 use target::{Offscreen, Swapchain};
 
 pub use ambience::{
-    AmbienceError, AmbienceProfile, Ambient, Fog, Grading, Ramp, Rim, Sky, Sun, SunSource, Water,
-    Weather, WeatherKind, BUILTIN_PROFILES,
+    AmbienceError, AmbienceProfile, Ambient, Fog, Grading, Ramp, Rim, ShadowBias, Sky, Sun,
+    SunSource, Water, Weather, WeatherKind, BUILTIN_PROFILES,
 };
 pub use camera::{
     halton, jitter, jitter_ndc, jittered_projection, motion_vector, perspective_reverse_z, Camera,
@@ -59,6 +62,9 @@ pub use hot_reload::ShaderWatcher;
 pub use lighting::{height_fog, point_light_attenuation, PointLight, MAX_POINT_LIGHTS};
 pub use material::{Material, MaterialError, MaterialTable, Pattern};
 pub use mesh::{cube_mesh, Aabb, CubeFaceColors, MeshId, Vertex, CUBE_FACE_TINTS};
+pub use shadow::{
+    cascade_splits, fit_cascades, ShadowCascades, CASCADE_COUNT, SHADOW_DISTANCE, SHADOW_MAP_SIZE,
+};
 
 /// Which physical device to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -181,7 +187,15 @@ pub struct Renderer {
     target: Target,
     deferred: DeferredQueue<Garbage>,
     opaque: OpaquePipeline,
+    shadow: ShadowResources,
     lighting: LightingBindings,
+    /// Fits the cascades to this camera instead of the view camera.
+    shadow_camera: Option<Camera>,
+    /// Per-cascade shadow caster draws; their instances follow the view's
+    /// instances in the frame's instance buffer.
+    shadow_draws: [Vec<DrawBatch>; CASCADE_COUNT],
+    /// Scratch lists of one cascade's culling.
+    shadow_scratch: (Vec<GpuInstance>, Vec<DrawBatch>),
     /// True while the point light list overflows (warned once).
     light_overflow_warned: bool,
     /// Created at the first frame and whenever the target size changes.
@@ -257,11 +271,13 @@ impl Renderer {
                 }
             }
         }
+        let mut shadow = None;
         let mut lighting = None;
         let mut opaque = None;
         let target = result
             .and_then(|()| {
-                let bindings = lighting.insert(LightingBindings::new(&ctx, &frames)?);
+                let maps = shadow.insert(ShadowResources::new(&mut ctx)?);
+                let bindings = lighting.insert(LightingBindings::new(&ctx, &frames, maps)?);
                 let layout = bindings.set_layout;
                 opaque = Some(OpaquePipeline::new(
                     &mut ctx,
@@ -271,13 +287,17 @@ impl Renderer {
                 Ok(())
             })
             .and_then(|()| make_target(&mut ctx));
-        match (target, opaque, lighting) {
-            (Ok(target), Some(opaque), Some(lighting)) => Ok(Self {
+        match (target, opaque, lighting, shadow) {
+            (Ok(target), Some(opaque), Some(lighting), Some(shadow)) => Ok(Self {
                 frames,
                 target,
                 deferred: DeferredQueue::new(),
                 opaque,
+                shadow,
                 lighting,
+                shadow_camera: None,
+                shadow_draws: Default::default(),
+                shadow_scratch: (Vec::new(), Vec::new()),
                 light_overflow_warned: false,
                 gbuffer: None,
                 arena: None,
@@ -289,12 +309,15 @@ impl Renderer {
                 material_time: 0.0,
                 ctx,
             }),
-            (result, opaque, lighting) => {
+            (result, opaque, lighting, shadow) => {
                 if let Some(mut p) = opaque {
                     p.destroy(&mut ctx);
                 }
                 if let Some(mut l) = lighting {
                     l.destroy(&ctx);
+                }
+                if let Some(mut s) = shadow {
+                    s.destroy(&mut ctx);
                 }
                 for mut f in frames {
                     f.destroy(&mut ctx);
@@ -470,6 +493,45 @@ impl Renderer {
                 "instances reference meshes that were never uploaded"
             );
         }
+        self.stats = FrameStats {
+            draw_calls: self.draws.len() as u32,
+            instances_drawn: self.gpu_instances.len() as u32,
+            instances_culled: (world.instances.len() - self.gpu_instances.len() - unknown) as u32,
+        };
+
+        // Sun shadow cascades, and the casters of each one (culled against
+        // the cascade volume, so casters outside the view are kept). Their
+        // instances are appended after the view's.
+        let sun_dir =
+            glam::Vec3::from_array(world.ambience.sun.direction).normalize_or(glam::Vec3::Y);
+        let cascades = (world.ambience.sun.intensity > 0.0).then(|| {
+            let fit_camera = self.shadow_camera.as_ref().unwrap_or(camera);
+            let near = fit_camera.proj.w_axis.z;
+            let near = if near > 0.0 { near } else { 0.1 };
+            fit_cascades(fit_camera, sun_dir, near, SHADOW_DISTANCE)
+        });
+        for draws in &mut self.shadow_draws {
+            draws.clear();
+        }
+        if let Some(cascades) = &cascades {
+            for (matrix, draws) in cascades.matrices.iter().zip(&mut self.shadow_draws) {
+                let (scratch, scratch_draws) = &mut self.shadow_scratch;
+                cull::cull_and_batch(
+                    matrix,
+                    matrix,
+                    &world.instances,
+                    meshes,
+                    scratch,
+                    scratch_draws,
+                );
+                let base = self.gpu_instances.len() as u32;
+                draws.extend(scratch_draws.iter().map(|d| DrawBatch {
+                    first_instance: d.first_instance + base,
+                    ..*d
+                }));
+                self.gpu_instances.extend_from_slice(scratch);
+            }
+        }
         let frame = &mut self.frames[slot];
         let instance_bytes: &[u8] = bytemuck::cast_slice(&self.gpu_instances);
         if !instance_bytes.is_empty() {
@@ -490,11 +552,6 @@ impl Renderer {
             let buffer = frame.instances.as_mut().expect("allocated above");
             buffer.mapped()[..instance_bytes.len()].copy_from_slice(instance_bytes);
         }
-        self.stats = FrameStats {
-            draw_calls: self.draws.len() as u32,
-            instances_drawn: self.gpu_instances.len() as u32,
-            instances_culled: (world.instances.len() - self.gpu_instances.len() - unknown) as u32,
-        };
         let jitter = jitter_ndc(camera.jitter_px, (extent.width, extent.height));
 
         // Lighting block, written into this frame's uniform ring.
@@ -503,6 +560,7 @@ impl Renderer {
             &world.ambience,
             &world.lights,
             camera_pos,
+            cascades.as_ref(),
             &mut self.light_overflow_warned,
         );
         let frame = &mut self.frames[slot];
@@ -706,6 +764,102 @@ impl Renderer {
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
+            // Pass 1: sun shadow cascades. The maps are shared by both
+            // frames in flight; the first barrier orders these writes after
+            // the previous frame's reads (same queue, submission order).
+            self.shadow.barrier(
+                device,
+                frame.cmd,
+                vk::PipelineStageFlags::FRAGMENT_SHADER
+                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                vk::AccessFlags::SHADER_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            );
+            if cascades.is_some() {
+                let map_area = vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: vk::Extent2D {
+                        width: SHADOW_MAP_SIZE,
+                        height: SHADOW_MAP_SIZE,
+                    },
+                };
+                let map_viewport = vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: SHADOW_MAP_SIZE as f32,
+                    height: SHADOW_MAP_SIZE as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                };
+                for (view, draws) in self.shadow.layer_views.iter().zip(&self.shadow_draws) {
+                    let depth = vk::RenderingAttachmentInfo::default()
+                        .image_view(*view)
+                        .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                        .load_op(vk::AttachmentLoadOp::CLEAR)
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                        .clear_value(vk::ClearValue {
+                            depth_stencil: vk::ClearDepthStencilValue {
+                                depth: 0.0,
+                                stencil: 0,
+                            },
+                        });
+                    let pass = vk::RenderingInfo::default()
+                        .render_area(map_area)
+                        .layer_count(1)
+                        .depth_attachment(&depth);
+                    self.ctx
+                        .dynamic_rendering
+                        .cmd_begin_rendering(frame.cmd, &pass);
+                    if let (Some(arena), Some(instances), false) =
+                        (arena, frame.instances.as_ref(), draws.is_empty())
+                    {
+                        device.cmd_bind_pipeline(
+                            frame.cmd,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            self.shadow.pipeline,
+                        );
+                        device.cmd_set_viewport(frame.cmd, 0, &[map_viewport]);
+                        device.cmd_set_scissor(frame.cmd, 0, &[map_area]);
+                        device.cmd_bind_vertex_buffers(
+                            frame.cmd,
+                            0,
+                            &[arena.vertices.buffer, instances.buffer],
+                            &[0, 0],
+                        );
+                        device.cmd_bind_index_buffer(
+                            frame.cmd,
+                            arena.indices.buffer,
+                            0,
+                            vk::IndexType::UINT32,
+                        );
+                        for d in draws {
+                            device.cmd_draw_indexed(
+                                frame.cmd,
+                                d.index_count,
+                                d.instance_count,
+                                d.first_index,
+                                d.base_vertex,
+                                d.first_instance,
+                            );
+                        }
+                    }
+                    self.ctx.dynamic_rendering.cmd_end_rendering(frame.cmd);
+                }
+            }
+            self.shadow.barrier(
+                device,
+                frame.cmd,
+                vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                vk::AccessFlags::SHADER_READ,
+            );
             image_barriers(
                 device,
                 frame.cmd,
@@ -997,6 +1151,14 @@ impl Renderer {
         self.material_time = seconds;
     }
 
+    /// Fits the sun shadow cascades to `camera` instead of the view camera
+    /// (`None` goes back to the view camera). Lets tools and tests move the
+    /// cascades while the image stays put, e.g. to check that shadow edges
+    /// do not shimmer.
+    pub fn set_shadow_camera(&mut self, camera: Option<Camera>) {
+        self.shadow_camera = camera;
+    }
+
     /// Swaps the opaque pipeline for one built from new SPIR-V; keeps the
     /// current one on error.
     #[cfg(feature = "hot-reload")]
@@ -1105,6 +1267,7 @@ impl Drop for Renderer {
         }
         self.opaque.destroy(&mut self.ctx);
         self.lighting.destroy(&self.ctx);
+        self.shadow.destroy(&mut self.ctx);
         for mut f in self.frames.drain(..) {
             f.destroy(&mut self.ctx);
         }

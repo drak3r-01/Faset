@@ -12,7 +12,7 @@ use faset_render::glam::{Mat4, Vec2, Vec3};
 use faset_render::{
     cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, Instance, MaterialTable,
     MeshId, Pattern, PointLight, RenderConfig, RenderError, RenderWorld, Renderer,
-    BUILTIN_PROFILES, CUBE_FACE_TINTS,
+    BUILTIN_PROFILES, CUBE_FACE_TINTS, SHADOW_DISTANCE,
 };
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -921,5 +921,246 @@ fn hot_reload_swaps_valid_shaders_and_keeps_old_on_error() {
     }
     assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
     let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(out);
+}
+
+const SHADOW_REFERENCE: &str = "tests/refs/shadow_cascade.png";
+
+/// The shadow test profile: the built-in day profile without fog, with the
+/// sun behind the camera, to its left and high, so shadows fall into view.
+fn shadow_ambience() -> AmbienceProfile {
+    let mut ambience = AmbienceProfile::builtin("day").expect("built-in profile");
+    ambience.sun.direction = [-0.55, 0.6, 0.5];
+    ambience.fog.density = 0.0;
+    ambience
+}
+
+fn shadow_view(eye: Vec3) -> Camera {
+    Camera::new(
+        faset_render::glam::camera::rh::view::look_at_mat4(
+            eye,
+            eye + Vec3::new(0.0, -5.0, -18.0),
+            Vec3::Y,
+        ),
+        perspective_reverse_z(60f32.to_radians(), 1.0, 0.1),
+    )
+}
+
+const SHADOW_EYE: Vec3 = Vec3::new(0.0, 5.0, 10.0);
+
+/// A sand ground and boxes at 8 to 45 m from the camera, so that all three
+/// cascades hold shadow edges.
+fn shadow_scene(renderer: &mut Renderer) -> Vec<Instance> {
+    let mut mesh = |rgb: [u8; 3]| {
+        let (v, i) = cube_mesh(0.5, &[rgb; 6], 0);
+        renderer.upload_mesh(&v, &i).unwrap()
+    };
+    let (sand, red, blue, grey) = (
+        mesh([200, 180, 140]),
+        mesh([200, 70, 60]),
+        mesh([70, 100, 200]),
+        mesh([190, 190, 190]),
+    );
+    let place = |mesh, pos: Vec3, scale: Vec3, turn: f32| {
+        Instance::new(
+            mesh,
+            0,
+            Mat4::from_translation(pos) * Mat4::from_rotation_y(turn) * Mat4::from_scale(scale),
+        )
+    };
+    vec![
+        place(
+            sand,
+            Vec3::new(0.0, -0.5, -20.0),
+            Vec3::new(120.0, 1.0, 120.0),
+            0.0,
+        ),
+        place(red, Vec3::new(-2.5, 0.75, 2.0), Vec3::splat(1.5), 0.3),
+        place(
+            blue,
+            Vec3::new(2.0, 2.0, -10.0),
+            Vec3::new(1.5, 4.0, 1.5),
+            0.0,
+        ),
+        place(
+            grey,
+            Vec3::new(-3.0, 1.0, -4.0),
+            Vec3::new(1.0, 2.0, 1.0),
+            0.7,
+        ),
+        place(
+            red,
+            Vec3::new(4.0, 1.5, -20.0),
+            Vec3::new(2.0, 3.0, 2.0),
+            0.2,
+        ),
+        place(
+            grey,
+            Vec3::new(-6.0, 3.0, -36.0),
+            Vec3::new(10.0, 6.0, 1.5),
+            0.5,
+        ),
+        place(
+            blue,
+            Vec3::new(8.0, 4.0, -42.0),
+            Vec3::new(3.0, 8.0, 3.0),
+            0.0,
+        ),
+    ]
+}
+
+fn shadow_world(instances: Vec<Instance>) -> RenderWorld {
+    RenderWorld {
+        clear_color: [0.55, 0.7, 0.9, 1.0],
+        camera: shadow_view(SHADOW_EYE),
+        instances,
+        ambience: shadow_ambience(),
+        ..RenderWorld::default()
+    }
+}
+
+fn render_shadow_reference(path: &Path) {
+    let mut renderer = headless((256, 256));
+    let instances = shadow_scene(&mut renderer);
+    let world = shadow_world(instances);
+    // Twice, so both frame slots (and the shared shadow maps) are reused.
+    for _ in 0..2 {
+        renderer.render_frame(&world).unwrap();
+    }
+    renderer.read_back_png(path).unwrap();
+    assert_eq!(renderer.validation_message_count(), 0);
+}
+
+#[test]
+fn shadow_cascade_matches_reference() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("shadow_cascade.png");
+    render_shadow_reference(&out);
+    let reference = load_rgba(&Path::new(env!("CARGO_MANIFEST_DIR")).join(SHADOW_REFERENCE));
+    let got = load_rgba(&out);
+    let error = max_channel_error(&got, &reference);
+    assert!(
+        error <= 1,
+        "max channel error {error} > 1 (output: {})",
+        out.display()
+    );
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+    let _ = std::fs::remove_file(out);
+}
+
+/// Regenerates the shadow reference from a lavapipe render. Inspect the
+/// image before committing it.
+#[test]
+#[ignore = "regenerates tests/refs/shadow_cascade.png"]
+fn bless_shadow_reference() {
+    render_shadow_reference(&Path::new(env!("CARGO_MANIFEST_DIR")).join(SHADOW_REFERENCE));
+}
+
+/// Pixel of a world point seen by `camera` in a `size` x `size` image.
+fn pixel_of(camera: &Camera, p: Vec3, size: u32) -> (u32, u32) {
+    let clip = camera.view_proj() * p.extend(1.0);
+    let ndc = clip.truncate().truncate() / clip.w;
+    let to_px = |v: f32| ((v * 0.5 + 0.5) * size as f32) as u32;
+    (to_px(ndc.x), to_px(ndc.y))
+}
+
+fn luminance(img: &image::RgbaImage, (x, y): (u32, u32)) -> f32 {
+    let [r, g, b, _] = img.get_pixel(x, y).0;
+    0.2126 * srgb_decode(r) + 0.7152 * srgb_decode(g) + 0.0722 * srgb_decode(b)
+}
+
+/// A cast shadow darkens the ground behind its box and nothing else does;
+/// with the sun off the same point is lit.
+#[test]
+fn box_casts_a_shadow_on_the_ground() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("shadow_ground.png");
+    {
+        let mut renderer = headless((256, 256));
+        let instances = shadow_scene(&mut renderer);
+        let mut world = shadow_world(instances);
+        // The 4 m pillar at (2, 0..4, -10): its top centre, projected along
+        // the sun onto the ground, is in shadow.
+        let sun = Vec3::from_array(world.ambience.sun.direction).normalize();
+        let top = Vec3::new(2.0, 4.0, -10.0);
+        let shadowed = top - sun * (top.y / sun.y);
+        let lit = Vec3::new(-8.0, 0.0, -14.0);
+        let sample = |renderer: &mut Renderer, world: &RenderWorld| {
+            renderer.render_frame(world).unwrap();
+            renderer.read_back_png(&out).unwrap();
+            let img = load_rgba(&out);
+            let at = |p| luminance(&img, pixel_of(&world.camera, p, 256));
+            (at(shadowed), at(lit))
+        };
+        let (in_shadow, in_light) = sample(&mut renderer, &world);
+        assert!(
+            in_shadow < 0.6 * in_light,
+            "shadowed {in_shadow:.4} vs lit {in_light:.4}"
+        );
+        world.ambience.sun.intensity = 0.0;
+        let (off_a, off_b) = sample(&mut renderer, &world);
+        assert!(
+            (off_a - off_b).abs() < 0.01 * off_a,
+            "no sun, no shadow: {off_a:.4} vs {off_b:.4}"
+        );
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+    let _ = std::fs::remove_file(out);
+}
+
+/// The cascades follow a camera that moves in half-texel steps while the
+/// view stays put: whenever the snapped matrices move, they move by whole
+/// texels, so the maps are rasterised on the same world grid and no shadow
+/// edge pixel changes between frames.
+#[test]
+fn shadow_edges_do_not_shimmer_while_the_cascades_move() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("shadow_stability.png");
+    {
+        let mut renderer = headless((256, 256));
+        let instances = shadow_scene(&mut renderer);
+        let world = shadow_world(instances);
+        let sun = Vec3::from_array(world.ambience.sun.direction).normalize();
+        let fit = |camera: &Camera| faset_render::fit_cascades(camera, sun, 0.1, SHADOW_DISTANCE);
+        let texel = fit(&world.camera).texel_size(0);
+        let direction = Vec3::new(1.0, 0.0, 0.6).normalize();
+
+        let mut previous: Option<image::RgbaImage> = None;
+        let mut previous_matrix = None;
+        let (mut shifted, mut kept) = (0, 0);
+        for step in 0..24 {
+            let eye = SHADOW_EYE + direction * (0.5 * texel * step as f32);
+            let shadow_camera = shadow_view(eye);
+            renderer.set_shadow_camera(Some(shadow_camera));
+            renderer.render_frame(&world).unwrap();
+            renderer.read_back_png(&out).unwrap();
+            let img = load_rgba(&out);
+            let matrix = fit(&shadow_camera).matrices[0];
+            if let (Some(prev), Some(prev_matrix)) = (&previous, previous_matrix) {
+                if matrix == prev_matrix {
+                    kept += 1;
+                } else {
+                    shifted += 1;
+                }
+                let changed = img
+                    .pixels()
+                    .zip(prev.pixels())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                assert_eq!(changed, 0, "step {step}: {changed} pixels changed");
+            }
+            previous = Some(img);
+            previous_matrix = Some(matrix);
+        }
+        assert!(shifted >= 4 && kept >= 4, "shifted {shifted}, kept {kept}");
+        // The frozen image does contain shadow edges.
+        let img = previous.unwrap();
+        let darkest = img.pixels().map(|p| p.0[0]).min().unwrap();
+        let brightest = img.pixels().map(|p| p.0[0]).max().unwrap();
+        assert!(brightest > darkest + 40);
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
     let _ = std::fs::remove_file(out);
 }
