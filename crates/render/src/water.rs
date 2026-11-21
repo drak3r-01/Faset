@@ -18,7 +18,7 @@ use faset_core::glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::ambience::{AmbienceProfile, Water};
-use crate::opaque::{DEPTH_FORMAT, HDR_FORMAT};
+use crate::opaque::{DEPTH_FORMAT, HDR_FORMAT, MOTION_FORMAT, NORMAL_FORMAT, REACTIVE_FORMAT};
 use crate::weather::particle_position;
 use crate::RenderError;
 
@@ -346,14 +346,18 @@ impl WaterPipeline {
             .depth_test_enable(true)
             .depth_write_enable(true)
             .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
-        let colour = vk::PipelineColorBlendAttachmentState::default()
+        // Colour, motion and normals; the reactive mask (the fourth target of
+        // this rendering) is left untouched.
+        let write = vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA);
-        let blend_attachments = [colour];
+        let masked = vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::empty());
+        let blend_attachments = [write, write, write, masked];
         let blend =
             vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);
         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
-        let color_formats = [HDR_FORMAT];
+        let color_formats = [HDR_FORMAT, MOTION_FORMAT, NORMAL_FORMAT, REACTIVE_FORMAT];
         let mut rendering = vk::PipelineRenderingCreateInfo::default()
             .color_attachment_formats(&color_formats)
             .depth_attachment_format(DEPTH_FORMAT);

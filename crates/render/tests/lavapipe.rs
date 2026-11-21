@@ -1852,6 +1852,47 @@ fn water_surface_is_drawn_and_animates() {
     assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
 }
 
+/// The water surface writes motion vectors (camera motion), so temporal
+/// anti-aliasing can follow it; a static camera gives none.
+#[test]
+fn water_surface_writes_motion_vectors() {
+    let (messages, _guard) = capture_messages();
+    let size = 64u32;
+    let eye = Vec3::new(0.0, 3.0, 5.0);
+    let target = Vec3::new(0.0, 0.0, -10.0);
+    let moved = |dx: f32| {
+        let mut renderer = headless((size, size));
+        renderer.set_material_time(1.0);
+        let mut camera = look_at(eye, target);
+        // The camera moved `dx` metres right since the previous frame.
+        let prev = look_at(
+            eye - Vec3::new(dx, 0.0, 0.0),
+            target - Vec3::new(dx, 0.0, 0.0),
+        );
+        camera.prev_view_proj = prev.view_proj();
+        let world = RenderWorld {
+            camera,
+            water: Some(scene_water_at(0.5)),
+            ..RenderWorld::default()
+        };
+        renderer.render_frame(&world).unwrap();
+        let motion = renderer.read_back_motion().unwrap();
+        assert_eq!(renderer.validation_message_count(), 0);
+        motion
+    };
+    // Rows below the horizon look at the water.
+    let water_rows =
+        |motion: &[[f32; 2]]| -> Vec<[f32; 2]> { motion[(size as usize * 48)..].to_vec() };
+    let still = water_rows(&moved(0.0));
+    assert!(still.iter().all(|m| *m == [0.0, 0.0]), "static camera");
+    let moving = water_rows(&moved(0.5));
+    assert!(
+        moving.iter().all(|m| m[0] < -1e-4),
+        "the water moves left on screen when the camera moves right"
+    );
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
 fn scene_water_at(height: f32) -> WaterParams {
     WaterParams {
         height,

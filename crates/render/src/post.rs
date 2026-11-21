@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ambience::AmbienceProfile;
 use crate::context::Context;
+use crate::deferred::FRAMES_IN_FLIGHT;
 use crate::frame::OwnedImage;
 use crate::gpu::{create_image, image_barriers, ImageBarrier};
 use crate::opaque::HDR_FORMAT;
@@ -219,31 +220,165 @@ pub(crate) struct PostPipelines {
     fxaa: vk::Pipeline,
 }
 
+/// Descriptor sets that bind an image that changes from frame to frame (the
+/// scene colour, or an upscaler's output): one pool per frame in flight, reset
+/// and refilled when the frame is recorded.
+struct SetRing {
+    pools: [vk::DescriptorPool; FRAMES_IN_FLIGHT],
+    sets_per_frame: u32,
+}
+
+/// Three sampled images of one set: `(view, layout)` for bindings 0, 2, 3.
+type SetViews = [(vk::ImageView, vk::ImageLayout); 3];
+
+impl SetRing {
+    fn new(device: &ash::Device, sets_per_frame: u32) -> Result<Self, RenderError> {
+        let mut ring = Self {
+            pools: [vk::DescriptorPool::null(); FRAMES_IN_FLIGHT],
+            sets_per_frame,
+        };
+        let sizes = [
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(3 * sets_per_frame),
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::SAMPLER)
+                .descriptor_count(sets_per_frame),
+        ];
+        for i in 0..FRAMES_IN_FLIGHT {
+            // SAFETY: valid device and create info.
+            let pool = unsafe {
+                device.create_descriptor_pool(
+                    &vk::DescriptorPoolCreateInfo::default()
+                        .max_sets(sets_per_frame)
+                        .pool_sizes(&sizes),
+                    None,
+                )
+            };
+            match pool {
+                Ok(p) => ring.pools[i] = p,
+                Err(e) => {
+                    ring.destroy(device);
+                    return Err(e.into());
+                }
+            }
+        }
+        Ok(ring)
+    }
+
+    /// Frees the sets of the previous use of `slot` and returns one set per
+    /// entry of `views`, written with them.
+    ///
+    /// # Safety
+    /// The GPU must be done with the previous sets of `slot` (the frame's
+    /// fence was waited on), and `views` must be live.
+    unsafe fn fill(
+        &self,
+        device: &ash::Device,
+        layout: vk::DescriptorSetLayout,
+        slot: usize,
+        views: &[SetViews],
+    ) -> Result<Vec<vk::DescriptorSet>, RenderError> {
+        debug_assert!(views.len() as u32 <= self.sets_per_frame);
+        let pool = self.pools[slot % FRAMES_IN_FLIGHT];
+        let layouts = vec![layout; views.len()];
+        // SAFETY: forwarded from the caller; the pool holds enough sets.
+        let sets = unsafe {
+            device.reset_descriptor_pool(pool, vk::DescriptorPoolResetFlags::empty())?;
+            device.allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(pool)
+                    .set_layouts(&layouts),
+            )?
+        };
+        write_image_sets(device, &sets, views);
+        Ok(sets)
+    }
+
+    fn destroy(&mut self, device: &ash::Device) {
+        for pool in &mut self.pools {
+            // SAFETY: the device is idle; null is a no-op.
+            unsafe { device.destroy_descriptor_pool(*pool, None) };
+            *pool = vk::DescriptorPool::null();
+        }
+    }
+}
+
+/// Points bindings 0, 2 and 3 of each set at its three views.
+fn write_image_sets(device: &ash::Device, sets: &[vk::DescriptorSet], views: &[SetViews]) {
+    let infos: Vec<[vk::DescriptorImageInfo; 3]> = views
+        .iter()
+        .map(|v| {
+            v.map(|(view, layout)| {
+                vk::DescriptorImageInfo::default()
+                    .image_view(view)
+                    .image_layout(layout)
+            })
+        })
+        .collect();
+    let mut updates = Vec::new();
+    for (set, info) in sets.iter().zip(&infos) {
+        for (slot, binding) in [0u32, 2, 3].into_iter().enumerate() {
+            updates.push(
+                vk::WriteDescriptorSet::default()
+                    .dst_set(*set)
+                    .dst_binding(binding)
+                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                    .image_info(std::slice::from_ref(&info[slot])),
+            );
+        }
+    }
+    // SAFETY: live sets and views; `infos` outlives the call.
+    unsafe { device.update_descriptor_sets(&updates, &[]) };
+}
+
 /// Images and descriptor sets of one target size.
 pub(crate) struct PostTargets {
     extent: vk::Extent2D,
     ping: [OwnedImage; 2],
     bloom: Vec<OwnedImage>,
     pool: vk::DescriptorPool,
-    /// `[hdr, depth, normal]`.
-    contour_set: vk::DescriptorSet,
-    /// The same image three times, for `Cur::Hdr`, `A`, `B`.
-    any_sets: [vk::DescriptorSet; 3],
-    /// `[colour, bloom level 0, colour]` for `Cur::Hdr`, `A`.
-    tonemap_sets: [vk::DescriptorSet; 2],
+    /// The same image three times, for `Cur::A` and `Cur::B`.
+    any_sets: [vk::DescriptorSet; 2],
+    /// `[a, bloom level 0, a]`.
+    tonemap_a: vk::DescriptorSet,
     /// One bloom level three times.
     bloom_sets: Vec<vk::DescriptorSet>,
+    /// The sets that read the input colour: contours, any, tonemap.
+    input_sets: SetRing,
+}
+
+/// The input-colour sets of a frame, see [`PostTargets::input_sets`].
+struct InputSets {
+    /// `[hdr, depth, normal]`.
+    contour: vk::DescriptorSet,
+    /// The input colour three times.
+    any: vk::DescriptorSet,
+    /// `[hdr, bloom level 0, hdr]`.
+    tonemap: vk::DescriptorSet,
+}
+
+/// Contour pass at the scene's internal resolution, run before an upscaler.
+pub(crate) struct SceneContours {
+    extent: vk::Extent2D,
+    image: OwnedImage,
+    input_sets: SetRing,
 }
 
 /// The chain: settings, pipelines and the targets.
 pub(crate) struct PostChain {
     pub settings: PostSettings,
+    /// A temporal upscaler resolves anti-aliasing: FXAA is skipped.
+    pub temporal_aa: bool,
     pipelines: PostPipelines,
     pub targets: Option<PostTargets>,
+    scene: Option<SceneContours>,
 }
 
-/// Images of the opaque pass the chain reads.
+/// Images of the scene the chain reads.
 pub(crate) struct PostInputs {
+    /// The colour the chain starts from: the HDR buffer, or an upscaler's
+    /// output (in `SHADER_READ_ONLY_OPTIMAL` for the whole chain).
     pub hdr: vk::Image,
     pub hdr_view: vk::ImageView,
     pub depth_view: vk::ImageView,
@@ -254,14 +389,21 @@ impl PostChain {
     pub(crate) fn new(ctx: &Context, settings: PostSettings) -> Result<Self, RenderError> {
         Ok(Self {
             settings,
+            temporal_aa: false,
             pipelines: PostPipelines::new(&ctx.device)?,
             targets: None,
+            scene: None,
         })
     }
 
     /// True when at least one pass would be recorded for these parameters.
     pub(crate) fn is_active(&self, params: &PostParams) -> bool {
         self.passes(params) != Passes::default()
+    }
+
+    /// True when the contour pass runs for these parameters.
+    pub(crate) fn contours_active(&self, params: &PostParams) -> bool {
+        self.passes(params).contours
     }
 
     fn passes(&self, p: &PostParams) -> Passes {
@@ -272,7 +414,7 @@ impl PostChain {
             bloom,
             tonemap: s.tonemap || s.grading || bloom,
             effects: s.screen_effects && p.effects_active(),
-            fxaa: s.fxaa,
+            fxaa: s.fxaa && !self.temporal_aa,
         }
     }
 
@@ -281,7 +423,6 @@ impl PostChain {
         &mut self,
         ctx: &mut Context,
         extent: vk::Extent2D,
-        inputs: &PostInputs,
     ) -> Result<(), RenderError> {
         if let Some(t) = &self.targets {
             if t.extent == extent {
@@ -294,34 +435,159 @@ impl PostChain {
         if let Some(old) = self.targets.take() {
             old.destroy(ctx);
         }
-        self.targets = Some(PostTargets::new(ctx, &self.pipelines, extent, inputs)?);
+        self.targets = Some(PostTargets::new(ctx, &self.pipelines, extent)?);
         Ok(())
+    }
+
+    /// (Re)creates the scene-resolution contour target; waits for the device
+    /// when the size changed.
+    pub(crate) fn ensure_scene(
+        &mut self,
+        ctx: &mut Context,
+        extent: vk::Extent2D,
+    ) -> Result<(), RenderError> {
+        if let Some(s) = &self.scene {
+            if s.extent == extent {
+                return Ok(());
+            }
+        }
+        // SAFETY: valid device; makes the old target unused.
+        unsafe { ctx.device.device_wait_idle() }?;
+        if let Some(mut old) = self.scene.take() {
+            old.input_sets.destroy(&ctx.device);
+            old.image.destroy(ctx);
+        }
+        let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED;
+        let image = create_image(
+            ctx,
+            "post-contours",
+            extent,
+            HDR_FORMAT,
+            usage,
+            vk::ImageAspectFlags::COLOR,
+        )?;
+        match SetRing::new(&ctx.device, 1) {
+            Ok(input_sets) => {
+                self.scene = Some(SceneContours {
+                    extent,
+                    image,
+                    input_sets,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                let mut image = image;
+                image.destroy(ctx);
+                Err(e)
+            }
+        }
     }
 
     pub(crate) fn destroy(&mut self, ctx: &mut Context) {
         if let Some(t) = self.targets.take() {
             t.destroy(ctx);
         }
+        if let Some(mut s) = self.scene.take() {
+            s.input_sets.destroy(&ctx.device);
+            s.image.destroy(ctx);
+        }
         self.pipelines.destroy(&ctx.device);
+    }
+
+    /// Records the contour pass at the scene's internal resolution, for an
+    /// upscaler to take over: returns the image holding the outlined colour
+    /// (`SHADER_READ_ONLY_OPTIMAL`) and its view, or `None` when contours are
+    /// off. Same input layouts as [`Self::record`].
+    ///
+    /// # Safety
+    /// As [`Self::record`]; the scene target must exist ([`Self::ensure_scene`]).
+    pub(crate) unsafe fn record_scene_contours(
+        &self,
+        ctx: &Context,
+        cmd: vk::CommandBuffer,
+        slot: usize,
+        inputs: &PostInputs,
+        params: &PostParams,
+        near: f32,
+    ) -> Result<Option<(vk::Image, vk::ImageView)>, RenderError> {
+        if !self.passes(params).contours {
+            return Ok(None);
+        }
+        let scene = self.scene.as_ref().expect("scene target created");
+        let read = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        let views = [[
+            (inputs.hdr_view, read),
+            (
+                inputs.depth_view,
+                vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            ),
+            (inputs.normal_view, read),
+        ]];
+        // SAFETY: the slot's fence was waited on; the views are live.
+        let set = unsafe {
+            scene
+                .input_sets
+                .fill(&ctx.device, self.pipelines.set_layout, slot, &views)
+        }?[0];
+        let mut rec = Recorder {
+            ctx,
+            cmd,
+            layout: self.pipelines.layout,
+        };
+        let push = self.contour_push(params, near);
+        let size = (scene.extent.width, scene.extent.height);
+        // SAFETY: forwarded.
+        unsafe {
+            rec.to_attachment(scene.image.image, vk::ImageLayout::UNDEFINED);
+            rec.draw(
+                self.pipelines.contours,
+                set,
+                &scene.image,
+                size,
+                &push,
+                false,
+            );
+            rec.to_read(scene.image.image);
+        }
+        Ok(Some((scene.image.image, scene.image.view)))
+    }
+
+    fn contour_push(&self, params: &PostParams, near: f32) -> Push {
+        let mut push = [[0.0; 4]; 8];
+        push[0] = [
+            params.contour_thickness.max(1.0),
+            params.contour_strength.clamp(0.0, 1.0),
+            params.contour_depth_threshold,
+            params.contour_normal_threshold,
+        ];
+        let c = params.contour_color;
+        push[1] = [c[0], c[1], c[2], near];
+        push
     }
 
     /// Records the chain. `inputs.hdr` must be in `SHADER_READ_ONLY_OPTIMAL`,
     /// the depth in `DEPTH_STENCIL_READ_ONLY_OPTIMAL` and the normals in
     /// `SHADER_READ_ONLY_OPTIMAL`. Returns the image holding the result, in
     /// `SHADER_READ_ONLY_OPTIMAL` (the input itself when nothing ran).
+    /// `contours_done` skips the contour pass: an upscaler's input already
+    /// carries it ([`Self::record_scene_contours`]).
     ///
     /// # Safety
     /// `cmd` must be recording on a queue of `ctx.device`, outside a
-    /// rendering, and the targets must exist ([`Self::ensure_targets`]).
+    /// rendering, the targets must exist ([`Self::ensure_targets`]), and the
+    /// GPU must be done with the previous use of frame `slot`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) unsafe fn record(
         &self,
         ctx: &Context,
         cmd: vk::CommandBuffer,
+        slot: usize,
         inputs: &PostInputs,
         params: &PostParams,
         near: f32,
         time: f32,
-    ) -> vk::Image {
+        contours_done: bool,
+    ) -> Result<vk::Image, RenderError> {
         let t = self.targets.as_ref().expect("targets created");
         let p = self.passes(params);
         let pl = &self.pipelines;
@@ -330,37 +596,50 @@ impl PostChain {
             cmd,
             layout: pl.layout,
         };
+        let read = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        let d0 = t.bloom[0].view;
+        let views = [
+            [
+                (inputs.hdr_view, read),
+                (
+                    inputs.depth_view,
+                    vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                ),
+                (inputs.normal_view, read),
+            ],
+            [(inputs.hdr_view, read); 3],
+            [(inputs.hdr_view, read), (d0, read), (inputs.hdr_view, read)],
+        ];
+        // SAFETY: the slot's fence was waited on; the views are live.
+        let dynamic = unsafe { t.input_sets.fill(&ctx.device, pl.set_layout, slot, &views) }?;
+        let input_sets = InputSets {
+            contour: dynamic[0],
+            any: dynamic[1],
+            tonemap: dynamic[2],
+        };
         let image_of = |c: Cur| match c {
             Cur::Hdr => inputs.hdr,
             Cur::A => t.ping[0].image,
             Cur::B => t.ping[1].image,
         };
         let free = |c: Cur| if c == Cur::A { Cur::B } else { Cur::A };
-        let idx = |c: Cur| match c {
-            Cur::Hdr => 0,
-            Cur::A => 1,
-            Cur::B => 2,
+        let any_set = |c: Cur| match c {
+            Cur::Hdr => input_sets.any,
+            Cur::A => t.any_sets[0],
+            Cur::B => t.any_sets[1],
         };
         let extent_vec = (t.extent.width as f32, t.extent.height as f32);
         let ext = (t.extent.width, t.extent.height);
         let mut cur = Cur::Hdr;
 
         // Contours: Sobel on linear depth and normals.
-        if p.contours {
+        if p.contours && !contours_done {
             let target = &t.ping[0];
-            let mut push = [[0.0; 4]; 8];
-            push[0] = [
-                params.contour_thickness.max(1.0),
-                params.contour_strength.clamp(0.0, 1.0),
-                params.contour_depth_threshold,
-                params.contour_normal_threshold,
-            ];
-            let c = params.contour_color;
-            push[1] = [c[0], c[1], c[2], near];
+            let push = self.contour_push(params, near);
             // SAFETY: forwarded.
             unsafe {
                 rec.to_attachment(target.image, vk::ImageLayout::UNDEFINED);
-                rec.draw(pl.contours, t.contour_set, target, ext, &push, false);
+                rec.draw(pl.contours, input_sets.contour, target, ext, &push, false);
                 rec.to_read(target.image);
             }
             cur = Cur::A;
@@ -381,14 +660,7 @@ impl PostChain {
             unsafe {
                 let d0 = &t.bloom[0];
                 rec.to_attachment(d0.image, vk::ImageLayout::UNDEFINED);
-                rec.draw(
-                    pl.down,
-                    t.any_sets[idx(cur)],
-                    d0,
-                    bloom_exts[0],
-                    &push,
-                    false,
-                );
+                rec.draw(pl.down, any_set(cur), d0, bloom_exts[0], &push, false);
                 rec.to_read(d0.image);
                 for i in 1..BLOOM_LEVELS {
                     let prev = bloom_exts[i - 1];
@@ -460,7 +732,11 @@ impl PostChain {
                 rec.to_attachment(target.image, vk::ImageLayout::UNDEFINED);
                 rec.draw(
                     pl.tonemap,
-                    t.tonemap_sets[if cur == Cur::Hdr { 0 } else { 1 }],
+                    if cur == Cur::Hdr {
+                        input_sets.tonemap
+                    } else {
+                        t.tonemap_a
+                    },
                     target,
                     ext,
                     &push,
@@ -493,7 +769,7 @@ impl PostChain {
             // SAFETY: forwarded.
             unsafe {
                 rec.to_attachment(target.image, vk::ImageLayout::UNDEFINED);
-                rec.draw(pl.effects, t.any_sets[idx(cur)], target, ext, &push, false);
+                rec.draw(pl.effects, any_set(cur), target, ext, &push, false);
                 rec.to_read(target.image);
             }
             cur = target_cur;
@@ -507,12 +783,12 @@ impl PostChain {
             // SAFETY: forwarded.
             unsafe {
                 rec.to_attachment(target.image, vk::ImageLayout::UNDEFINED);
-                rec.draw(pl.fxaa, t.any_sets[idx(cur)], target, ext, &push, false);
+                rec.draw(pl.fxaa, any_set(cur), target, ext, &push, false);
                 rec.to_read(target.image);
             }
             cur = target_cur;
         }
-        image_of(cur)
+        Ok(image_of(cur))
     }
 }
 
@@ -874,7 +1150,6 @@ impl PostTargets {
         ctx: &mut Context,
         pl: &PostPipelines,
         extent: vk::Extent2D,
-        inputs: &PostInputs,
     ) -> Result<Self, RenderError> {
         let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT
             | vk::ImageUsageFlags::SAMPLED
@@ -908,30 +1183,36 @@ impl PostTargets {
             ping.next().expect("two ping images"),
             ping.next().expect("two ping images"),
         ];
+        let input_sets = match SetRing::new(&ctx.device, 3) {
+            Ok(ring) => ring,
+            Err(e) => {
+                for mut img in ping.into_iter().chain(bloom) {
+                    img.destroy(ctx);
+                }
+                return Err(e);
+            }
+        };
         let mut out = Self {
             extent,
             ping,
             bloom,
             pool: vk::DescriptorPool::null(),
-            contour_set: vk::DescriptorSet::null(),
-            any_sets: [vk::DescriptorSet::null(); 3],
-            tonemap_sets: [vk::DescriptorSet::null(); 2],
+            any_sets: [vk::DescriptorSet::null(); 2],
+            tonemap_a: vk::DescriptorSet::null(),
             bloom_sets: Vec::new(),
+            input_sets,
         };
-        if let Err(e) = out.make_sets(&ctx.device, pl, inputs) {
+        if let Err(e) = out.make_sets(&ctx.device, pl) {
             out.destroy(ctx);
             return Err(e);
         }
         Ok(out)
     }
 
-    fn make_sets(
-        &mut self,
-        device: &ash::Device,
-        pl: &PostPipelines,
-        inputs: &PostInputs,
-    ) -> Result<(), RenderError> {
-        let sets_count = 1 + 3 + 2 + BLOOM_LEVELS as u32;
+    /// The sets over the chain's own images; the ones over the input colour
+    /// are filled per frame ([`SetRing`]).
+    fn make_sets(&mut self, device: &ash::Device, pl: &PostPipelines) -> Result<(), RenderError> {
+        let sets_count = 2 + 1 + BLOOM_LEVELS as u32;
         let sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::SAMPLED_IMAGE)
@@ -958,58 +1239,23 @@ impl PostTargets {
                     .set_layouts(&layouts),
             )
         }?;
-        self.contour_set = sets[0];
-        self.any_sets = [sets[1], sets[2], sets[3]];
-        self.tonemap_sets = [sets[4], sets[5]];
-        self.bloom_sets = sets[6..].to_vec();
+        self.any_sets = [sets[0], sets[1]];
+        self.tonemap_a = sets[2];
+        self.bloom_sets = sets[3..].to_vec();
 
         let read = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-        let depth_read = vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        let hdr = inputs.hdr_view;
         let (a, b) = (self.ping[0].view, self.ping[1].view);
         let d0 = self.bloom[0].view;
-        let mut writes: Vec<(vk::DescriptorSet, [(vk::ImageView, vk::ImageLayout); 3])> = vec![
-            (
-                self.contour_set,
-                [
-                    (hdr, read),
-                    (inputs.depth_view, depth_read),
-                    (inputs.normal_view, read),
-                ],
-            ),
-            (self.any_sets[0], [(hdr, read); 3]),
-            (self.any_sets[1], [(a, read); 3]),
-            (self.any_sets[2], [(b, read); 3]),
-            (self.tonemap_sets[0], [(hdr, read), (d0, read), (hdr, read)]),
-            (self.tonemap_sets[1], [(a, read), (d0, read), (a, read)]),
+        let mut writes: Vec<(vk::DescriptorSet, SetViews)> = vec![
+            (self.any_sets[0], [(a, read); 3]),
+            (self.any_sets[1], [(b, read); 3]),
+            (self.tonemap_a, [(a, read), (d0, read), (a, read)]),
         ];
         for (set, level) in self.bloom_sets.iter().zip(&self.bloom) {
             writes.push((*set, [(level.view, read); 3]));
         }
-        let infos: Vec<[vk::DescriptorImageInfo; 3]> = writes
-            .iter()
-            .map(|(_, views)| {
-                views.map(|(view, layout)| {
-                    vk::DescriptorImageInfo::default()
-                        .image_view(view)
-                        .image_layout(layout)
-                })
-            })
-            .collect();
-        let mut updates = Vec::new();
-        for ((set, _), info) in writes.iter().zip(&infos) {
-            for (slot, binding) in [0u32, 2, 3].into_iter().enumerate() {
-                updates.push(
-                    vk::WriteDescriptorSet::default()
-                        .dst_set(*set)
-                        .dst_binding(binding)
-                        .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                        .image_info(std::slice::from_ref(&info[slot])),
-                );
-            }
-        }
-        // SAFETY: live sets and views; `infos` outlives the call.
-        unsafe { device.update_descriptor_sets(&updates, &[]) };
+        let (sets, views): (Vec<_>, Vec<_>) = writes.into_iter().unzip();
+        write_image_sets(device, &sets, &views);
         Ok(())
     }
 
@@ -1017,6 +1263,7 @@ impl PostTargets {
         // SAFETY: the device is idle or the caller waited; destroying the
         // pool frees its sets.
         unsafe { ctx.device.destroy_descriptor_pool(self.pool, None) };
+        self.input_sets.destroy(&ctx.device);
         for mut img in self.ping.into_iter().chain(self.bloom.drain(..)) {
             img.destroy(ctx);
         }

@@ -209,8 +209,12 @@ impl Context {
             .queue_priorities(&priorities)];
         let mut dynamic_rendering_feature =
             vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true);
+        // Water and weather write different subsets of the scene targets in one
+        // rendering, which needs a blend state per attachment.
+        let features = vk::PhysicalDeviceFeatures::default().independent_blend(true);
         let device_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_info)
+            .enabled_features(&features)
             .enabled_extension_names(&device_exts)
             .push_next(&mut dynamic_rendering_feature);
         // SAFETY: extensions and features were checked by `pick_physical`.
@@ -346,6 +350,11 @@ fn supports_dynamic_rendering(instance: &Instance, physical: vk::PhysicalDevice)
     dynamic.dynamic_rendering == vk::TRUE
 }
 
+fn supports_independent_blend(instance: &Instance, physical: vk::PhysicalDevice) -> bool {
+    // SAFETY: `physical` was enumerated from `instance`.
+    unsafe { instance.get_physical_device_features(physical) }.independent_blend == vk::TRUE
+}
+
 fn pick_physical(
     instance: &Instance,
     surface: Option<&Surface>,
@@ -364,6 +373,7 @@ fn pick_physical(
             let suitable = props.api_version >= vk::API_VERSION_1_2
                 && family.is_some()
                 && supports_dynamic_rendering(instance, physical)
+                && supports_independent_blend(instance, physical)
                 && (surface.is_none()
                     || has_device_extension(instance, physical, khr::swapchain::NAME));
             Candidate {
