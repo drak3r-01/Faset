@@ -33,13 +33,16 @@ ENV RUSTC_WRAPPER=sccache
 RUN mkdir -p /cache && chmod -R a+rwX /cache
 WORKDIR /workspace
 
-# Builds the placeholder binary for the runtime image.
+# Builds the `dedicated` server binary for the runtime image.
 FROM dev AS server-build
 COPY . /workspace
-RUN cargo build --release -p probe && cp /cache/target/release/probe /probe
+RUN cargo build --release -p dedicated && cp /cache/target/release/dedicated /dedicated
 
-# Standalone server image. PLACEHOLDER: the entrypoint is the probe binary;
-# lot 1.x replaces it with the `dedicated` server binary.
+# Standalone server image: Debian slim plus the `dedicated` binary only.
+# Configure with command-line flags or by mounting /srv/server.toml (and
+# /srv/maps). Publishes the game port (UDP).
 FROM debian:bookworm-slim AS server-runtime
-COPY --from=server-build /probe /usr/local/bin/probe
-ENTRYPOINT ["/usr/local/bin/probe"]
+COPY --from=server-build /dedicated /usr/local/bin/dedicated
+WORKDIR /srv
+EXPOSE 7777/udp
+ENTRYPOINT ["/usr/local/bin/dedicated", "--maps-dir", "/srv/maps"]
