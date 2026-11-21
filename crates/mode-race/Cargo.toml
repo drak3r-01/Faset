@@ -1,0 +1,17 @@
+[package]
+name = "faset-mode-race"
+description = "Witness mini-game: a race between two objective zones, no weapons."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+faset-core.workspace = true
+faset-minigame-api.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+faset-net.workspace = true
+faset-protocol.workspace = true
+faset-server.workspace = true

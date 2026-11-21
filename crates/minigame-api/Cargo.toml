@@ -1,0 +1,13 @@
+[package]
+name = "faset-minigame-api"
+description = "Mini-game framework: server and client mode traits, static registry, match phases, common services."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+faset-core.workspace = true
+faset-sim.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
