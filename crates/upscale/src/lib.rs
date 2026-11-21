@@ -17,6 +17,10 @@
 //!   Resolution 3.1 through AMD's official library, loaded at runtime on
 //!   Windows x86_64 when `amd_fidelityfx_vk.dll` sits next to the
 //!   executable; unavailable elsewhere.
+//! * [`UpscalerKind::Dlss`] (feature `dlss`, off by default): NVIDIA DLSS
+//!   through the NGX SDK, which the build script fetches and links on Windows
+//!   x86_64; offered only on RTX GPUs where NGX runs DLSS, unavailable
+//!   elsewhere.
 //!
 //! [`Registry`] lists the upscalers a GPU can run and falls back to FSR 1
 //! when one fails. Hand the result to [`faset_render::Renderer::set_upscaler`]
@@ -38,11 +42,15 @@
 //! ```
 
 mod bridge;
+#[cfg(feature = "dlss")]
+mod dlss;
 mod error;
 #[cfg(feature = "fsr3")]
 mod ffx;
 mod fsr1;
 mod gpu;
+#[cfg(any(feature = "fsr3", feature = "dlss"))]
+mod jitter;
 mod native;
 mod quality;
 mod registry;

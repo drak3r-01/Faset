@@ -6,8 +6,7 @@ use faset_render::{GpuHandles, UpscalePass};
 use crate::bridge::UpscaleBridge;
 use crate::{Quality, UpscaleError, Upscaler};
 
-/// The upscalers of this crate. Lots 2.11 (FSR 2/3) and 2.12 (DLSS) add
-/// their own.
+/// The upscalers of this crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum UpscalerKind {
@@ -22,6 +21,10 @@ pub enum UpscalerKind {
     /// at runtime (feature `fsr3`, Windows x86_64 only). Not in
     /// [`UpscalerKind::ALL`]: it is offered only when its probe passes.
     Fsr3,
+    /// NVIDIA DLSS (temporal), through the NGX SDK (feature `dlss`, Windows
+    /// x86_64, RTX GPUs only). Not in [`UpscalerKind::ALL`]: it is offered
+    /// only when its probe passes.
+    Dlss,
 }
 
 impl UpscalerKind {
@@ -37,13 +40,14 @@ impl UpscalerKind {
             Self::Taa => "TAA",
             Self::Fsr1 => "FSR 1",
             Self::Fsr3 => "FSR 3",
+            Self::Dlss => "DLSS",
         }
     }
 
     /// True when the result depends on previous frames: the scene must be
     /// jittered and the FXAA fallback is skipped.
     pub fn is_temporal(self) -> bool {
-        matches!(self, Self::Taa | Self::Fsr3)
+        matches!(self, Self::Taa | Self::Fsr3 | Self::Dlss)
     }
 
     /// True when the free render scale applies ([`crate::effective_quality`]).
@@ -161,8 +165,9 @@ impl<C> Registry<C> {
 }
 
 impl Registry<GpuHandles> {
-    /// Native, TAA and FSR 1, all built on the renderer's device, and FSR 3
-    /// with the `fsr3` feature (available only where its library loads).
+    /// Native, TAA and FSR 1, all built on the renderer's device, FSR 3 with
+    /// the `fsr3` feature (available only where its library loads) and DLSS
+    /// with the `dlss` feature (available only where NGX runs DLSS).
     pub fn builtin() -> Self {
         let mut registry = Self::new();
         for kind in UpscalerKind::ALL {
@@ -170,6 +175,8 @@ impl Registry<GpuHandles> {
         }
         #[cfg(feature = "fsr3")]
         registry.register(Box::new(crate::ffx::Fsr3Backend::system()));
+        #[cfg(feature = "dlss")]
+        registry.register(Box::new(crate::dlss::DlssBackend::system()));
         registry
     }
 
@@ -205,8 +212,8 @@ impl Backend<GpuHandles> for Builtin {
             UpscalerKind::Native => Box::new(crate::native::Native::new(gpu)?),
             UpscalerKind::Taa => Box::new(crate::taa::Taa::new(gpu)?),
             UpscalerKind::Fsr1 => Box::new(crate::fsr1::Fsr1::new(gpu)?),
-            // Registered by its own backend, never as a built-in.
-            UpscalerKind::Fsr3 => {
+            // Registered by their own backends, never as built-ins.
+            UpscalerKind::Fsr3 | UpscalerKind::Dlss => {
                 return Err(UpscaleError::Unavailable {
                     kind: self.0,
                     reason: "not a built-in upscaler".into(),
@@ -367,6 +374,10 @@ mod tests {
         assert!(!UpscalerKind::Fsr1.is_temporal());
         assert!(!UpscalerKind::Fsr3.supports_free_scale());
         assert!(!UpscalerKind::ALL.contains(&UpscalerKind::Fsr3));
+        assert!(UpscalerKind::Dlss.is_temporal());
+        assert!(!UpscalerKind::Dlss.supports_free_scale());
+        assert!(!UpscalerKind::ALL.contains(&UpscalerKind::Dlss));
+        assert_eq!(UpscalerKind::Dlss.name(), "DLSS");
         assert!(UpscalerKind::Native.supports_free_scale());
         assert!(!UpscalerKind::Taa.supports_free_scale());
     }

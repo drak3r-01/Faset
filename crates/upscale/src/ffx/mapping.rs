@@ -3,6 +3,7 @@
 //! sequence. Plain data, no call into the library.
 
 use ash::vk;
+#[cfg(test)]
 use faset_render::glam::Vec2;
 use faset_render::{ImageHandle, UpscaleInputs};
 
@@ -213,30 +214,8 @@ pub(crate) fn dispatch_desc(
     }
 }
 
-/// Length of the jitter sequence for a scaling ratio, as
-/// `ffxQueryDescUpscaleGetJitterPhaseCount`: `8 * (display / render)^2`.
-pub(crate) fn jitter_phase_count(render_width: u32, display_width: u32) -> u32 {
-    let ratio = display_width.max(1) as f32 / render_width.max(1) as f32;
-    ((8.0 * ratio * ratio) as u32).max(1)
-}
-
-/// Jitter of a frame in render pixels, as `ffxQueryDescUpscaleGetJitterOffset`:
-/// Halton (2, 3) at `index % phases + 1`, centred on zero.
-pub(crate) fn jitter_offset(index: u32, phases: u32) -> Vec2 {
-    let k = index % phases.max(1) + 1;
-    Vec2::new(halton(k, 2) - 0.5, halton(k, 3) - 0.5)
-}
-
-fn halton(mut index: u32, base: u32) -> f32 {
-    let mut f = 1.0f32;
-    let mut r = 0.0f32;
-    while index > 0 {
-        f /= base as f32;
-        r += f * (index % base) as f32;
-        index /= base;
-    }
-    r
-}
+/// The jitter sequence, shared with DLSS.
+pub(crate) use crate::jitter::{jitter_offset, jitter_phase_count};
 
 #[cfg(test)]
 mod tests {

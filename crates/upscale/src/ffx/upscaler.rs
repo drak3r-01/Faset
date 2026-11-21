@@ -12,7 +12,7 @@ use super::api::{self, check, FfxApi};
 use super::bindings as ffx;
 use super::mapping::{self, CreateDescs, FfxDevice};
 use super::unavailable;
-use crate::gpu::{transition, Gpu, Image, READ, UNDEFINED};
+use crate::gpu::{depth_transition, transition, Gpu, Image, READ, UNDEFINED};
 use crate::{
     effective_quality, scaled_extent, Extent2D, Quality, UpscaleError, Upscaler, UpscalerKind,
 };
@@ -210,46 +210,6 @@ impl Drop for Fsr3 {
         if let Some(mut img) = self.exposure.take() {
             self.gpu.destroy_image(&mut img);
         }
-    }
-}
-
-/// Moves a depth image between layouts, with conservative stages.
-///
-/// # Safety
-/// `cmd` must be recording on a queue of `device`.
-unsafe fn depth_transition(
-    device: &ash::Device,
-    cmd: vk::CommandBuffer,
-    image: vk::Image,
-    old: vk::ImageLayout,
-    new: vk::ImageLayout,
-) {
-    let barrier = vk::ImageMemoryBarrier::default()
-        .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
-        .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
-        .old_layout(old)
-        .new_layout(new)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .image(image)
-        .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::DEPTH,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1,
-        });
-    // SAFETY: forwarded.
-    unsafe {
-        device.cmd_pipeline_barrier(
-            cmd,
-            vk::PipelineStageFlags::ALL_COMMANDS,
-            vk::PipelineStageFlags::ALL_COMMANDS,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[barrier],
-        );
     }
 }
 
