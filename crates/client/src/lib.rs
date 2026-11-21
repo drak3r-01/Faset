@@ -1,5 +1,12 @@
-//! Game client: clock synchronization, local prediction, reconciliation and
-//! smoothing of corrections.
+//! Game client: integrated server hosting, LAN discovery, clock
+//! synchronization, local prediction, reconciliation and smoothing of
+//! corrections.
+//!
+//! * [`hosting`]: [`host_game`] runs a `faset-server` in-process on its own
+//!   thread, joined by a memory transport; a solo game binds no socket, and
+//!   [`HostHandle::open_to_lan`] adds UDP on the game port without a restart.
+//! * [`discovery`]: UDP broadcast server browser ([`ServerBrowser`]) and the
+//!   responder hosts run ([`DiscoveryResponder`]); 2 s refresh, 6 s expiry.
 //!
 //! * [`clock`]: estimates round-trip time and jitter, keeps the client's
 //!   simulation a few ticks ahead of the server so its commands arrive just
@@ -30,6 +37,8 @@
 #![forbid(unsafe_code)]
 
 pub mod clock;
+pub mod discovery;
+pub mod hosting;
 pub mod interpolation;
 pub mod prediction;
 
@@ -37,6 +46,11 @@ pub use clock::{
     ClockConfig, ClockSync, DEFAULT_GAIN, DEFAULT_MARGIN_TICKS, DEFAULT_SYNC_SNAPSHOTS,
     MAX_TIMESCALE, MIN_TIMESCALE,
 };
+pub use discovery::{
+    DiscoveryResponder, ServerBrowser, ServerEntry, ServerInfo, DISCOVERY_PORT, ENTRY_TTL,
+    GAME_PORT, REFRESH_INTERVAL,
+};
+pub use hosting::{host_game, HostConfig, HostError, HostHandle, LanStatus};
 pub use interpolation::{
     hermite, interpolation_delay, lerp_angle, InterpolationBuffer, InterpolationConfig,
     RemoteInterpolation, RemoteState, RemoteView, SampleMode, ViewTime, BUFFER_SNAPSHOTS,

@@ -1,6 +1,6 @@
 [package]
 name = "faset-client"
-description = "Game client: clock synchronization, local prediction, reconciliation, correction smoothing and remote interpolation."
+description = "Game client: integrated server hosting, LAN discovery, clock synchronization, local prediction, reconciliation, correction smoothing and remote interpolation."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,10 +10,11 @@ publish.workspace = true
 faset-core.workspace = true
 faset-protocol.workspace = true
 faset-sim.workspace = true
+faset-net.workspace = true
+faset-server.workspace = true
+if-addrs = "0.13"
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-faset-net.workspace = true
-faset-server.workspace = true
 proptest.workspace = true
