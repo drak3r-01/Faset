@@ -11,9 +11,9 @@ use std::sync::Arc;
 use faset_render::glam::{Mat4, Vec2, Vec3};
 use faset_render::{
     cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, GerstnerWave, Instance,
-    MaterialTable, MeshId, Pattern, PointLight, RenderConfig, RenderError, RenderWorld, Renderer,
-    ShelterMap, SkyParams, SunSource, WaterParams, WeatherState, BUILTIN_PROFILES, CUBE_FACE_TINTS,
-    SHADOW_DISTANCE,
+    MaterialTable, MeshId, Pattern, PointLight, PostParams, PostSettings, RenderConfig,
+    RenderError, RenderWorld, Renderer, ScreenEffects, ShelterMap, SkyParams, SunSource,
+    WaterParams, WeatherState, BUILTIN_PROFILES, CUBE_FACE_TINTS, SHADOW_DISTANCE,
 };
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -643,6 +643,8 @@ fn render_profile(name: &str, path: &Path) {
         // water medium: fog, caustics and suspended particles.
         water: (name == "underwater").then(scene_water),
         underwater: name == "underwater",
+        screen: ScreenEffects::default(),
+        post: None,
     };
     renderer.render_frame(&world).unwrap();
     renderer.read_back_png(path).unwrap();
@@ -1874,5 +1876,385 @@ fn underwater_medium_has_fog_and_animated_caustics() {
     let above = render_water_scene(eye, target, Some(scene_water_at(-2.0)), 1.0, 1.0);
     let above_none = render_water_scene(eye, target, Some(scene_water_at(-2.0)), 0.0, 1.0);
     assert_eq!(max_channel_error(&above, &above_none), 0);
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+// ---------------------------------------------------------------------------
+// Post-processing chain (lot 2.9)
+// ---------------------------------------------------------------------------
+
+/// Parameters of the reference images: every effect visibly on.
+fn post_reference_params() -> PostParams {
+    PostParams {
+        exposure: 0.9,
+        bloom_threshold: 1.0,
+        bloom_knee: 0.3,
+        bloom_intensity: 0.25,
+        saturation: 1.15,
+        hue_shift: 0.1,
+        gamma: [1.1; 3],
+        contour_strength: 0.6,
+        vignette: 0.3,
+        chromatic_aberration: 0.003,
+        grain: 0.03,
+        ripple: 0.004,
+        damage_flash: 0.08,
+        speed_lines: 0.12,
+        ..PostParams::default()
+    }
+}
+
+/// Ground, three cubes and a day sky; `post` replaces the derived parameters.
+fn render_post(
+    settings: Option<PostSettings>,
+    post: Option<PostParams>,
+    path: &Path,
+) -> image::RgbaImage {
+    let mut renderer = headless((128, 128));
+    renderer.set_material_time(PROFILE_TIME);
+    renderer.set_post_settings(settings).unwrap();
+    let mut mesh = |material: u8| {
+        let (v, i) = cube_mesh(0.5, &[[230; 3]; 6], material);
+        renderer.upload_mesh(&v, &i).unwrap()
+    };
+    let (ground, cube) = (mesh(2), mesh(0));
+    let (camera, forward) = sky_camera(180.0, 6.0);
+    let right = forward.cross(Vec3::Y);
+    let at = |ahead: f32, side: f32| Vec3::new(0.0, 0.5, 0.0) + forward * ahead + right * side;
+    let mut instances = vec![Instance::new(
+        ground,
+        0,
+        Mat4::from_translation(Vec3::new(0.0, -0.5, 0.0))
+            * Mat4::from_scale(Vec3::new(400.0, 1.0, 400.0)),
+    )];
+    for (ahead, side) in [(3.0, -1.0), (6.0, 1.0), (12.0, -3.0)] {
+        instances.push(Instance::new(
+            cube,
+            0,
+            Mat4::from_translation(at(ahead, side)),
+        ));
+    }
+    let world = RenderWorld {
+        camera,
+        instances,
+        ambience: tod_ambience(),
+        sky: SkyParams {
+            time_h: 14.0,
+            latitude_deg: 45.0,
+            ..SkyParams::default()
+        },
+        draw_sky: true,
+        post,
+        ..RenderWorld::default()
+    };
+    // Twice, so both frame slots are used.
+    for _ in 0..2 {
+        renderer.render_frame(&world).unwrap();
+    }
+    renderer.read_back_png(path).unwrap();
+    assert_eq!(renderer.validation_message_count(), 0);
+    load_rgba(path)
+}
+
+/// (name, settings) of the full chain and of one image per toggle.
+fn post_shots() -> Vec<(&'static str, PostSettings)> {
+    let all = PostSettings::default();
+    vec![
+        ("post_full", all),
+        (
+            "post_contours_off",
+            PostSettings {
+                contours: false,
+                ..all
+            },
+        ),
+        (
+            "post_bloom_off",
+            PostSettings {
+                bloom: false,
+                ..all
+            },
+        ),
+        (
+            "post_tonemap_off",
+            PostSettings {
+                tonemap: false,
+                ..all
+            },
+        ),
+        (
+            "post_grading_off",
+            PostSettings {
+                grading: false,
+                ..all
+            },
+        ),
+        (
+            "post_screen_effects_off",
+            PostSettings {
+                screen_effects: false,
+                ..all
+            },
+        ),
+        ("post_fxaa_off", PostSettings { fxaa: false, ..all }),
+    ]
+}
+
+fn post_reference(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/refs/{name}.png"))
+}
+
+#[test]
+fn post_chain_matches_references() {
+    let (messages, _guard) = capture_messages();
+    let mut failures = Vec::new();
+    for (name, settings) in post_shots() {
+        let out = out_path(&format!("{name}.png"));
+        let got = render_post(Some(settings), Some(post_reference_params()), &out);
+        let error = max_channel_error(&got, &load_rgba(&post_reference(name)));
+        if error > 1 {
+            failures.push(format!(
+                "{name}: max channel error {error} (output: {})",
+                out.display()
+            ));
+        } else {
+            let _ = std::fs::remove_file(out);
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Regenerates the post references from lavapipe renders. Inspect the images
+/// before committing them.
+#[test]
+#[ignore = "regenerates tests/refs/post_*.png"]
+fn bless_post_references() {
+    for (name, settings) in post_shots() {
+        render_post(
+            Some(settings),
+            Some(post_reference_params()),
+            &post_reference(name),
+        );
+    }
+}
+
+#[test]
+fn each_toggle_changes_the_image() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("post_toggle.png");
+    let params = Some(post_reference_params());
+    let full = render_post(Some(PostSettings::default()), params, &out);
+    for (name, settings) in post_shots().into_iter().skip(1) {
+        let img = render_post(Some(settings), params, &out);
+        assert!(
+            max_channel_error(&full, &img) > 1,
+            "turning off {name} changes nothing"
+        );
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+#[test]
+fn all_effects_off_copies_the_hdr_buffer() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("post_none.png");
+    let plain = render_post(None, None, &out);
+    let none = render_post(
+        Some(PostSettings::NONE),
+        Some(post_reference_params()),
+        &out,
+    );
+    assert_eq!(max_channel_error(&plain, &none), 0);
+    // Default parameters and no tonemap or FXAA: the grading pass alone is
+    // the identity.
+    let neutral = PostSettings {
+        tonemap: false,
+        fxaa: false,
+        ..PostSettings::default()
+    };
+    let identity = render_post(Some(neutral), Some(PostParams::default()), &out);
+    assert!(max_channel_error(&plain, &identity) <= 1);
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+#[test]
+fn zero_intensity_and_false_flags_pass_through() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("post_zero.png");
+    let base = PostSettings {
+        tonemap: false,
+        fxaa: false,
+        ..PostSettings::default()
+    };
+    let neutral = PostParams::default();
+    let baseline = render_post(Some(base), Some(neutral), &out);
+    let active: [(&str, PostParams); 7] = [
+        (
+            "contours",
+            PostParams {
+                contour_strength: 0.8,
+                ..neutral
+            },
+        ),
+        (
+            "bloom",
+            PostParams {
+                bloom_intensity: 1.0,
+                bloom_threshold: 0.2,
+                ..neutral
+            },
+        ),
+        (
+            "vignette",
+            PostParams {
+                vignette: 0.5,
+                ..neutral
+            },
+        ),
+        (
+            "chromatic aberration",
+            PostParams {
+                chromatic_aberration: 0.01,
+                ..neutral
+            },
+        ),
+        (
+            "grain",
+            PostParams {
+                grain: 0.1,
+                ..neutral
+            },
+        ),
+        (
+            "ripple",
+            PostParams {
+                ripple: 0.01,
+                ..neutral
+            },
+        ),
+        (
+            "speed lines",
+            PostParams {
+                speed_lines: 1.0,
+                damage_flash: 0.4,
+                ..neutral
+            },
+        ),
+    ];
+    for (name, params) in active {
+        let on = render_post(Some(base), Some(params), &out);
+        assert!(
+            max_channel_error(&baseline, &on) > 1,
+            "{name} has no effect at a positive intensity"
+        );
+        // The same intensity with its flag off is the baseline again.
+        let flag_off = match name {
+            "contours" => PostSettings {
+                contours: false,
+                ..base
+            },
+            "bloom" => PostSettings {
+                bloom: false,
+                ..base
+            },
+            _ => PostSettings {
+                screen_effects: false,
+                ..base
+            },
+        };
+        let off = render_post(Some(flag_off), Some(params), &out);
+        assert!(
+            max_channel_error(&baseline, &off) <= 1,
+            "{name} still shows with its flag off"
+        );
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Render of a flat colour: no mesh, no sky.
+fn render_flat(settings: Option<PostSettings>, color: [f32; 4], exposure: f32) -> image::RgbaImage {
+    let mut renderer = headless((64, 64));
+    renderer.set_post_settings(settings).unwrap();
+    let world = RenderWorld {
+        clear_color: color,
+        post: Some(PostParams {
+            exposure,
+            ..PostParams::default()
+        }),
+        ..RenderWorld::default()
+    };
+    renderer.render_frame(&world).unwrap();
+    let out = out_path("post_flat.png");
+    renderer.read_back_png(&out).unwrap();
+    assert_eq!(renderer.validation_message_count(), 0);
+    load_rgba(&out)
+}
+
+#[test]
+fn fxaa_leaves_a_flat_image_unchanged() {
+    let (messages, _guard) = capture_messages();
+    let color = [0.2, 0.45, 0.8, 1.0];
+    let plain = render_flat(None, color, 1.0);
+    let fxaa = PostSettings {
+        fxaa: true,
+        ..PostSettings::NONE
+    };
+    let smoothed = render_flat(Some(fxaa), color, 1.0);
+    assert_eq!(max_channel_error(&plain, &smoothed), 0);
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+#[test]
+fn tonemap_matches_the_cpu_curve() {
+    let (messages, _guard) = capture_messages();
+    let tonemap = PostSettings {
+        tonemap: true,
+        ..PostSettings::NONE
+    };
+    for (color, exposure) in [
+        ([0.2, 0.45, 0.8, 1.0], 1.0),
+        ([0.05, 0.5, 2.0, 1.0], 1.5),
+        // Above x ~ 7.25 the plan's curve exceeds 1: the output is clamped.
+        ([12.0, 0.0, 0.3, 1.0], 1.0),
+    ] {
+        let img = render_flat(Some(tonemap), color, exposure);
+        let expected = faset_render::tonemap_pixel([color[0], color[1], color[2]], exposure);
+        let got = img.get_pixel(32, 32).0;
+        for c in 0..3 {
+            let e = srgb_encode(expected[c]);
+            assert!(
+                got[c].abs_diff(e) <= 1,
+                "channel {c} of {color:?}: {} vs {e}",
+                got[c]
+            );
+        }
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+#[test]
+fn screen_effects_follow_the_world_and_survive_a_resize() {
+    let (messages, _guard) = capture_messages();
+    let mut renderer = headless((96, 64));
+    renderer
+        .set_post_settings(Some(PostSettings::default()))
+        .unwrap();
+    let mut world = RenderWorld {
+        clear_color: [0.3, 0.3, 0.3, 1.0],
+        ..RenderWorld::default()
+    };
+    renderer.render_frame(&world).unwrap();
+    world.screen = ScreenEffects {
+        damage_flash: 0.8,
+        speed_lines: 0.0,
+    };
+    renderer.render_frame(&world).unwrap();
+    // A resize recreates the targets.
+    renderer.resize(160, 96);
+    renderer.render_frame(&world).unwrap();
+    renderer.set_post_settings(None).unwrap();
+    renderer.render_frame(&world).unwrap();
+    assert_eq!(renderer.validation_message_count(), 0);
     assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
 }

@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 use faset_render::glam::{Mat4, Vec3};
 use faset_render::{
     cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, Instance, MeshId,
-    PointLight, RenderConfig, RenderWorld, Renderer, SkyParams, WeatherState, CUBE_FACE_TINTS,
+    PointLight, PostSettings, RenderConfig, RenderWorld, Renderer, ScreenEffects, SkyParams,
+    WeatherState, CUBE_FACE_TINTS,
 };
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -46,6 +47,9 @@ impl ApplicationHandler for App {
         let window = event_loop.create_window(attrs).expect("create window");
         match Renderer::new_windowed(&window, &self.cfg) {
             Ok(mut r) => {
+                if let Err(e) = r.set_post_settings(Some(PostSettings::default())) {
+                    tracing::error!("post chain unavailable: {e}");
+                }
                 let (v, i) = cube_mesh(0.5, &CUBE_FACE_TINTS, 0);
                 match r.upload_mesh(&v, &i) {
                     Ok(id) => self.cube = Some(id),
@@ -135,6 +139,8 @@ impl App {
             weather: WeatherState::CLEAR,
             water: None,
             underwater: false,
+            screen: ScreenEffects::default(),
+            post: None,
         };
         if let Err(e) = renderer.render_frame(&world) {
             tracing::error!("frame failed: {e}");
