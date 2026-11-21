@@ -1,0 +1,21 @@
+[package]
+name = "faset-upscale"
+description = "Upscalers of the renderer: the Upscaler trait, render scale, temporal anti-aliasing and FSR 1."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+faset-render.workspace = true
+faset-shaders.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+ash = "0.38"
+bytemuck = { version = "1.25", features = ["derive"] }
+gpu-allocator = { version = "0.28", default-features = false, features = ["std", "vulkan"] }
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }

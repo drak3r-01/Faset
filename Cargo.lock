@@ -802,6 +802,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "faset-upscale"
+version = "0.0.1-rc.1"
+dependencies = [
+ "ash",
+ "bytemuck",
+ "faset-render",
+ "faset-shaders",
+ "gpu-allocator",
+ "image",
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
+ "winit",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
