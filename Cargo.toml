@@ -18,6 +18,7 @@ faset-render = { path = "crates/render", version = "0.0.1-rc.1" }
 faset-core = { path = "crates/core", version = "0.0.1-rc.1" }
 faset-protocol = { path = "crates/protocol", version = "0.0.1-rc.1" }
 faset-sim = { path = "crates/sim", version = "0.0.1-rc.1" }
+faset-mapfmt = { path = "crates/mapfmt", version = "0.0.1-rc.1" }
 faset-net = { path = "crates/net", version = "0.0.1-rc.1" }
 faset-shaders = { path = "crates/shaders", version = "0.0.1-rc.1" }
 faset-server = { path = "crates/server", version = "0.0.1-rc.1" }

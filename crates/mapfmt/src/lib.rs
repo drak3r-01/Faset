@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod expand;
+pub mod geometry;
 mod migrate;
 mod schema;
 
@@ -21,6 +22,12 @@ pub use schema::{
     Placement, Pos, Prefab, Prop, Spawn, Symmetry, Team, Theme, WeatherSlot, Zone, ZoneKind,
     GRID_UNIT_M,
 };
+
+/// Expands prefabs then symmetry: the map as built and played.
+#[must_use]
+pub fn expand(map: &MapFile) -> MapFile {
+    expand_symmetry(&expand_prefabs(map))
+}
 
 /// Current version of the map format; [`parse`] migrates older files to it.
 pub const FORMAT_VERSION: u32 = 1;

@@ -12,9 +12,13 @@ faset-protocol.workspace = true
 faset-sim.workspace = true
 faset-net.workspace = true
 faset-server.workspace = true
+faset-mapfmt.workspace = true
+faset-render.workspace = true
 if-addrs = "0.13"
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

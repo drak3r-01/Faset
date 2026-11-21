@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 faset-core.workspace = true
 faset-protocol.workspace = true
+faset-mapfmt.workspace = true
 thiserror.workspace = true
 hecs = "0.10"
 parry3d = "0.31"

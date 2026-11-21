@@ -7,11 +7,13 @@
 
 pub mod collision;
 pub mod components;
+pub mod map_collision;
 pub mod rng;
 pub mod trace;
 pub mod world;
 
-pub use collision::{StaticWorld, SweepHit, Volume};
+pub use collision::{RayHit, StaticWorld, SweepHit, Volume};
+pub use map_collision::MapCollision;
 pub use trace::Trace;
 pub use world::World;
 
