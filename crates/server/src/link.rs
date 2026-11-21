@@ -16,6 +16,7 @@ pub(crate) trait Listener {
     fn recv(&mut self, peer: PeerId, channel: Channel) -> Option<Vec<u8>>;
     fn send(&mut self, peer: PeerId, channel: Channel, payload: &[u8]) -> Result<(), SendError>;
     fn disconnect(&mut self, peer: PeerId);
+    fn rtt(&self, peer: PeerId) -> f64;
 }
 
 impl<T: Transport> Listener for ServerEndpoint<T> {
@@ -33,6 +34,9 @@ impl<T: Transport> Listener for ServerEndpoint<T> {
     }
     fn disconnect(&mut self, peer: PeerId) {
         ServerEndpoint::disconnect(self, peer);
+    }
+    fn rtt(&self, peer: PeerId) -> f64 {
+        ServerEndpoint::rtt(self, peer)
     }
 }
 

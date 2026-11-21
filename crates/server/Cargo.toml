@@ -1,6 +1,6 @@
 [package]
 name = "faset-server"
-description = "Authoritative game server: connections, command buffers, tick loop, snapshots."
+description = "Authoritative game server: connections, command buffers, tick loop, snapshots, lag compensation."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,6 +14,7 @@ faset-net.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 blake3 = "1"
+parry3d = "0.31"
 
 [dev-dependencies]
 proptest.workspace = true

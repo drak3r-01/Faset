@@ -11,7 +11,8 @@
 use std::time::Duration;
 
 use faset_client::{
-    AuthoritativeState, ClockSync, PredictedState, Prediction, ReconcileOutcome, VisualOffset,
+    AuthoritativeState, ClockSync, PredictedState, Prediction, ReconcileOutcome,
+    RemoteInterpolation, RemoteState, VisualOffset,
 };
 use faset_core::glam::Vec3;
 use faset_core::{NetId, Tick, DT};
@@ -68,6 +69,10 @@ pub struct PredictedClient {
     /// had no command of ours for (late or lost).
     pub snapshots: u32,
     pub late: u32,
+    /// The other players, interpolated.
+    pub remotes: RemoteInterpolation,
+    /// Local real time in seconds (start of the current frame).
+    pub now: f64,
 }
 
 impl PredictedClient {
@@ -86,6 +91,8 @@ impl PredictedClient {
             frames: Vec::new(),
             snapshots: 0,
             late: 0,
+            remotes: RemoteInterpolation::default(),
+            now: 0.0,
         }
     }
 
@@ -107,6 +114,16 @@ impl PredictedClient {
             return;
         };
         let Some(me) = self.player else { return };
+        let remotes = snap.entities.iter().filter(|r| r.id != me).map(|r| {
+            let state = RemoteState {
+                position: r.position,
+                velocity: r.velocity,
+                yaw: r.yaw,
+                pitch: r.pitch,
+            };
+            (r.id, state)
+        });
+        self.remotes.on_snapshot(snap.tick, self.now, remotes);
         let Some(e) = snap.entity(me) else { return };
         self.clock.observe_rtt(self.endpoint.rtt());
         let server = AuthoritativeState {
@@ -146,6 +163,7 @@ impl PredictedClient {
     /// One client frame of `real` time: receive, reconcile, simulate the
     /// ticks due, send the newest unacknowledged commands, flush.
     pub fn frame(&mut self, real: Duration, input: &mut dyn FnMut(Tick) -> Movement) {
+        self.now += real.as_secs_f64();
         if !self.hello_sent {
             self.hello_sent = true;
             self.send_event(&Message::ClientHello {

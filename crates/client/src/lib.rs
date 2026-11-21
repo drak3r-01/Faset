@@ -10,6 +10,10 @@
 //!   [`HISTORY_TICKS`] commands and predicted states, reconciles them against
 //!   server snapshots (replaying with the same simulation code) and hides
 //!   corrections behind a decaying [`VisualOffset`].
+//! * [`interpolation`]: shows remote entities a deliberate delay in the
+//!   past with Hermite interpolation between snapshots, extrapolating for at
+//!   most a quarter of a second, and gives the [`ViewTime`] a fire command
+//!   carries for server-side lag compensation.
 //!
 //! The crate is transport- and codec-agnostic: the snapshot and input packet
 //! codecs live in `faset-server` (lot 1.5), which a client library may not
@@ -26,11 +30,17 @@
 #![forbid(unsafe_code)]
 
 pub mod clock;
+pub mod interpolation;
 pub mod prediction;
 
 pub use clock::{
     ClockConfig, ClockSync, DEFAULT_GAIN, DEFAULT_MARGIN_TICKS, DEFAULT_SYNC_SNAPSHOTS,
     MAX_TIMESCALE, MIN_TIMESCALE,
+};
+pub use interpolation::{
+    hermite, interpolation_delay, lerp_angle, InterpolationBuffer, InterpolationConfig,
+    RemoteInterpolation, RemoteState, RemoteView, SampleMode, ViewTime, BUFFER_SNAPSHOTS,
+    DEFAULT_SNAPSHOT_INTERVAL, MAX_EXTRAPOLATION,
 };
 pub use prediction::{
     AuthoritativeState, HistoryEntry, PredictedState, Prediction, PredictionError,
