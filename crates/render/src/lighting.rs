@@ -14,6 +14,7 @@ use crate::deferred::FRAMES_IN_FLIGHT;
 use crate::frame::FrameData;
 use crate::shadow::{ShadowCascades, ShadowResources, CASCADE_COUNT};
 use crate::sky::GpuSky;
+use crate::weather::GpuWeather;
 use crate::RenderError;
 
 /// Point lights the shader reads; extra lights are dropped.
@@ -108,6 +109,8 @@ pub(crate) struct GpuLighting {
     /// Procedural sky: colours, stars, clouds and the camera data the sky
     /// pass needs (lot 2.6).
     pub sky: GpuSky,
+    /// Weather, lightning and the shelter map header (lot 2.7).
+    pub weather: GpuWeather,
 }
 
 /// Bytes of [`GpuLighting`].
@@ -123,6 +126,7 @@ const _: () = assert!(
             + CASCADE_COUNT * 64
             + 3 * 16
             + std::mem::size_of::<GpuSky>()
+            + std::mem::size_of::<GpuWeather>()
 );
 
 fn rgb(c: [f32; 3]) -> [f32; 4] {
@@ -134,13 +138,15 @@ fn rgb(c: [f32; 3]) -> [f32; 4] {
 /// that state between frames and clears once the list fits again).
 /// `cascades` are the sun shadow cascades of the frame, `None` when the sun
 /// casts no shadows. `sky` is the frame's sky block
-/// ([`crate::sky::resolve`]); `ambience` is the resolved profile.
+/// ([`crate::sky::resolve`]); `ambience` is the resolved profile; `weather`
+/// is the frame's weather block.
 pub(crate) fn pack_lighting(
     ambience: &AmbienceProfile,
     lights: &[PointLight],
     camera_pos: Vec3,
     cascades: Option<&ShadowCascades>,
     sky: GpuSky,
+    weather: GpuWeather,
     warned: &mut bool,
 ) -> GpuLighting {
     if lights.len() > MAX_POINT_LIGHTS {
@@ -206,6 +212,7 @@ pub(crate) fn pack_lighting(
             0.0,
         ],
         sky,
+        weather,
     }
 }
 
@@ -222,19 +229,25 @@ impl LightingBindings {
         ctx: &Context,
         frames: &[FrameData],
         shadow: &ShadowResources,
+        shelter: vk::Buffer,
     ) -> Result<Self, RenderError> {
         let device = &ctx.device;
-        let binding = |index, ty| {
+        // The weather particle vertex shader reads the block and the shelter
+        // map too.
+        let binding = |index, ty, stages| {
             vk::DescriptorSetLayoutBinding::default()
                 .binding(index)
                 .descriptor_type(ty)
                 .descriptor_count(1)
-                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                .stage_flags(stages)
         };
+        let fragment = vk::ShaderStageFlags::FRAGMENT;
+        let both = vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT;
         let bindings = [
-            binding(0, vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC),
-            binding(1, vk::DescriptorType::SAMPLED_IMAGE),
-            binding(2, vk::DescriptorType::SAMPLER),
+            binding(0, vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC, both),
+            binding(1, vk::DescriptorType::SAMPLED_IMAGE, fragment),
+            binding(2, vk::DescriptorType::SAMPLER, fragment),
+            binding(3, vk::DescriptorType::STORAGE_BUFFER, both),
         ];
         // SAFETY: valid device and create info.
         let set_layout = unsafe {
@@ -255,6 +268,10 @@ impl LightingBindings {
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::SAMPLER,
+                descriptor_count: frames_in_flight,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
                 descriptor_count: frames_in_flight,
             },
         ];
@@ -312,7 +329,17 @@ impl LightingBindings {
                 image_view: vk::ImageView::null(),
                 image_layout: vk::ImageLayout::UNDEFINED,
             }];
+            let shelter_info = [vk::DescriptorBufferInfo {
+                buffer: shelter,
+                offset: 0,
+                range: vk::WHOLE_SIZE,
+            }];
             let writes = [
+                vk::WriteDescriptorSet::default()
+                    .dst_set(*set)
+                    .dst_binding(3)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&shelter_info),
                 vk::WriteDescriptorSet::default()
                     .dst_set(*set)
                     .dst_binding(0)
@@ -338,6 +365,29 @@ impl LightingBindings {
             pool,
             sets,
         })
+    }
+
+    /// Points every frame's set at a new shelter map buffer. The GPU must be
+    /// done with the sets (the device idle).
+    pub(crate) fn set_shelter(&self, ctx: &Context, shelter: vk::Buffer) {
+        let info = [vk::DescriptorBufferInfo {
+            buffer: shelter,
+            offset: 0,
+            range: vk::WHOLE_SIZE,
+        }];
+        let writes: Vec<_> = self
+            .sets
+            .iter()
+            .map(|set| {
+                vk::WriteDescriptorSet::default()
+                    .dst_set(*set)
+                    .dst_binding(3)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&info)
+            })
+            .collect();
+        // SAFETY: live sets and buffer; the caller waited for the device.
+        unsafe { ctx.device.update_descriptor_sets(&writes, &[]) };
     }
 
     pub(crate) fn destroy(&mut self, ctx: &Context) {
@@ -409,6 +459,7 @@ mod tests {
             Vec3::ZERO,
             None,
             GpuSky::zeroed(),
+            GpuWeather::zeroed(),
             &mut warned,
         );
         assert_eq!(gpu.counts[0], 32);
@@ -421,6 +472,7 @@ mod tests {
             Vec3::ZERO,
             None,
             GpuSky::zeroed(),
+            GpuWeather::zeroed(),
             &mut warned,
         );
         assert_eq!(count.load(Ordering::SeqCst), 1);
@@ -431,6 +483,7 @@ mod tests {
             Vec3::ZERO,
             None,
             GpuSky::zeroed(),
+            GpuWeather::zeroed(),
             &mut warned,
         );
         assert_eq!(gpu.counts[0], 3);
@@ -442,6 +495,7 @@ mod tests {
             Vec3::ZERO,
             None,
             GpuSky::zeroed(),
+            GpuWeather::zeroed(),
             &mut warned,
         );
         assert_eq!(count.load(Ordering::SeqCst), 2);
@@ -459,6 +513,7 @@ mod tests {
             Vec3::ZERO,
             Some(&cascades),
             GpuSky::zeroed(),
+            GpuWeather::zeroed(),
             &mut warned,
         );
         assert_eq!(gpu.shadow_splits[3], 1.0);
@@ -472,6 +527,7 @@ mod tests {
             Vec3::ZERO,
             None,
             GpuSky::zeroed(),
+            GpuWeather::zeroed(),
             &mut warned,
         );
         assert_eq!(off.shadow_splits, [0.0; 4]);

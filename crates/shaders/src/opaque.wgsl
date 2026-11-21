@@ -7,6 +7,7 @@
 
 #include "materials.wgsl"
 #include "lighting.wgsl"
+#include "wet.wgsl"
 
 struct Immediates {
     // Sub-pixel jitter in NDC units. Adding `jitter * w` to clip x/y is the
@@ -102,8 +103,10 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     let dpos = fwidth(in.world_pos);
     let normal = normalize(in.normal);
     let surface = material_surface(in.material, in.world_pos, normal, dpos, imm.time);
+    // Humidity darkens the surface and adds reflections (a no-op when dry).
+    let wet = wet_surface(in.color * surface.albedo, normal, in.world_pos, imm.time);
     let lit = shade(
-        in.color * surface.albedo,
+        wet.albedo,
         in.color * surface.emissive,
         normal,
         in.world_pos,
@@ -111,7 +114,7 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     );
 
     var out: FragmentOut;
-    out.color = vec4<f32>(apply_fog(lit, in.world_pos), 1.0);
+    out.color = vec4<f32>(apply_fog(mix(lit, wet.reflection, wet.weight), in.world_pos), 1.0);
     out.motion = 0.5 * (in.clip.xy / in.clip.w - in.prev_clip.xy / in.prev_clip.w);
     out.normal = encode_octahedral(normal);
     return out;

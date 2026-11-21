@@ -104,7 +104,7 @@ pub const STAR_COLS: i32 = 200;
 pub const STAR_ROWS: i32 = 64;
 
 /// PCG hash of one 32-bit word (same bits as `noise.wgsl`).
-fn hash_u32(v: u32) -> u32 {
+pub(crate) fn hash_u32(v: u32) -> u32 {
     let state = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
     let word = ((state >> ((state >> 28) + 4)) ^ state).wrapping_mul(277_803_737);
     (word >> 22) ^ word

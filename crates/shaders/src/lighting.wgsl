@@ -69,6 +69,21 @@ struct Lighting {
     // unjittered clip-from-world.
     sky_world_from_view: mat4x4<f32>,
     sky_prev_view_proj: mat4x4<f32>,
+    // Weather, see `render::weather::GpuWeather`.
+    // x rain, y snow, z sand, w fog.
+    weather_precip: vec4<f32>,
+    // xyz wind in m/s, w humidity.
+    weather_wind: vec4<f32>,
+    // x storm, y lightning flash.
+    weather_storm: vec4<f32>,
+    // rgb colour the fog is tinted towards, w tint strength.
+    weather_fog_tint: vec4<f32>,
+    // xy world XZ of the shelter map corner, z cell size, w 1 when loaded.
+    shelter_origin: vec4<f32>,
+    // x width, y height of the shelter map in cells.
+    shelter_dims: vec4<f32>,
+    // Unjittered clip-from-world of this frame.
+    clip_from_world: mat4x4<f32>,
 }
 
 const SHADOW_MAP_SIZE: f32 = 2048.0;
@@ -76,6 +91,9 @@ const SHADOW_MAP_SIZE: f32 = 2048.0;
 @group(1) @binding(0) var<uniform> lighting: Lighting;
 @group(1) @binding(1) var shadow_map: texture_depth_2d_array;
 @group(1) @binding(2) var shadow_sampler: sampler_comparison;
+// Height of the highest surface above each cell of the shelter map (metres),
+// row-major; see `render::ShelterMap`.
+@group(1) @binding(3) var<storage, read> shelter_heights: array<f32>;
 
 // Banded diffuse response of one light of colour `c` with shadow
 // visibility `o`.
@@ -194,5 +212,7 @@ fn apply_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
         let ray = world_pos - lighting.camera_pos.xyz;
         fog_rgb = sky_gradient(ray / max(length(ray), 1.0e-6));
     }
+    // Weather fog (rain, snow, sand, fog banks) pulls it towards its tint.
+    fog_rgb = mix(fog_rgb, lighting.weather_fog_tint.rgb, lighting.weather_fog_tint.w);
     return mix(color, fog_rgb, clamp(fog_factor(world_pos), 0.0, 1.0));
 }
