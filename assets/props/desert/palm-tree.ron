@@ -1,0 +1,13 @@
+Prop(
+    id: "palm_tree",
+    tags: ["decoration", "desert"],
+    collision: Compound,
+    seed: Some(19),
+    parts: [
+        Group(height_var: 0.15, parts: [
+            Cylinder(radius: 0.18, height: 2.6, sides: 6, at: (0.0, 1.3, 0.0), color: "wood"),
+            Repeat(count: 5, rotate_y: 72.0, offset: (0.0, 0.0, 0.0), part:
+                Cone(radius: 0.25, height: 1.6, sides: 4, at: (0.5, 2.6, 0.0), color: "foliage")),
+        ]),
+    ],
+)

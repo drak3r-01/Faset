@@ -1,0 +1,12 @@
+Prop(
+    id: "tall_grass",
+    tags: ["decoration", "nature"],
+    collision: None,
+    seed: Some(3),
+    parts: [
+        Group(height_var: 0.3, parts: [
+            Repeat(count: 5, rotate_y: 72.0, offset: (0.0, 0.0, 0.0), part:
+                Cone(radius: 0.06, height: 0.9, sides: 3, at: (0.1, 0.45, 0.0), color: "foliage")),
+        ]),
+    ],
+)

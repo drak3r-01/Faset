@@ -1,0 +1,9 @@
+Prop(
+    id: "rug",
+    tags: ["decoration", "interior"],
+    collision: None,
+    parts: [
+        Box(size: (2.0, 0.02, 1.4), at: (0.0, 0.01, 0.0), color: "accent3", pattern: Checker),
+        Box(size: (1.4, 0.03, 0.9), at: (0.0, 0.015, 0.0), color: "accent4"),
+    ],
+)

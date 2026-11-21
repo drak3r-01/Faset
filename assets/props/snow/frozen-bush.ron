@@ -1,0 +1,12 @@
+Prop(
+    id: "frozen_bush",
+    tags: ["decoration", "snow"],
+    collision: None,
+    seed: Some(27),
+    parts: [
+        Jitter(amount: 0.06, parts: [
+            Sphere(radius: 0.5, subdivisions: 1, at: (0.0, 0.4, 0.0), color: "foliage_dark", pattern: Noise),
+        ]),
+        Sphere(radius: 0.3, subdivisions: 0, at: (0.0, 0.8, 0.0), color: "white"),
+    ],
+)

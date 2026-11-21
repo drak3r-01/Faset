@@ -1,0 +1,9 @@
+Prop(
+    id: "coral_fan",
+    tags: ["obstacle", "underwater"],
+    collision: Box,
+    parts: [
+        Box(size: (0.8, 1.2, 0.05), at: (0.0, 0.6, 0.0), color: "accent3", pattern: Ripples),
+        Box(size: (0.05, 0.4, 0.4), at: (0.0, 0.2, 0.2), color: "accent1"),
+    ],
+)

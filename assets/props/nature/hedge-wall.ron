@@ -1,0 +1,10 @@
+Prop(
+    id: "hedge_wall",
+    tags: ["cover", "nature"],
+    collision: Box,
+    parts: [
+        Box(size: (3.0, 1.4, 0.8), at: (0.0, 0.7, 0.0), color: "foliage_dark", pattern: Noise),
+        Repeat(count: 4, rotate_y: 0.0, offset: (1.0, 0.0, 0.0), part:
+            Sphere(radius: 0.45, subdivisions: 0, at: (-1.5, 1.5, 0.0), color: "foliage")),
+    ],
+)

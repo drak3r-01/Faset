@@ -1,0 +1,9 @@
+Prop(
+    id: "reef_wall",
+    tags: ["cover", "underwater"],
+    collision: Box,
+    parts: [
+        Box(size: (3.0, 1.4, 0.6), at: (0.0, 0.7, 0.0), color: "accent1", pattern: Noise),
+        Box(size: (1.2, 0.6, 0.6), at: (-1.0, 1.7, 0.0), color: "accent3", pattern: Noise),
+    ],
+)

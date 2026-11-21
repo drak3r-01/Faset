@@ -1,0 +1,13 @@
+Prop(
+    id: "meteor_rock",
+    tags: ["obstacle", "space"],
+    collision: ConvexHull,
+    seed: Some(44),
+    parts: [
+        Group(scale: (1.0, 0.8, 1.2), parts: [
+            Jitter(amount: 0.25, parts: [
+                Sphere(radius: 0.9, subdivisions: 1, at: (0.0, 0.8, 0.0), color: "accent1", pattern: Lava),
+            ]),
+        ]),
+    ],
+)

@@ -1,0 +1,11 @@
+Prop(
+    id: "crater_rim",
+    tags: ["cover", "space"],
+    collision: ConvexHull,
+    seed: Some(14),
+    parts: [
+        Jitter(amount: 0.1, parts: [
+            Extrude(polygon: [(-1.8, -1.0), (0.0, -1.4), (1.8, -1.0), (1.6, 1.0), (0.0, 1.4), (-1.6, 1.0)], height: 0.6, at: (0.0, 0.3, 0.0), color: "concrete", pattern: Noise),
+        ]),
+    ],
+)

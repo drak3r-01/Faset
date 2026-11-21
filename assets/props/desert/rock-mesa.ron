@@ -1,0 +1,12 @@
+Prop(
+    id: "rock_mesa",
+    tags: ["cover", "desert"],
+    collision: ConvexHull,
+    seed: Some(7),
+    parts: [
+        Jitter(amount: 0.1, parts: [
+            Extrude(polygon: [(-2.0, -1.5), (2.0, -1.5), (2.0, 1.5), (-2.0, 1.5)], height: 2.2, at: (0.0, 1.1, 0.0), color: "sand", pattern: Stripes),
+            Box(size: (2.6, 0.6, 2.2), at: (0.0, 2.5, 0.0), color: "stone"),
+        ]),
+    ],
+)

@@ -1,0 +1,9 @@
+Prop(
+    id: "vending_kiosk",
+    tags: ["cover", "neon"],
+    collision: Box,
+    parts: [
+        Box(size: (1.0, 2.0, 0.7), at: (0.0, 1.0, 0.0), color: "metal_dark"),
+        Box(size: (0.8, 1.2, 0.05), at: (0.0, 1.2, 0.36), color: "accent2", pattern: Emissive),
+    ],
+)

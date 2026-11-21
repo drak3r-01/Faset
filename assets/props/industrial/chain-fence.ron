@@ -1,0 +1,9 @@
+Prop(
+    id: "chain_fence",
+    tags: ["obstacle", "industrial"],
+    collision: Box,
+    parts: [
+        Box(size: (2.4, 1.4, 0.04), at: (0.0, 0.7, 0.0), color: "metal", pattern: Grid),
+        Box(size: (2.44, 0.06, 0.08), at: (0.0, 1.42, 0.0), color: "metal_dark"),
+    ],
+)

@@ -1,0 +1,10 @@
+Prop(
+    id: "sunken_chest",
+    tags: ["cover", "underwater"],
+    collision: Box,
+    parts: [
+        Box(size: (1.0, 0.6, 0.6), at: (0.0, 0.3, 0.0), color: "wood", pattern: Planks),
+        Box(size: (1.04, 0.2, 0.64), at: (0.0, 0.7, 0.0), color: "wood_dark"),
+        Box(size: (0.12, 0.2, 0.08), at: (0.0, 0.5, 0.32), color: "accent4"),
+    ],
+)

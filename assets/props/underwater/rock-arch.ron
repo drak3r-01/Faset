@@ -1,0 +1,10 @@
+Prop(
+    id: "rock_arch",
+    tags: ["cover", "underwater"],
+    collision: Compound,
+    parts: [
+        Box(size: (0.8, 2.0, 1.0), at: (-0.9, 1.0, 0.0), color: "stone", pattern: Noise),
+        Box(size: (0.8, 2.0, 1.0), at: (0.9, 1.0, 0.0), color: "stone", pattern: Noise),
+        Box(size: (2.6, 0.6, 1.0), at: (0.0, 2.2, 0.0), color: "stone", pattern: Noise),
+    ],
+)

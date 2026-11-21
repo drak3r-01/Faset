@@ -1,0 +1,9 @@
+Prop(
+    id: "solar_wall",
+    tags: ["cover", "space"],
+    collision: Box,
+    parts: [
+        Box(size: (3.0, 1.6, 0.1), at: (0.0, 1.2, 0.0), color: "accent2", pattern: Grid),
+        Box(size: (0.1, 1.2, 0.1), at: (0.0, 0.6, 0.0), color: "metal"),
+    ],
+)

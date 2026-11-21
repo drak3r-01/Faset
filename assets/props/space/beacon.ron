@@ -1,0 +1,9 @@
+Prop(
+    id: "beacon",
+    tags: ["decoration", "space"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 0.2, height: 1.4, sides: 8, at: (0.0, 0.7, 0.0), color: "metal_dark"),
+        Sphere(radius: 0.22, subdivisions: 0, at: (0.0, 1.5, 0.0), color: "accent3", pattern: Emissive),
+    ],
+)

@@ -1,0 +1,9 @@
+Prop(
+    id: "cabin_wall",
+    tags: ["cover", "snow"],
+    collision: Box,
+    parts: [
+        Box(size: (3.0, 2.0, 0.3), at: (0.0, 1.0, 0.0), color: "wood", pattern: Planks),
+        Prism(size: (3.2, 0.8, 1.4), at: (0.0, 2.0, 0.0), color: "wood_dark"),
+    ],
+)

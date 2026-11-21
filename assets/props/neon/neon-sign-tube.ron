@@ -1,0 +1,10 @@
+Prop(
+    id: "neon_sign_tube",
+    tags: ["decoration", "neon"],
+    collision: None,
+    parts: [
+        Box(size: (2.0, 0.12, 0.05), at: (0.0, 1.8, 0.0), color: "accent3", pattern: Emissive),
+        Box(size: (0.12, 0.6, 0.05), at: (1.0, 1.5, 0.0), color: "accent3", pattern: Emissive),
+        Box(size: (0.12, 0.6, 0.05), at: (-1.0, 1.5, 0.0), color: "accent3", pattern: Emissive),
+    ],
+)

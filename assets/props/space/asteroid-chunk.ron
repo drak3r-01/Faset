@@ -1,0 +1,11 @@
+Prop(
+    id: "asteroid_chunk",
+    tags: ["obstacle", "space"],
+    collision: ConvexHull,
+    seed: Some(22),
+    parts: [
+        Jitter(amount: 0.2, parts: [
+            Sphere(radius: 0.7, subdivisions: 1, at: (0.0, 0.7, 0.0), color: "stone", pattern: Noise),
+        ]),
+    ],
+)

@@ -1,0 +1,9 @@
+Prop(
+    id: "ice_crystal",
+    tags: ["decoration", "snow"],
+    collision: None,
+    parts: [
+        Repeat(count: 5, rotate_y: 72.0, offset: (0.0, 0.0, 0.0), part:
+            Cone(radius: 0.12, height: 0.9, sides: 4, at: (0.15, 0.45, 0.0), color: "accent2", pattern: Water)),
+    ],
+)

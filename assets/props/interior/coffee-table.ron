@@ -1,0 +1,10 @@
+Prop(
+    id: "coffee_table",
+    tags: ["obstacle", "interior"],
+    collision: Box,
+    parts: [
+        Box(size: (1.0, 0.06, 0.6), at: (0.0, 0.42, 0.0), color: "wood"),
+        Repeat(count: 4, rotate_y: 0.0, offset: (0.0, 0.0, 0.0), part:
+            Box(size: (0.06, 0.4, 0.06), at: (0.42, 0.2, 0.22), color: "wood_dark")),
+    ],
+)

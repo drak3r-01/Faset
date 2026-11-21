@@ -1,0 +1,9 @@
+Prop(
+    id: "snow_wall",
+    tags: ["cover", "snow"],
+    collision: Box,
+    parts: [
+        Box(size: (3.0, 1.0, 0.8), at: (0.0, 0.5, 0.0), color: "white"),
+        Box(size: (3.1, 0.2, 0.9), at: (0.0, 1.1, 0.0), color: "white"),
+    ],
+)

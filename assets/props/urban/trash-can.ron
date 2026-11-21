@@ -1,0 +1,9 @@
+Prop(
+    id: "trash_can",
+    tags: ["decoration", "urban"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 0.3, height: 0.8, sides: 10, at: (0.0, 0.4, 0.0), color: "metal_dark"),
+        Cylinder(radius: 0.33, height: 0.08, sides: 10, at: (0.0, 0.84, 0.0), color: "metal"),
+    ],
+)

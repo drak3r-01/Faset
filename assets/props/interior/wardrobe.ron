@@ -1,0 +1,11 @@
+Prop(
+    id: "wardrobe",
+    tags: ["cover", "interior"],
+    collision: Box,
+    parts: [
+        Box(size: (1.6, 2.2, 0.6), at: (0.0, 1.1, 0.0), color: "wood"),
+        Box(size: (0.02, 1.8, 0.02), at: (0.0, 1.1, 0.31), color: "wood_dark"),
+        Box(size: (0.08, 0.2, 0.05), at: (0.2, 1.1, 0.32), color: "metal"),
+        Box(size: (0.08, 0.2, 0.05), at: (-0.2, 1.1, 0.32), color: "metal"),
+    ],
+)

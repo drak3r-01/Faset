@@ -1,0 +1,9 @@
+Prop(
+    id: "steel_crate",
+    tags: ["cover", "industrial"],
+    collision: Box,
+    parts: [
+        Box(size: (1.2, 1.2, 1.2), at: (0.0, 0.6, 0.0), color: "metal", pattern: Grid),
+        Box(size: (1.25, 0.1, 1.25), at: (0.0, 1.22, 0.0), color: "metal_dark"),
+    ],
+)

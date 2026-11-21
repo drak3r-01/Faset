@@ -1,0 +1,13 @@
+Prop(
+    id: "snow_mound",
+    tags: ["obstacle", "snow"],
+    collision: ConvexHull,
+    seed: Some(5),
+    parts: [
+        Jitter(amount: 0.05, parts: [
+            Group(scale: (1.0, 0.5, 1.0), parts: [
+                Sphere(radius: 0.6, subdivisions: 1, at: (0.0, 0.2, 0.0), color: "white"),
+            ]),
+        ]),
+    ],
+)

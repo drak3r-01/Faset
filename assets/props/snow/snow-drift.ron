@@ -1,0 +1,13 @@
+Prop(
+    id: "snow_drift",
+    tags: ["cover", "snow"],
+    collision: ConvexHull,
+    seed: Some(3),
+    parts: [
+        Group(scale: (1.6, 0.6, 1.0), parts: [
+            Jitter(amount: 0.08, parts: [
+                Sphere(radius: 1.0, subdivisions: 1, at: (0.0, 0.3, 0.0), color: "white"),
+            ]),
+        ]),
+    ],
+)

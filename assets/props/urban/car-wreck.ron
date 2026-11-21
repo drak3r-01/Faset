@@ -1,0 +1,12 @@
+Prop(
+    id: "car_wreck",
+    tags: ["cover", "urban"],
+    collision: Box,
+    seed: Some(5),
+    parts: [
+        Box(size: (1.9, 0.6, 0.9), at: (0.0, 0.5, 0.0), color: "accent3", pattern: Noise),
+        Box(size: (1.1, 0.5, 0.85), at: (-0.2, 1.05, 0.0), color: "metal_dark"),
+        Repeat(count: 2, rotate_y: 0.0, offset: (1.8, 0.0, 0.0), part:
+            Cylinder(radius: 0.3, height: 0.2, sides: 6, at: (-0.6, 0.3, 0.5), color: "rubber")),
+    ],
+)

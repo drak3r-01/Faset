@@ -1,0 +1,11 @@
+Prop(
+    id: "coral_mound",
+    tags: ["cover", "underwater"],
+    collision: ConvexHull,
+    seed: Some(6),
+    parts: [
+        Jitter(amount: 0.12, parts: [
+            Sphere(radius: 0.9, subdivisions: 1, at: (0.0, 0.6, 0.0), color: "accent3", pattern: Noise),
+        ]),
+    ],
+)

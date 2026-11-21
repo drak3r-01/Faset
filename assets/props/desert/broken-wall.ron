@@ -1,0 +1,9 @@
+Prop(
+    id: "broken_wall",
+    tags: ["cover", "desert"],
+    collision: Box,
+    parts: [
+        Box(size: (2.4, 1.2, 0.4), at: (0.0, 0.6, 0.0), color: "stone", pattern: Brick),
+        Box(size: (0.8, 0.5, 0.4), at: (1.2, 1.45, 0.0), color: "stone", pattern: Brick),
+    ],
+)

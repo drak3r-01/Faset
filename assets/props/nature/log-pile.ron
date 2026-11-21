@@ -1,0 +1,9 @@
+Prop(
+    id: "log_pile",
+    tags: ["obstacle", "nature"],
+    collision: Box,
+    parts: [
+        Repeat(count: 3, rotate_y: 0.0, offset: (0.0, 0.3, 0.0), part:
+            Box(size: (1.8, 0.3, 0.3), at: (0.0, 0.15, 0.0), color: "wood_dark", pattern: Planks)),
+    ],
+)

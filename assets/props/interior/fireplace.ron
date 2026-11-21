@@ -1,0 +1,10 @@
+Prop(
+    id: "fireplace",
+    tags: ["cover", "interior"],
+    collision: Box,
+    parts: [
+        Box(size: (1.8, 1.4, 0.6), at: (0.0, 0.7, 0.0), color: "brick", pattern: Brick),
+        Box(size: (1.0, 0.8, 0.1), at: (0.0, 0.4, 0.3), color: "rubber"),
+        Box(size: (2.0, 0.1, 0.7), at: (0.0, 1.45, 0.0), color: "wood_dark"),
+    ],
+)

@@ -1,0 +1,9 @@
+Prop(
+    id: "adobe_wall",
+    tags: ["cover", "desert"],
+    collision: Box,
+    parts: [
+        Box(size: (3.0, 1.6, 0.5), at: (0.0, 0.8, 0.0), color: "sand", pattern: Brick),
+        Box(size: (0.5, 2.0, 0.5), at: (-1.4, 1.0, 0.0), color: "sand"),
+    ],
+)

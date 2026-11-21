@@ -1,0 +1,10 @@
+Prop(
+    id: "fire_hydrant",
+    tags: ["decoration", "urban"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 0.16, height: 0.6, sides: 8, at: (0.0, 0.3, 0.0), color: "accent3"),
+        Sphere(radius: 0.17, subdivisions: 0, at: (0.0, 0.62, 0.0), color: "accent3"),
+        Cylinder(radius: 0.05, height: 0.2, sides: 6, at: (0.2, 0.2, 0.0), color: "metal"),
+    ],
+)

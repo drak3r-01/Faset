@@ -1,0 +1,11 @@
+Prop(
+    id: "club_booth",
+    tags: ["cover", "neon"],
+    collision: Box,
+    parts: [
+        Box(size: (2.0, 0.2, 1.2), at: (0.0, 0.1, 0.0), color: "rubber"),
+        Box(size: (2.0, 0.9, 0.2), at: (0.0, 0.55, -0.5), color: "rubber"),
+        Box(size: (0.2, 0.9, 1.2), at: (-0.9, 0.55, 0.0), color: "rubber"),
+        Box(size: (2.0, 0.08, 0.1), at: (0.0, 1.0, -0.5), color: "accent3", pattern: Emissive),
+    ],
+)

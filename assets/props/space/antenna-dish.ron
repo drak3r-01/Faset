@@ -1,0 +1,9 @@
+Prop(
+    id: "antenna_dish",
+    tags: ["decoration", "space"],
+    collision: Compound,
+    parts: [
+        Cylinder(radius: 0.08, height: 2.0, sides: 6, at: (0.0, 1.0, 0.0), color: "metal_dark"),
+        Cone(radius: 0.9, height: 0.4, sides: 10, at: (0.0, 2.1, 0.0), color: "white"),
+    ],
+)

@@ -1,0 +1,9 @@
+Prop(
+    id: "fallen_tree_snow",
+    tags: ["obstacle", "snow"],
+    collision: Box,
+    parts: [
+        Box(size: (2.6, 0.45, 0.45), at: (0.0, 0.3, 0.0), color: "wood_dark", pattern: Planks),
+        Box(size: (2.5, 0.12, 0.5), at: (0.0, 0.55, 0.0), color: "white"),
+    ],
+)

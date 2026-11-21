@@ -1,0 +1,11 @@
+Prop(
+    id: "cactus_large",
+    tags: ["obstacle", "desert"],
+    collision: ConvexHull,
+    parts: [
+        Cylinder(radius: 0.3, height: 2.4, sides: 8, at: (0.0, 1.2, 0.0), color: "foliage"),
+        Cylinder(radius: 0.18, height: 0.8, sides: 6, at: (0.5, 1.2, 0.0), color: "foliage"),
+        Cylinder(radius: 0.18, height: 0.6, sides: 6, at: (-0.45, 0.9, 0.0), color: "foliage"),
+        Sphere(radius: 0.3, subdivisions: 0, at: (0.0, 2.4, 0.0), color: "foliage"),
+    ],
+)

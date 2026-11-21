@@ -1,0 +1,11 @@
+Prop(
+    id: "tumbleweed",
+    tags: ["obstacle", "desert"],
+    collision: ConvexHull,
+    seed: Some(23),
+    parts: [
+        Jitter(amount: 0.08, parts: [
+            Sphere(radius: 0.5, subdivisions: 1, at: (0.0, 0.5, 0.0), color: "wood", pattern: Noise),
+        ]),
+    ],
+)

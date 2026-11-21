@@ -1,0 +1,14 @@
+Prop(
+    id: "mossy_rock",
+    tags: ["obstacle", "nature"],
+    collision: ConvexHull,
+    seed: Some(9),
+    parts: [
+        Group(scale: (1.0, 0.6, 1.0), parts: [
+            Jitter(amount: 0.12, parts: [
+                Sphere(radius: 0.6, subdivisions: 1, at: (0.0, 0.4, 0.0), color: "stone", pattern: Noise),
+            ]),
+        ]),
+        Sphere(radius: 0.25, subdivisions: 0, at: (0.2, 0.7, 0.2), color: "foliage_dark"),
+    ],
+)

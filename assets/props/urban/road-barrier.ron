@@ -1,0 +1,10 @@
+Prop(
+    id: "road_barrier",
+    tags: ["obstacle", "urban"],
+    collision: Box,
+    parts: [
+        Box(size: (1.6, 0.5, 0.1), at: (0.0, 0.7, 0.0), color: "accent4", pattern: Stripes),
+        Box(size: (0.08, 0.7, 0.08), at: (-0.7, 0.35, 0.0), color: "metal_dark"),
+        Box(size: (0.08, 0.7, 0.08), at: (0.7, 0.35, 0.0), color: "metal_dark"),
+    ],
+)

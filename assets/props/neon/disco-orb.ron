@@ -1,0 +1,9 @@
+Prop(
+    id: "disco_orb",
+    tags: ["decoration", "neon"],
+    collision: None,
+    parts: [
+        Cylinder(radius: 0.03, height: 1.8, sides: 4, at: (0.0, 1.5, 0.0), color: "metal"),
+        Sphere(radius: 0.4, subdivisions: 1, at: (0.0, 2.6, 0.0), color: "white", pattern: Checker),
+    ],
+)

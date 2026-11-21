@@ -1,0 +1,9 @@
+Prop(
+    id: "armchair",
+    tags: ["obstacle", "interior"],
+    collision: Box,
+    parts: [
+        Box(size: (0.9, 0.45, 0.9), at: (0.0, 0.3, 0.0), color: "accent4"),
+        Box(size: (0.9, 0.6, 0.2), at: (0.0, 0.75, -0.35), color: "accent4"),
+    ],
+)

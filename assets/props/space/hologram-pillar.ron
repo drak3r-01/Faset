@@ -1,0 +1,9 @@
+Prop(
+    id: "hologram_pillar",
+    tags: ["decoration", "space"],
+    collision: None,
+    parts: [
+        Cylinder(radius: 0.35, height: 2.0, sides: 8, at: (0.0, 1.0, 0.0), color: "accent2", pattern: Hologram),
+        Cylinder(radius: 0.4, height: 0.1, sides: 8, at: (0.0, 0.05, 0.0), color: "metal_dark"),
+    ],
+)

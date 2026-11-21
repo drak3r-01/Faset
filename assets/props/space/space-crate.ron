@@ -1,0 +1,9 @@
+Prop(
+    id: "space_crate",
+    tags: ["cover", "space"],
+    collision: Box,
+    parts: [
+        Box(size: (1.1, 1.1, 1.1), at: (0.0, 0.55, 0.0), color: "metal_dark", pattern: Grid),
+        Box(size: (1.14, 0.12, 1.14), at: (0.0, 1.1, 0.0), color: "accent2", pattern: Stripes),
+    ],
+)

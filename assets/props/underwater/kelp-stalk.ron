@@ -1,0 +1,12 @@
+Prop(
+    id: "kelp_stalk",
+    tags: ["obstacle", "underwater"],
+    collision: None,
+    seed: Some(16),
+    parts: [
+        Group(height_var: 0.3, parts: [
+            Cylinder(radius: 0.08, height: 3.0, sides: 4, at: (0.0, 1.5, 0.0), color: "foliage_dark", pattern: Ripples),
+            Sphere(radius: 0.18, subdivisions: 0, at: (0.1, 2.0, 0.0), color: "foliage"),
+        ]),
+    ],
+)

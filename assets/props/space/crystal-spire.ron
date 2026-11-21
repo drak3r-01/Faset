@@ -1,0 +1,9 @@
+Prop(
+    id: "crystal_spire",
+    tags: ["decoration", "space"],
+    collision: ConvexHull,
+    parts: [
+        Cone(radius: 0.4, height: 2.4, sides: 6, at: (0.0, 1.2, 0.0), color: "accent2", pattern: Hologram),
+        Cone(radius: 0.25, height: 1.2, sides: 6, at: (0.4, 0.6, 0.2), color: "accent2", pattern: Hologram),
+    ],
+)

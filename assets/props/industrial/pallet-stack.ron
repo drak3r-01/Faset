@@ -1,0 +1,9 @@
+Prop(
+    id: "pallet_stack",
+    tags: ["obstacle", "industrial"],
+    collision: Box,
+    parts: [
+        Repeat(count: 3, rotate_y: 0.0, offset: (0.0, 0.25, 0.0), part:
+            Box(size: (1.2, 0.12, 0.8), at: (0.0, 0.06, 0.0), color: "wood", pattern: Planks)),
+    ],
+)
