@@ -16,7 +16,14 @@
 //! planets in space profiles) fills the pixels no mesh covers when
 //! [`RenderWorld::draw_sky`] is set; its time of day, latitude and clouds come
 //! from [`SkyParams`], and with `SunSource::TimeOfDay` the sun, the sky and
-//! the ambient light follow the map time. With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
+//! the ambient light follow the map time.
+//! Visual weather ([`WeatherState`]: rain, snow, sand, fog, wind, humidity and
+//! storm) is drawn as stateless GPU particles in a box that follows the
+//! camera, masked under roofs by a [`ShelterMap`]; humidity darkens and
+//! reflects surfaces, storms flash lightning and queue [`ThunderEvent`]s for
+//! the audio lot ([`Renderer::take_thunder_events`]); [`WeatherSchedule`]
+//! blends keyframes over 10 to 30 s.
+//! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
 
 mod ambience;
 mod camera;
@@ -33,8 +40,10 @@ mod mesh;
 mod opaque;
 mod select;
 mod shadow;
+mod shelter;
 mod sky;
 mod target;
+mod weather;
 
 use std::path::Path;
 
@@ -50,8 +59,10 @@ use gpu::{image_barriers, GpuBuffer, ImageBarrier};
 use lighting::{pack_lighting, LightingBindings, LIGHTING_ALIGN, LIGHTING_SIZE};
 use opaque::{GBuffer, MeshArena, OpaquePipeline};
 use shadow::ShadowResources;
+use shelter::ShelterBuffer;
 use sky::SkyPipeline;
 use target::{Offscreen, Swapchain};
+use weather::{GpuWeather, WeatherPipeline};
 
 pub use ambience::{
     AmbienceError, AmbienceProfile, Ambient, Fog, Grading, Ramp, Rim, ShadowBias, Sky, Sun,
@@ -71,9 +82,17 @@ pub use mesh::{cube_mesh, Aabb, CubeFaceColors, MeshId, Vertex, CUBE_FACE_TINTS}
 pub use shadow::{
     cascade_splits, fit_cascades, ShadowCascades, CASCADE_COUNT, SHADOW_DISTANCE, SHADOW_MAP_SIZE,
 };
+pub use shelter::{ShelterError, ShelterMap, MAX_SHELTER_SIDE, NO_ROOF};
 pub use sky::{
     cell_has_star, hash_cell, henyey_greenstein, star_cell, sun_altitude_azimuth, sun_direction,
     SkyParams, STAR_COLS, STAR_ROWS, SUN_PHASE_G,
+};
+pub use weather::{
+    flash_envelope, lightning_flash, particle_count, particle_hash, particle_position,
+    particle_velocity, snow_sway, strike_in_slot, strikes_between, thunder_delay, Strike,
+    ThunderEvent, WeatherError, WeatherKeyframe, WeatherSchedule, WeatherState, BOX_SIZE,
+    FLASH_DURATION_S, KIND_RAIN, KIND_SAND, KIND_SNOW, LIGHTNING_MIN_STORM, LIGHTNING_SLOT_S,
+    MAX_PARTICLES, MAX_TRANSITION_S, MAX_WIND_SPEED, MIN_TRANSITION_S, SNOW_SWAY, SPEED_OF_SOUND,
 };
 
 /// Which physical device to use.
@@ -128,6 +147,10 @@ pub struct RenderWorld {
     /// fog take the sky colour. Off by default: those pixels then keep
     /// `clear_color` and the fog its profile colour.
     pub draw_sky: bool,
+    /// Visual weather of the frame (sample a [`WeatherSchedule`] to get it).
+    /// Particles and lightning animate with the time set by
+    /// [`Renderer::set_material_time`]. Clear by default.
+    pub weather: WeatherState,
 }
 
 impl Default for RenderWorld {
@@ -140,6 +163,7 @@ impl Default for RenderWorld {
             ambience: AmbienceProfile::default(),
             sky: SkyParams::default(),
             draw_sky: false,
+            weather: WeatherState::CLEAR,
         }
     }
 }
@@ -206,6 +230,13 @@ pub struct Renderer {
     deferred: DeferredQueue<Garbage>,
     opaque: OpaquePipeline,
     sky: SkyPipeline,
+    weather: WeatherPipeline,
+    /// Roofs that mask weather particles (none until `set_shelter_map`).
+    shelter: ShelterBuffer,
+    /// Thunder of the strikes since the last `take_thunder_events`.
+    thunder: Vec<ThunderEvent>,
+    /// Material time of the previous frame, to find the strikes in between.
+    last_weather_time: Option<f32>,
     shadow: ShadowResources,
     lighting: LightingBindings,
     /// Fits the cascades to this camera instead of the view camera.
@@ -294,10 +325,18 @@ impl Renderer {
         let mut lighting = None;
         let mut opaque = None;
         let mut sky = None;
+        let mut weather = None;
+        let mut shelter = None;
         let target = result
             .and_then(|()| {
                 let maps = shadow.insert(ShadowResources::new(&mut ctx)?);
-                let bindings = lighting.insert(LightingBindings::new(&ctx, &frames, maps)?);
+                let roofs = shelter.insert(ShelterBuffer::new(&mut ctx, &ShelterMap::empty())?);
+                let bindings = lighting.insert(LightingBindings::new(
+                    &ctx,
+                    &frames,
+                    maps,
+                    roofs.buffer.buffer,
+                )?);
                 let layout = bindings.set_layout;
                 let pipeline = opaque.insert(OpaquePipeline::new(
                     &mut ctx,
@@ -305,16 +344,29 @@ impl Renderer {
                     layout,
                 )?);
                 sky = Some(SkyPipeline::new(&ctx.device, pipeline.layout)?);
+                weather = Some(WeatherPipeline::new(&ctx.device, pipeline.layout)?);
                 Ok(())
             })
             .and_then(|()| make_target(&mut ctx));
-        match (target, opaque, sky, lighting, shadow) {
-            (Ok(target), Some(opaque), Some(sky), Some(lighting), Some(shadow)) => Ok(Self {
+        match (target, opaque, sky, weather, shelter, lighting, shadow) {
+            (
+                Ok(target),
+                Some(opaque),
+                Some(sky),
+                Some(weather),
+                Some(shelter),
+                Some(lighting),
+                Some(shadow),
+            ) => Ok(Self {
                 frames,
                 target,
                 deferred: DeferredQueue::new(),
                 opaque,
                 sky,
+                weather,
+                shelter,
+                thunder: Vec::new(),
+                last_weather_time: None,
                 shadow,
                 lighting,
                 shadow_camera: None,
@@ -331,9 +383,15 @@ impl Renderer {
                 material_time: 0.0,
                 ctx,
             }),
-            (result, opaque, sky, lighting, shadow) => {
+            (result, opaque, sky, weather, shelter, lighting, shadow) => {
                 if let Some(mut s) = sky {
                     s.destroy(&ctx.device);
+                }
+                if let Some(mut w) = weather {
+                    w.destroy(&ctx.device);
+                }
+                if let Some(mut s) = shelter {
+                    s.destroy(&mut ctx);
                 }
                 if let Some(mut p) = opaque {
                     p.destroy(&mut ctx);
@@ -500,6 +558,9 @@ impl Renderer {
             }
         }
 
+        // Thunder of the strikes since the previous frame.
+        self.queue_thunder(world.weather.storm);
+
         // Culling and per-instance data.
         let camera = &world.camera;
         let view_proj = camera.view_proj();
@@ -528,7 +589,20 @@ impl Renderer {
         // the cascade volume, so casters outside the view are kept). Their
         // instances are appended after the view's.
         // The map time sets the sun (and the sky colours) of the frame.
-        let resolved = sky::resolve(&world.ambience, &world.sky, world.draw_sky, camera);
+        // The weather tints the sky, dims the light and thickens the fog
+        // first; lightning then flashes on top.
+        let state = &world.weather;
+        let flash = weather::lightning_flash(self.material_time, state.storm);
+        let (weathered, weathered_sky) = weather::apply(&world.ambience, &world.sky, state);
+        let mut resolved = sky::resolve(&weathered, &weathered_sky, world.draw_sky, camera);
+        weather::apply_flash(&mut resolved, flash);
+        let gpu_weather = GpuWeather::new(
+            state,
+            flash,
+            resolved.gpu.horizon,
+            &self.shelter.info,
+            &view_proj,
+        );
         let ambience = &resolved.ambience;
         let sun_dir = glam::Vec3::from_array(ambience.sun.direction).normalize_or(glam::Vec3::Y);
         let cascades = (ambience.sun.intensity > 0.0).then(|| {
@@ -589,6 +663,7 @@ impl Renderer {
             camera_pos,
             cascades.as_ref(),
             resolved.gpu,
+            gpu_weather,
             &mut self.light_overflow_warned,
         );
         let frame = &mut self.frames[slot];
@@ -962,6 +1037,88 @@ impl Renderer {
                 device.cmd_draw(frame.cmd, 3, 1, 0, 0);
             }
             self.ctx.dynamic_rendering.cmd_end_rendering(frame.cmd);
+            // Weather: instanced quads per particle kind, alpha-blended into
+            // the HDR target and depth-tested against the scene, in a second
+            // rendering without the motion and normal targets; the push
+            // constant `kind` picks the shape.
+            let counts = [
+                weather::particle_count(weather::KIND_RAIN, state.rain),
+                weather::particle_count(weather::KIND_SNOW, state.snow),
+                weather::particle_count(weather::KIND_SAND, state.sand),
+            ];
+            if counts.iter().any(|&c| c > 0) {
+                // The first rendering's colour and depth writes before this
+                // one's blending and depth reads.
+                device.cmd_pipeline_barrier(
+                    frame.cmd,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                    vk::DependencyFlags::empty(),
+                    &[vk::MemoryBarrier::default()
+                        .src_access_mask(
+                            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                        )
+                        .dst_access_mask(
+                            vk::AccessFlags::COLOR_ATTACHMENT_READ
+                                | vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
+                        )],
+                    &[],
+                    &[],
+                );
+                let hdr_load = [vk::RenderingAttachmentInfo::default()
+                    .image_view(gbuffer.hdr.view)
+                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .load_op(vk::AttachmentLoadOp::LOAD)
+                    .store_op(vk::AttachmentStoreOp::STORE)];
+                let depth_load = vk::RenderingAttachmentInfo::default()
+                    .image_view(gbuffer.depth.view)
+                    .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .load_op(vk::AttachmentLoadOp::LOAD)
+                    .store_op(vk::AttachmentStoreOp::STORE);
+                let weather_pass = vk::RenderingInfo::default()
+                    .render_area(full)
+                    .layer_count(1)
+                    .color_attachments(&hdr_load)
+                    .depth_attachment(&depth_load);
+                self.ctx
+                    .dynamic_rendering
+                    .cmd_begin_rendering(frame.cmd, &weather_pass);
+                device.cmd_bind_pipeline(
+                    frame.cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.weather.pipeline,
+                );
+                device.cmd_set_viewport(frame.cmd, 0, &[viewport]);
+                device.cmd_set_scissor(frame.cmd, 0, &[full]);
+                device.cmd_bind_descriptor_sets(
+                    frame.cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.opaque.layout,
+                    0,
+                    &[self.opaque.materials.set, lighting_set],
+                    &[lighting_offset as u32],
+                );
+                for (kind, count) in (0u32..).zip(counts) {
+                    if count == 0 {
+                        continue;
+                    }
+                    let push: [u8; opaque::PUSH_CONSTANT_SIZE as usize] =
+                        bytemuck::cast([jitter.x, jitter.y, self.material_time, kind as f32]);
+                    device.cmd_push_constants(
+                        frame.cmd,
+                        self.opaque.layout,
+                        opaque::PUSH_CONSTANT_STAGES,
+                        0,
+                        &push,
+                    );
+                    device.cmd_draw(frame.cmd, 6, count, 0, 0);
+                }
+                self.ctx.dynamic_rendering.cmd_end_rendering(frame.cmd);
+            }
             image_barriers(
                 device,
                 frame.cmd,
@@ -1198,6 +1355,49 @@ impl Renderer {
         self.shadow_camera = camera;
     }
 
+    /// Loads the roofs that shelter the map from weather particles (an empty
+    /// map at creation). Call it once at map load: it waits for the GPU to go
+    /// idle.
+    pub fn set_shelter_map(&mut self, map: &ShelterMap) -> Result<(), RenderError> {
+        let new = ShelterBuffer::new(&mut self.ctx, map)?;
+        // SAFETY: valid device; once idle no frame reads the old buffer or
+        // the descriptor sets being updated.
+        if let Err(e) = unsafe { self.ctx.device.device_wait_idle() } {
+            let mut new = new;
+            new.destroy(&mut self.ctx);
+            return Err(e.into());
+        }
+        self.lighting.set_shelter(&self.ctx, new.buffer.buffer);
+        let mut old = std::mem::replace(&mut self.shelter, new);
+        old.destroy(&mut self.ctx);
+        Ok(())
+    }
+
+    /// Takes the thunder of the lightning strikes drawn since the last call,
+    /// oldest first. The audio lot plays each one `delay_s` seconds later.
+    pub fn take_thunder_events(&mut self) -> Vec<ThunderEvent> {
+        std::mem::take(&mut self.thunder)
+    }
+
+    /// Queues the thunder of the strikes between the previous frame's
+    /// material time and this one's. Time going backwards or jumping by more
+    /// than 30 s (a reset or a teleport) skips detection for that frame.
+    fn queue_thunder(&mut self, storm: f32) {
+        let now = self.material_time;
+        if let Some(previous) = self.last_weather_time.replace(now) {
+            if now > previous && now - previous <= 30.0 {
+                self.thunder.extend(
+                    weather::strikes_between(previous, now, storm)
+                        .iter()
+                        .map(weather::Strike::thunder),
+                );
+                // Nobody is listening: keep the newest ones only.
+                let excess = self.thunder.len().saturating_sub(64);
+                self.thunder.drain(..excess);
+            }
+        }
+    }
+
     /// Swaps the opaque pipeline for one built from new SPIR-V; keeps the
     /// current one on error.
     #[cfg(feature = "hot-reload")]
@@ -1305,6 +1505,8 @@ impl Drop for Renderer {
             a.destroy(&mut self.ctx);
         }
         self.sky.destroy(&self.ctx.device);
+        self.weather.destroy(&self.ctx.device);
+        self.shelter.destroy(&mut self.ctx);
         self.opaque.destroy(&mut self.ctx);
         self.lighting.destroy(&self.ctx);
         self.shadow.destroy(&mut self.ctx);

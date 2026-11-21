@@ -11,8 +11,8 @@ use std::sync::Arc;
 use faset_render::glam::{Mat4, Vec2, Vec3};
 use faset_render::{
     cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, Instance, MaterialTable,
-    MeshId, Pattern, PointLight, RenderConfig, RenderError, RenderWorld, Renderer, SkyParams,
-    SunSource, BUILTIN_PROFILES, CUBE_FACE_TINTS, SHADOW_DISTANCE,
+    MeshId, Pattern, PointLight, RenderConfig, RenderError, RenderWorld, Renderer, ShelterMap,
+    SkyParams, SunSource, WeatherState, BUILTIN_PROFILES, CUBE_FACE_TINTS, SHADOW_DISTANCE,
 };
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -614,6 +614,7 @@ fn render_profile(name: &str, path: &Path) {
         instances,
         lights,
         ambience,
+        weather: WeatherState::CLEAR,
         sky: SkyParams::default(),
         draw_sky: name == "space",
     };
@@ -893,7 +894,7 @@ fn hot_reload_swaps_valid_shaders_and_keeps_old_on_error() {
 
         // Valid edit: paint everything red. One frame per poll.
         let red = original.replace(
-            "out.color = vec4<f32>(apply_fog(lit, in.world_pos), 1.0);",
+            "out.color = vec4<f32>(apply_fog(mix(lit, wet.reflection, wet.weight), in.world_pos), 1.0);",
             "out.color = vec4<f32>(1.0, 0.0, 0.0, 1.0);",
         );
         assert_ne!(red, original, "edit target found");
@@ -1418,5 +1419,322 @@ fn time_of_day_sun_moves_the_shadow() {
         .filter(|(a, b)| a != b)
         .count();
     assert!(differing > 2000, "only {differing} pixels differ");
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+// ---------------------------------------------------------------------------
+// Weather (lot 2.7)
+// ---------------------------------------------------------------------------
+
+/// Reference name and weather of the three particle references.
+fn weather_shots() -> [(&'static str, WeatherState); 3] {
+    [
+        (
+            "weather_rain",
+            WeatherState {
+                rain: 1.0,
+                humidity: 0.9,
+                storm: 0.3,
+                wind: Vec3::new(3.0, 0.0, 1.0),
+                ..WeatherState::CLEAR
+            },
+        ),
+        (
+            "weather_snow",
+            WeatherState {
+                snow: 0.8,
+                fog: 0.15,
+                wind: Vec3::new(1.5, 0.0, 0.5),
+                ..WeatherState::CLEAR
+            },
+        ),
+        (
+            "weather_sand",
+            WeatherState {
+                sand: 0.9,
+                wind: Vec3::new(9.0, 0.0, 3.0),
+                ..WeatherState::CLEAR
+            },
+        ),
+    ]
+}
+
+/// Ground and three cubes below an afternoon sky, in `weather` at material
+/// time `time`; `shelter` is loaded first when given.
+fn render_weather(
+    weather: WeatherState,
+    shelter: Option<&ShelterMap>,
+    time: f32,
+    path: &Path,
+) -> Renderer {
+    let mut renderer = headless((256, 256));
+    renderer.set_material_time(time);
+    if let Some(map) = shelter {
+        renderer.set_shelter_map(map).unwrap();
+    }
+    let mut mesh = |material: u8| {
+        let (v, i) = cube_mesh(0.5, &[[230; 3]; 6], material);
+        renderer.upload_mesh(&v, &i).unwrap()
+    };
+    let (ground, cube) = (mesh(2), mesh(0));
+    let (camera, forward) = sky_camera(180.0, 6.0);
+    let right = forward.cross(Vec3::Y);
+    let at = |ahead: f32, side: f32| Vec3::new(0.0, 0.5, 0.0) + forward * ahead + right * side;
+    let mut instances = vec![Instance::new(
+        ground,
+        0,
+        Mat4::from_translation(Vec3::new(0.0, -0.5, 0.0))
+            * Mat4::from_scale(Vec3::new(400.0, 1.0, 400.0)),
+    )];
+    for (ahead, side) in [(4.0, -1.5), (9.0, 1.2), (20.0, -4.0)] {
+        instances.push(Instance::new(
+            cube,
+            0,
+            Mat4::from_translation(at(ahead, side)),
+        ));
+    }
+    let world = RenderWorld {
+        camera,
+        instances,
+        ambience: tod_ambience(),
+        sky: SkyParams {
+            time_h: 14.0,
+            latitude_deg: 45.0,
+            ..SkyParams::default()
+        },
+        draw_sky: true,
+        weather,
+        ..RenderWorld::default()
+    };
+    // Twice, so both frame slots are used.
+    for _ in 0..2 {
+        renderer.render_frame(&world).unwrap();
+    }
+    renderer.read_back_png(path).unwrap();
+    assert_eq!(renderer.validation_message_count(), 0);
+    renderer
+}
+
+fn weather_reference(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/refs/{name}.png"))
+}
+
+#[test]
+fn rain_snow_and_sand_match_references() {
+    let (messages, _guard) = capture_messages();
+    let mut failures = Vec::new();
+    for (name, weather) in weather_shots() {
+        let out = out_path(&format!("{name}.png"));
+        render_weather(weather, None, PROFILE_TIME, &out);
+        let error = max_channel_error(&load_rgba(&out), &load_rgba(&weather_reference(name)));
+        if error > 1 {
+            failures.push(format!(
+                "{name}: max channel error {error} (output: {})",
+                out.display()
+            ));
+        } else {
+            let _ = std::fs::remove_file(out);
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Regenerates the three weather references from lavapipe renders. Inspect
+/// the images before committing them.
+#[test]
+#[ignore = "regenerates tests/refs/weather_*.png"]
+fn bless_weather_references() {
+    for (name, weather) in weather_shots() {
+        render_weather(weather, None, PROFILE_TIME, &weather_reference(name));
+    }
+}
+
+/// The three kinds of weather look different from each other and from clear
+/// weather, and the particles move with time.
+#[test]
+fn weather_kinds_differ_and_particles_move() {
+    let (messages, _guard) = capture_messages();
+    let render = |weather: WeatherState, time: f32, tag: &str| {
+        let out = out_path(&format!("weather-{tag}.png"));
+        render_weather(weather, None, time, &out);
+        let img = load_rgba(&out);
+        let _ = std::fs::remove_file(out);
+        img
+    };
+    let clear = render(WeatherState::CLEAR, 1.0, "clear");
+    let [(_, rain), (_, snow), (_, sand)] = weather_shots();
+    let images = [rain, snow, sand].map(|w| render(w, 1.0, "kind"));
+    for (i, a) in images.iter().enumerate() {
+        assert!(max_channel_error(a, &clear) > 30, "kind {i} is visible");
+        for b in &images[i + 1..] {
+            assert!(max_channel_error(a, b) > 30);
+        }
+    }
+    let later = render(rain, 1.2, "later");
+    let differing = images[0]
+        .pixels()
+        .zip(later.pixels())
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(differing > 1000, "only {differing} pixels changed");
+    // Rendering the same state twice gives the same image.
+    assert_eq!(
+        max_channel_error(&clear, &render(WeatherState::CLEAR, 1.0, "clear2")),
+        0
+    );
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// A roof over one half of the world removes the particles there and only
+/// there; a roof over everything removes them all.
+#[test]
+fn shelter_map_masks_particles_under_roofs() {
+    let (messages, _guard) = capture_messages();
+    let rain = WeatherState {
+        rain: 1.0,
+        ..WeatherState::CLEAR
+    };
+    let roof = |min_x: f32, max_x: f32| {
+        ShelterMap::from_boxes(
+            Vec2::new(-100.0, -100.0),
+            200,
+            200,
+            1.0,
+            &[(
+                Vec3::new(min_x, -1.0, -100.0),
+                Vec3::new(max_x, 50.0, 100.0),
+            )],
+        )
+        .unwrap()
+    };
+    let render = |map: Option<&ShelterMap>, tag: &str| {
+        let out = out_path(&format!("shelter-{tag}.png"));
+        render_weather(rain, map, 1.0, &out);
+        let img = load_rgba(&out);
+        let _ = std::fs::remove_file(out);
+        img
+    };
+    let open = render(None, "open");
+    let all = render(Some(&roof(-100.0, 100.0)), "all");
+    // The camera looks along +Z, so +X is the left of the image.
+    let left = render(Some(&roof(0.0, 100.0)), "left");
+    let right = render(Some(&roof(-100.0, 0.0)), "right");
+    // Compare columns away from the middle, where quads of either side spill over.
+    let columns = |img: &image::RgbaImage, from: u32, to: u32| {
+        let mut out = Vec::new();
+        for y in 0..256 {
+            for x in from..to {
+                out.push(img.get_pixel(x, y).0);
+            }
+        }
+        out
+    };
+    let (l0, l1, r0, r1) = (0, 100, 156, 256);
+    // Under the roof: identical to a world without particles.
+    assert_eq!(columns(&left, l0, l1), columns(&all, l0, l1));
+    assert_eq!(columns(&right, r0, r1), columns(&all, r0, r1));
+    // Outside the roof: particles are drawn.
+    assert_ne!(columns(&left, r0, r1), columns(&all, r0, r1));
+    assert_ne!(columns(&right, l0, l1), columns(&all, l0, l1));
+    assert_eq!(columns(&left, r0, r1), columns(&open, r0, r1));
+    assert_eq!(columns(&right, l0, l1), columns(&open, l0, l1));
+    assert_ne!(columns(&open, l0, l1), columns(&all, l0, l1));
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Humidity darkens the ground and puddles reflect the sky.
+#[test]
+fn humidity_darkens_and_reflects() {
+    let (messages, _guard) = capture_messages();
+    let render = |humidity: f32| {
+        let out = out_path("humidity.png");
+        let weather = WeatherState {
+            humidity,
+            ..WeatherState::CLEAR
+        };
+        render_weather(weather, None, 1.0, &out);
+        let img = load_rgba(&out);
+        let _ = std::fs::remove_file(out);
+        img
+    };
+    let dry = render(0.0);
+    let damp = render(0.8);
+    let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    // Lower part of the image: ground only.
+    let ground = |img: &image::RgbaImage| luma(mean_rgb(img, 0, 200, 256, 256));
+    assert!(
+        ground(&damp) < 0.85 * ground(&dry),
+        "{} vs {}",
+        ground(&damp),
+        ground(&dry)
+    );
+    assert!(max_channel_error(&dry, &damp) > 20);
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Storms flash and queue thunder with the right delay; calm weather does not.
+#[test]
+fn storm_flashes_and_queues_thunder() {
+    use faset_render::{lightning_flash, strikes_between, thunder_delay, ThunderEvent};
+    let (messages, _guard) = capture_messages();
+    let strikes = strikes_between(0.0, 100.0, 1.0);
+    assert!(strikes.len() > 5);
+    let storm = WeatherState {
+        storm: 1.0,
+        ..WeatherState::CLEAR
+    };
+    let calm = WeatherState {
+        storm: 0.2,
+        ..WeatherState::CLEAR
+    };
+    let world = |weather: WeatherState| RenderWorld {
+        weather,
+        ambience: AmbienceProfile::builtin("night").unwrap(),
+        draw_sky: true,
+        ..RenderWorld::default()
+    };
+    let mut renderer = headless((64, 64));
+    for (weather, expected) in [(storm, true), (calm, false)] {
+        let world = world(weather);
+        let mut events = Vec::new();
+        // Time restarts: the jump back skips detection for one frame.
+        renderer.set_material_time(0.0);
+        renderer.render_frame(&world).unwrap();
+        renderer.take_thunder_events();
+        for k in 1..=200 {
+            renderer.set_material_time(k as f32 * 0.5);
+            renderer.render_frame(&world).unwrap();
+            events.extend(renderer.take_thunder_events());
+        }
+        assert_eq!(!events.is_empty(), expected);
+        if expected {
+            let want: Vec<ThunderEvent> = strikes
+                .iter()
+                .map(|s| ThunderEvent {
+                    delay_s: thunder_delay(s.distance_m),
+                })
+                .collect();
+            assert_eq!(events, want);
+            assert!(events.iter().all(|e| (0.8..=12.0).contains(&e.delay_s)));
+        }
+    }
+
+    // The scene is brighter during a flash than a second later.
+    let strike = strikes[0];
+    let mut mean_at = |t: f32| {
+        renderer.set_material_time(t);
+        renderer.render_frame(&world(storm)).unwrap();
+        let out = out_path("flash.png");
+        renderer.read_back_png(&out).unwrap();
+        let img = load_rgba(&out);
+        let _ = std::fs::remove_file(out);
+        mean_rgb(&img, 0, 0, 64, 64)
+    };
+    assert!(lightning_flash(strike.start_s, 1.0) > 0.99);
+    let lit = mean_at(strike.start_s);
+    let dark = mean_at(strike.start_s + 1.0);
+    assert!(lit[2] > dark[2] + 0.1, "{lit:?} vs {dark:?}");
+    assert_eq!(renderer.validation_message_count(), 0);
     assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
 }

@@ -57,6 +57,15 @@ mod tests {
     }
 
     #[test]
+    fn weather_blobs_are_spirv() {
+        for blob in [WEATHER_VS, WEATHER_FS] {
+            assert!(blob.len() > 5);
+            assert_eq!(blob[0], SPIRV_MAGIC);
+        }
+        assert_ne!(WEATHER_VS, WEATHER_FS);
+    }
+
+    #[test]
     fn shadow_vertex_blob_is_spirv() {
         assert_eq!(SHADOW_VS[0], SPIRV_MAGIC);
         assert!(SHADOW_VS.len() > 5);
