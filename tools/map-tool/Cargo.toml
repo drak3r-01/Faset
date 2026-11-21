@@ -1,0 +1,29 @@
+[package]
+name = "map-tool"
+description = "Validates maps (rules, JSON report) and renders top and perspective views."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "map_tool"
+path = "src/lib.rs"
+
+[[bin]]
+name = "map-tool"
+path = "src/main.rs"
+
+[dependencies]
+faset-client = { path = "../../crates/client", version = "0.0.1-rc.1" }
+faset-core.workspace = true
+faset-mapfmt.workspace = true
+faset-render.workspace = true
+faset-sim.workspace = true
+anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

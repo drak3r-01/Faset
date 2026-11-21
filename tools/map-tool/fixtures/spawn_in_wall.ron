@@ -1,0 +1,23 @@
+Map(
+    format_version: 1,
+    meta: (
+        name: "Spawn in wall",
+        modes: ["fps"],
+        players: (2, 2),
+    ),
+    theme: (
+        ambience: "sunset",
+        palette: "industrial",
+    ),
+    brushes: [
+        Box(min: (-40, -2, -40), max: (40, 0, 40), material: "concrete"),
+        Box(min: (-22, 0, -4), max: (-18, 6, 4), material: "concrete"),
+    ],
+    spawns: [
+        (at: (-10.0, 0.0, 0.0), yaw: 0.0, team: A),
+        (at: (10.0, 0.0, 0.0), yaw: 0.0, team: B),
+    ],
+    zones: [
+        Box(min: (-40, -40, -40), max: (40, -20, 40), kind: KillVolume),
+    ],
+)

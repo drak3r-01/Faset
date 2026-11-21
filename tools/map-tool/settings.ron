@@ -1,0 +1,16 @@
+// Validator thresholds (plan sections 1, 12 and 17). Decisions are listed in
+// docs/lots/3.3-map-tool.md.
+Settings(
+    // Whole-map budget, in triangles (plan section 12).
+    max_triangles: 150000,
+    // Largest player count a match supports (plan section 1).
+    match_players: 16,
+    // Free height required above a spawn, in metres.
+    spawn_free_height_m: 2.0,
+    // Spawns of opposing teams closer than this must not see each other.
+    enemy_sight_radius_m: 8.0,
+    // Largest allowed relative gap between the two teams' distances.
+    balance_tolerance: 0.05,
+    // Walk graph: highest step or per-cell slope climbed, in metres.
+    step_m: 0.45,
+)
