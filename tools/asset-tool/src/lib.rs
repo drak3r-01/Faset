@@ -121,17 +121,6 @@ impl Thumbnailer {
         let Some((lo, hi)) = mesh.bounds() else {
             bail!("empty mesh");
         };
-        let vertices: Vec<Vertex> = mesh
-            .vertices
-            .iter()
-            .map(|v| Vertex {
-                position: v.position,
-                normal: v.normal,
-                color_material: v.color_material,
-            })
-            .collect();
-        let id = self.renderer.upload_mesh(&vertices, &mesh.indices)?;
-
         let (centre, radius) = (
             Vec3::from_array((lo + hi).to_array()) * 0.5,
             (hi - lo).length() * 0.5,
@@ -139,12 +128,46 @@ impl Thumbnailer {
         let fov = 35f32.to_radians();
         let distance = radius / (0.5 * fov).sin() * 1.1;
         let eye = centre + Vec3::new(0.8, 0.6, 1.0).normalize() * distance;
-        let view = faset_render::glam::camera::rh::view::look_at_mat4(eye, centre, Vec3::Y);
-        let proj = perspective_reverse_z(fov, 1.0, 0.05);
+        self.render_scene(
+            &[(mesh, Mat4::IDENTITY)],
+            eye,
+            centre,
+            fov.to_degrees(),
+            0.05,
+        )
+    }
+
+    /// Renders several meshes, each placed by its own matrix, seen from `eye`
+    /// towards `target` with a vertical field of view in degrees.
+    pub fn render_scene(
+        &mut self,
+        parts: &[(&Mesh, Mat4)],
+        eye: Vec3,
+        target: Vec3,
+        fov_deg: f32,
+        near: f32,
+    ) -> Result<image::RgbaImage> {
+        let mut instances = Vec::with_capacity(parts.len());
+        for (mesh, world) in parts {
+            let vertices: Vec<Vertex> = mesh
+                .vertices
+                .iter()
+                .map(|v| Vertex {
+                    position: v.position,
+                    normal: v.normal,
+                    color_material: v.color_material,
+                })
+                .collect();
+            let id = self.renderer.upload_mesh(&vertices, &mesh.indices)?;
+            instances.push(Instance::new(id, 0, *world));
+        }
+        let fov = fov_deg.to_radians();
+        let view = faset_render::glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
+        let proj = perspective_reverse_z(fov, 1.0, near);
         let world = |camera| RenderWorld {
             clear_color: [0.22, 0.25, 0.3, 1.0],
             camera,
-            instances: vec![Instance::new(id, 0, Mat4::IDENTITY)],
+            instances: instances.clone(),
             ambience: AmbienceProfile::builtin("day").expect("built-in profile"),
             ..RenderWorld::default()
         };
