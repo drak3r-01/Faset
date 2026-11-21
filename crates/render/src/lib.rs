@@ -8,8 +8,12 @@
 //!
 //! Surfaces are painted by procedural materials chosen by the vertex
 //! material id (see [`MaterialTable`]); shaders come from `faset-shaders`.
+//! The stylised lighting model (banded sun and point lights, hemispheric
+//! ambient, rim, height fog) is driven by the [`AmbienceProfile`] and the
+//! [`PointLight`]s of the [`RenderWorld`].
 //! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
 
+mod ambience;
 mod camera;
 mod context;
 mod cull;
@@ -18,6 +22,7 @@ mod frame;
 mod gpu;
 #[cfg(feature = "hot-reload")]
 mod hot_reload;
+mod lighting;
 mod material;
 mod mesh;
 mod opaque;
@@ -35,9 +40,14 @@ use cull::{DrawBatch, GpuInstance};
 use deferred::{DeferredQueue, FRAMES_IN_FLIGHT};
 use frame::{FrameData, Garbage};
 use gpu::{image_barriers, GpuBuffer, ImageBarrier};
+use lighting::{pack_lighting, LightingBindings, LIGHTING_ALIGN, LIGHTING_SIZE};
 use opaque::{GBuffer, MeshArena, OpaquePipeline};
 use target::{Offscreen, Swapchain};
 
+pub use ambience::{
+    AmbienceError, AmbienceProfile, Ambient, Fog, Grading, Ramp, Rim, Sky, Sun, SunSource, Water,
+    Weather, WeatherKind, BUILTIN_PROFILES,
+};
 pub use camera::{
     halton, jitter, jitter_ndc, jittered_projection, motion_vector, perspective_reverse_z, Camera,
     JITTER_SAMPLES,
@@ -46,6 +56,7 @@ pub use cull::Instance;
 pub use faset_core::glam;
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::ShaderWatcher;
+pub use lighting::{height_fog, point_light_attenuation, PointLight, MAX_POINT_LIGHTS};
 pub use material::{Material, MaterialError, MaterialTable, Pattern};
 pub use mesh::{cube_mesh, Aabb, CubeFaceColors, MeshId, Vertex, CUBE_FACE_TINTS};
 
@@ -81,7 +92,7 @@ impl Default for RenderConfig {
     }
 }
 
-/// What to draw this frame. Lights and ambience arrive with lot 2.4.
+/// What to draw this frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderWorld {
     /// Linear RGBA colour of pixels no mesh covers.
@@ -89,6 +100,12 @@ pub struct RenderWorld {
     pub camera: Camera,
     /// Static mesh instances; per-instance data is rewritten every frame.
     pub instances: Vec<Instance>,
+    /// Point lights; the first [`MAX_POINT_LIGHTS`] are used, the rest are
+    /// dropped with a warning.
+    pub lights: Vec<PointLight>,
+    /// Lighting and fog parameters. The default (neutral) profile leaves
+    /// surfaces at albedo plus emission.
+    pub ambience: AmbienceProfile,
 }
 
 impl Default for RenderWorld {
@@ -97,6 +114,8 @@ impl Default for RenderWorld {
             clear_color: [0.0, 0.0, 0.0, 1.0],
             camera: Camera::default(),
             instances: Vec::new(),
+            lights: Vec::new(),
+            ambience: AmbienceProfile::default(),
         }
     }
 }
@@ -162,6 +181,9 @@ pub struct Renderer {
     target: Target,
     deferred: DeferredQueue<Garbage>,
     opaque: OpaquePipeline,
+    lighting: LightingBindings,
+    /// True while the point light list overflows (warned once).
+    light_overflow_warned: bool,
     /// Created at the first frame and whenever the target size changes.
     gbuffer: Option<GBuffer>,
     /// Created at the first mesh upload.
@@ -235,19 +257,28 @@ impl Renderer {
                 }
             }
         }
+        let mut lighting = None;
         let mut opaque = None;
         let target = result
             .and_then(|()| {
-                opaque = Some(OpaquePipeline::new(&mut ctx, &MaterialTable::builtin())?);
+                let bindings = lighting.insert(LightingBindings::new(&ctx, &frames)?);
+                let layout = bindings.set_layout;
+                opaque = Some(OpaquePipeline::new(
+                    &mut ctx,
+                    &MaterialTable::builtin(),
+                    layout,
+                )?);
                 Ok(())
             })
             .and_then(|()| make_target(&mut ctx));
-        match (target, opaque) {
-            (Ok(target), Some(opaque)) => Ok(Self {
+        match (target, opaque, lighting) {
+            (Ok(target), Some(opaque), Some(lighting)) => Ok(Self {
                 frames,
                 target,
                 deferred: DeferredQueue::new(),
                 opaque,
+                lighting,
+                light_overflow_warned: false,
                 gbuffer: None,
                 arena: None,
                 gpu_instances: Vec::new(),
@@ -258,9 +289,12 @@ impl Renderer {
                 material_time: 0.0,
                 ctx,
             }),
-            (result, opaque) => {
+            (result, opaque, lighting) => {
                 if let Some(mut p) = opaque {
                     p.destroy(&mut ctx);
+                }
+                if let Some(mut l) = lighting {
+                    l.destroy(&ctx);
                 }
                 for mut f in frames {
                     f.destroy(&mut ctx);
@@ -463,8 +497,30 @@ impl Renderer {
         };
         let jitter = jitter_ndc(camera.jitter_px, (extent.width, extent.height));
 
+        // Lighting block, written into this frame's uniform ring.
+        let camera_pos = camera.view.inverse().w_axis.truncate();
+        let lighting_block = pack_lighting(
+            &world.ambience,
+            &world.lights,
+            camera_pos,
+            &mut self.light_overflow_warned,
+        );
         let frame = &mut self.frames[slot];
         frame.uniforms.cursor.reset();
+        let lighting_offset = frame
+            .uniforms
+            .cursor
+            .alloc(LIGHTING_SIZE, LIGHTING_ALIGN)
+            .expect("the uniform ring holds the lighting block");
+        let start = lighting_offset as usize;
+        frame
+            .uniforms
+            .allocation
+            .as_mut()
+            .and_then(|a| a.mapped_slice_mut())
+            .expect("host-visible uniform ring")[start..start + LIGHTING_SIZE as usize]
+            .copy_from_slice(bytemuck::bytes_of(&lighting_block));
+        let lighting_set = self.lighting.sets[slot];
         let device = &self.ctx.device;
 
         // Pick the image to draw into.
@@ -683,8 +739,8 @@ impl Renderer {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.opaque.layout,
                 0,
-                &[self.opaque.materials.set],
-                &[],
+                &[self.opaque.materials.set, lighting_set],
+                &[lighting_offset as u32],
             );
             if let (Some(arena), Some(instances), false) =
                 (arena, frame.instances.as_ref(), self.draws.is_empty())
@@ -1048,6 +1104,7 @@ impl Drop for Renderer {
             a.destroy(&mut self.ctx);
         }
         self.opaque.destroy(&mut self.ctx);
+        self.lighting.destroy(&self.ctx);
         for mut f in self.frames.drain(..) {
             f.destroy(&mut self.ctx);
         }

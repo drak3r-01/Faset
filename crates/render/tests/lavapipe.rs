@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use faset_render::glam::{Mat4, Vec2, Vec3};
 use faset_render::{
-    cube_mesh, jitter, perspective_reverse_z, Camera, Instance, MaterialTable, MeshId, Pattern,
-    RenderConfig, RenderError, RenderWorld, Renderer, CUBE_FACE_TINTS,
+    cube_mesh, jitter, perspective_reverse_z, AmbienceProfile, Camera, Instance, MaterialTable,
+    MeshId, Pattern, PointLight, RenderConfig, RenderError, RenderWorld, Renderer,
+    BUILTIN_PROFILES, CUBE_FACE_TINTS,
 };
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::layer::{Context, SubscriberExt};
@@ -106,6 +107,7 @@ fn world_with(camera: Camera, instances: Vec<Instance>) -> RenderWorld {
         clear_color: CLEAR,
         camera,
         instances,
+        ..RenderWorld::default()
     }
 }
 
@@ -536,6 +538,174 @@ fn bless_pattern_swatch_reference() {
     render_swatch(&Path::new(env!("CARGO_MANIFEST_DIR")).join(SWATCH_REFERENCE));
 }
 
+/// Fixed material time of the profile scene, in seconds.
+const PROFILE_TIME: f32 = 1.25;
+
+fn profile_reference(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/refs/profile_{name}.png"))
+}
+
+/// The ambience reference scene: a sand ground, rows of grey cubes receding
+/// into the fog, a brick block, lava, emissive and hologram props and four
+/// coloured point lights, lit by the built-in profile `name`.
+fn render_profile(name: &str, path: &Path) {
+    let ambience = AmbienceProfile::builtin(name).expect("built-in profile");
+    let mut renderer = headless((256, 256));
+    renderer.set_material_time(PROFILE_TIME);
+    let mut mesh = |rgb: [u8; 3], material: u8| {
+        let (v, i) = cube_mesh(0.5, &[rgb; 6], material);
+        renderer.upload_mesh(&v, &i).unwrap()
+    };
+    let (ground, grey, brick) = (mesh([255; 3], 2), mesh([210; 3], 0), mesh([255; 3], 6));
+    let (lava, emissive, hologram) = (mesh([255; 3], 11), mesh([255; 3], 12), mesh([255; 3], 13));
+    let place = |mesh, pos: Vec3, scale: Vec3, turn: f32| {
+        Instance::new(
+            mesh,
+            0,
+            Mat4::from_translation(pos) * Mat4::from_rotation_y(turn) * Mat4::from_scale(scale),
+        )
+    };
+    let mut instances = vec![
+        place(
+            ground,
+            Vec3::new(0.0, -0.5, -20.0),
+            Vec3::new(80.0, 1.0, 80.0),
+            0.0,
+        ),
+        place(brick, Vec3::new(-3.5, 1.0, 0.0), Vec3::splat(2.0), 0.3),
+        place(lava, Vec3::new(3.5, 0.5, 0.0), Vec3::ONE, 0.5),
+        place(
+            emissive,
+            Vec3::new(0.0, 1.5, -6.0),
+            Vec3::new(0.6, 3.0, 0.6),
+            0.0,
+        ),
+        place(hologram, Vec3::new(-1.5, 0.5, 1.5), Vec3::ONE, 0.8),
+    ];
+    for row in 0..5 {
+        for col in -2..=2 {
+            let pos = Vec3::new(col as f32 * 3.0, 0.5, 4.0 - row as f32 * 8.0);
+            instances.push(place(grey, pos, Vec3::ONE, 0.4 + 0.2 * col as f32));
+        }
+    }
+    let light = |position: Vec3, color: Vec3, radius| PointLight {
+        position,
+        color,
+        radius,
+    };
+    let lights = vec![
+        light(Vec3::new(-1.5, 1.2, 0.5), Vec3::new(3.0, 1.2, 0.3), 5.0),
+        light(Vec3::new(1.5, 1.0, -2.0), Vec3::new(0.3, 2.0, 3.0), 5.0),
+        light(Vec3::new(0.0, 2.0, -9.0), Vec3::new(3.0, 0.3, 2.5), 7.0),
+        light(Vec3::new(-4.0, 1.0, -14.0), Vec3::new(0.5, 3.0, 0.8), 6.0),
+    ];
+    let view = faset_render::glam::camera::rh::view::look_at_mat4(
+        Vec3::new(0.0, 4.5, 12.0),
+        Vec3::new(0.0, 0.5, -6.0),
+        Vec3::Y,
+    );
+    let proj = perspective_reverse_z(60f32.to_radians(), 1.0, 0.1);
+    let fog = ambience.fog.color;
+    let world = RenderWorld {
+        // The horizon blends into the fog (the sky arrives in lot 2.6).
+        clear_color: [fog[0], fog[1], fog[2], 1.0],
+        camera: Camera::new(view, proj),
+        instances,
+        lights,
+        ambience,
+    };
+    renderer.render_frame(&world).unwrap();
+    renderer.read_back_png(path).unwrap();
+    assert_eq!(renderer.validation_message_count(), 0);
+}
+
+#[test]
+fn ambience_profiles_match_references() {
+    let (messages, _guard) = capture_messages();
+    let mut failures = Vec::new();
+    for name in BUILTIN_PROFILES {
+        let out = out_path(&format!("profile_{name}.png"));
+        render_profile(name, &out);
+        let error = max_channel_error(&load_rgba(&out), &load_rgba(&profile_reference(name)));
+        if error > 1 {
+            failures.push(format!(
+                "{name}: max channel error {error} (output: {})",
+                out.display()
+            ));
+        } else {
+            let _ = std::fs::remove_file(out);
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Regenerates the nine profile references from lavapipe renders. Inspect
+/// the images before committing them.
+#[test]
+#[ignore = "regenerates tests/refs/profile_*.png"]
+fn bless_profile_references() {
+    for name in BUILTIN_PROFILES {
+        render_profile(name, &profile_reference(name));
+    }
+}
+
+/// Point lights light what is inside their radius and nothing beyond, and
+/// more than 32 lights render without validation errors.
+#[test]
+fn point_lights_stop_at_their_radius() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("point_lights.png");
+    {
+        let mut renderer = headless((32, 32));
+        let wall = wall(&mut renderer);
+        let camera = Camera::new(
+            Mat4::IDENTITY,
+            perspective_reverse_z(90f32.to_radians(), 1.0, 0.1),
+        );
+        // Black ambient: only the lights show.
+        let mut ambience = AmbienceProfile::default();
+        ambience.ambient.ground = [0.0; 3];
+        ambience.ambient.sky = [0.0; 3];
+        let mut world = world_with(camera, vec![wall]);
+        world.ambience = ambience;
+        let centre = |renderer: &mut Renderer, world: &RenderWorld| {
+            renderer.render_frame(world).unwrap();
+            renderer.read_back_png(&out).unwrap();
+            load_rgba(&out).get_pixel(16, 16).0
+        };
+        // The wall's front face is 9.5 m away; a light 1 m in front of it
+        // lights its centre.
+        let near = PointLight {
+            position: Vec3::new(0.0, 0.0, -8.5),
+            color: Vec3::ONE,
+            radius: 3.0,
+        };
+        world.lights = vec![near];
+        let lit = centre(&mut renderer, &world);
+        let brightness: u32 = lit[..3].iter().map(|c| u32::from(*c)).sum();
+        assert!(brightness > 150, "lit pixel {lit:?}");
+        // The same light with a radius equal to the distance: black.
+        world.lights = vec![PointLight {
+            radius: 1.0,
+            ..near
+        }];
+        assert_eq!(&centre(&mut renderer, &world)[..3], &[0, 0, 0]);
+        // 40 lights, all out of range: dropped beyond 32, still black.
+        world.lights = vec![
+            PointLight {
+                radius: 0.5,
+                ..near
+            };
+            40
+        ];
+        assert_eq!(&centre(&mut renderer, &world)[..3], &[0, 0, 0]);
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+    let _ = std::fs::remove_file(out);
+}
+
 fn srgb_decode(c: u8) -> f32 {
     let s = f32::from(c) / 255.0;
     if s <= 0.040_45 {
@@ -720,7 +890,7 @@ fn hot_reload_swaps_valid_shaders_and_keeps_old_on_error() {
 
         // Valid edit: paint everything red. One frame per poll.
         let red = original.replace(
-            "out.color = vec4<f32>(in.color * material, 1.0);",
+            "out.color = vec4<f32>(apply_fog(lit, in.world_pos), 1.0);",
             "out.color = vec4<f32>(1.0, 0.0, 0.0, 1.0);",
         );
         assert_ne!(red, original, "edit target found");

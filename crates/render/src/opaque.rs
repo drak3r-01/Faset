@@ -81,7 +81,8 @@ impl GBuffer {
 }
 
 /// The opaque graphics pipeline (dynamic rendering) and the material table
-/// it reads (descriptor set 0, binding 0, uniform buffer).
+/// it reads (descriptor set 0, binding 0, uniform buffer). Set 1 is the
+/// lighting block ([`crate::lighting::LightingBindings`]).
 pub(crate) struct OpaquePipeline {
     pub set_layout: vk::DescriptorSetLayout,
     pub layout: vk::PipelineLayout,
@@ -98,7 +99,12 @@ pub(crate) const PUSH_CONSTANT_STAGES: vk::ShaderStageFlags = vk::ShaderStageFla
 
 impl OpaquePipeline {
     /// Builds the pipeline from the embedded SPIR-V and uploads `table`.
-    pub(crate) fn new(ctx: &mut Context, table: &MaterialTable) -> Result<Self, RenderError> {
+    /// `lighting_layout` is descriptor set 1 (the per-frame lighting block).
+    pub(crate) fn new(
+        ctx: &mut Context,
+        table: &MaterialTable,
+        lighting_layout: vk::DescriptorSetLayout,
+    ) -> Result<Self, RenderError> {
         let device = &ctx.device;
         let bindings = [vk::DescriptorSetLayoutBinding::default()
             .binding(0)
@@ -112,7 +118,7 @@ impl OpaquePipeline {
                 None,
             )
         }?;
-        let set_layouts = [set_layout];
+        let set_layouts = [set_layout, lighting_layout];
         let ranges = [vk::PushConstantRange::default()
             .stage_flags(PUSH_CONSTANT_STAGES)
             .offset(0)

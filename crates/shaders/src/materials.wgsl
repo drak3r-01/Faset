@@ -164,11 +164,22 @@ fn planar_pattern(pattern: u32, uv: vec2<f32>, fw: vec2<f32>, phase: f32) -> f32
     }
 }
 
-// Linear colour of a material at a world position.
+// A shaded surface: albedo is lit, emission is added after lighting.
+struct Surface {
+    albedo: vec3<f32>,
+    emissive: vec3<f32>,
+}
+
+fn diffuse(albedo: vec3<f32>) -> Surface {
+    return Surface(albedo, vec3<f32>(0.0));
+}
+
+// Albedo and emission of a material at a world position. Lava glow,
+// emissive and hologram patterns emit; everything else is lit.
 //
 // `normal` is the unit world normal; `dpos` is `fwidth(world_pos)`, taken
 // by the caller in uniform control flow; `time` is in seconds.
-fn material_color(id: u32, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3<f32>, time: f32) -> vec3<f32> {
+fn material_surface(id: u32, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3<f32>, time: f32) -> Surface {
     let m = materials.entries[min(id, 255u)];
     let scale = max(m.scale, 1.0e-3);
     let p = world_pos / scale;
@@ -179,30 +190,31 @@ fn material_color(id: u32, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3<f
 
     switch m.pattern {
         case PATTERN_FLAT: {
-            return a;
+            return diffuse(a);
         }
         case PATTERN_GRADIENT: {
-            return mix(a, b, clamp(p.y, 0.0, 1.0));
+            return diffuse(mix(a, b, clamp(p.y, 0.0, 1.0)));
         }
         case PATTERN_NOISE: {
-            return mix(a, b, fbm3(p, max(dp.x, max(dp.y, dp.z))));
+            return diffuse(mix(a, b, fbm3(p, max(dp.x, max(dp.y, dp.z)))));
         }
         case PATTERN_LAVA: {
+            // Rock (A) is lit; the glowing cracks (B) emit.
             let footprint = max(dp.x, max(dp.y, dp.z));
             let n = fbm3(p + vec3<f32>(0.0, -0.5 * phase, 0.3 * phase), footprint);
             let glow = smoothstep(0.45, 0.75, n);
             let pulse = 1.0 + 0.15 * sin(TAU * phase);
-            return mix(a, b * pulse, glow);
+            return Surface(a * (1.0 - glow), b * pulse * glow);
         }
         case PATTERN_EMISSIVE: {
-            return a * (1.0 + 0.25 * sin(TAU * phase));
+            return Surface(vec3<f32>(0.0), a * (1.0 + 0.25 * sin(TAU * phase)));
         }
         case PATTERN_HOLOGRAM: {
             // Scanlines a tenth of a cell apart scrolling up, plus flicker.
             let y = 10.0 * (p.y - phase);
             let lines = settle(filtered_square(y, 10.0 * dp.y), 0.5, 10.0 * dp.y);
             let flicker = 0.9 + 0.1 * value_noise2(vec2<f32>(8.0 * phase, 0.0));
-            return mix(a, b, lines) * flicker;
+            return Surface(vec3<f32>(0.0), mix(a, b, lines) * flicker);
         }
         default: {
             // Triplanar: blend the three axis projections by the normal.
@@ -218,7 +230,7 @@ fn material_color(id: u32, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3<f
             if w.z > 0.01 {
                 t += w.z * planar_pattern(m.pattern, p.xy, dp.xy, phase);
             }
-            return mix(a, b, clamp(t, 0.0, 1.0));
+            return diffuse(mix(a, b, clamp(t, 0.0, 1.0)));
         }
     }
 }
