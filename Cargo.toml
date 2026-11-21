@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
+<<<<<<< HEAD
 members = ["xtask", "probe", "crates/core", "crates/protocol", "crates/sim", "crates/net", "crates/render", "crates/upscale", "crates/server", "crates/shaders", "crates/client", "crates/dedicated", "crates/assets", "tools/asset-tool"]
+=======
+members = ["xtask", "probe", "crates/core", "crates/protocol", "crates/sim", "crates/net", "crates/render", "crates/server", "crates/shaders", "crates/client", "crates/dedicated", "crates/assets", "crates/audio", "tools/asset-tool"]
+>>>>>>> 99145ac (feat(audio): add kira engine with synthesised effects and 3D spatialisation)
 
 [workspace.package]
 version = "0.0.1-rc.1"
