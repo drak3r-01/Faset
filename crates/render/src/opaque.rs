@@ -16,6 +16,8 @@ pub(crate) const HDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 pub(crate) const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 pub(crate) const MOTION_FORMAT: vk::Format = vk::Format::R16G16_SFLOAT;
 pub(crate) const NORMAL_FORMAT: vk::Format = vk::Format::R8G8_UNORM;
+/// Reactive mask: opacity of the weather particles, for temporal upscalers.
+pub(crate) const REACTIVE_FORMAT: vk::Format = vk::Format::R8_UNORM;
 
 /// Vertices the arena holds (20 MiB).
 pub(crate) const ARENA_VERTICES: u32 = 1 << 20;
@@ -29,6 +31,8 @@ pub(crate) struct GBuffer {
     pub depth: OwnedImage,
     pub motion: OwnedImage,
     pub normal: OwnedImage,
+    /// Particle opacity; only meaningful while an upscaler is active.
+    pub reactive: OwnedImage,
 }
 
 impl GBuffer {
@@ -36,7 +40,7 @@ impl GBuffer {
         let color = vk::ImageAspectFlags::COLOR;
         let attachment = vk::ImageUsageFlags::COLOR_ATTACHMENT;
         let sampled = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC;
-        let mut made: Vec<OwnedImage> = Vec::with_capacity(4);
+        let mut made: Vec<OwnedImage> = Vec::with_capacity(5);
         let specs = [
             ("gbuffer-hdr", HDR_FORMAT, attachment | sampled, color),
             (
@@ -47,6 +51,12 @@ impl GBuffer {
             ),
             ("gbuffer-motion", MOTION_FORMAT, attachment | sampled, color),
             ("gbuffer-normal", NORMAL_FORMAT, attachment | sampled, color),
+            (
+                "gbuffer-reactive",
+                REACTIVE_FORMAT,
+                attachment | sampled,
+                color,
+            ),
         ];
         for (name, format, usage, aspect) in specs {
             match create_image(ctx, name, extent, format, usage, aspect) {
@@ -62,15 +72,22 @@ impl GBuffer {
         let mut it = made.into_iter();
         Ok(Self {
             extent,
-            hdr: it.next().expect("four images"),
-            depth: it.next().expect("four images"),
-            motion: it.next().expect("four images"),
-            normal: it.next().expect("four images"),
+            hdr: it.next().expect("five images"),
+            depth: it.next().expect("five images"),
+            motion: it.next().expect("five images"),
+            normal: it.next().expect("five images"),
+            reactive: it.next().expect("five images"),
         })
     }
 
-    pub(crate) fn into_images(self) -> [OwnedImage; 4] {
-        [self.hdr, self.depth, self.motion, self.normal]
+    pub(crate) fn into_images(self) -> [OwnedImage; 5] {
+        [
+            self.hdr,
+            self.depth,
+            self.motion,
+            self.normal,
+            self.reactive,
+        ]
     }
 
     pub(crate) fn destroy(self, ctx: &mut Context) {

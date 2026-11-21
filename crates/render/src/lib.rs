@@ -30,6 +30,12 @@
 //! The optional post chain ([`Renderer::set_post_settings`], [`PostSettings`],
 //! [`PostParams`]) runs on the HDR buffer: contours, bloom, ACES tonemapping,
 //! grading, screen effects and FXAA, each switchable and driven by the profile.
+//! An optional pass 6 ([`Renderer::set_upscaler`], [`UpscalePass`]) sits
+//! between the contours and the rest of the post chain: the scene is drawn at
+//! the internal resolution the pass asks for, with the motion vectors (opaque
+//! meshes, sky and water), depth and a reactive mask (weather particles) it
+//! reads, and its output has the display size. The `faset-upscale` crate
+//! implements it (native, temporal anti-aliasing, FSR 1).
 //! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
 
 mod ambience;
@@ -39,6 +45,7 @@ mod cull;
 mod deferred;
 mod frame;
 mod gpu;
+mod hook;
 #[cfg(feature = "hot-reload")]
 mod hot_reload;
 mod lighting;
@@ -85,6 +92,7 @@ pub use camera::{
 };
 pub use cull::Instance;
 pub use faset_core::glam;
+pub use hook::{FrameCtx, GpuHandles, ImageHandle, UpscaleInputs, UpscalePass};
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::ShaderWatcher;
 pub use lighting::{height_fog, point_light_attenuation, PointLight, MAX_POINT_LIGHTS};
@@ -286,6 +294,13 @@ pub struct Renderer {
     /// The post-processing chain; `None` (the default) copies the HDR buffer
     /// straight to the target. See [`Renderer::set_post_settings`].
     post: Option<PostChain>,
+    /// Pass 6, between the scene and the post chain (none: the scene is
+    /// drawn at the display resolution). See [`Renderer::set_upscaler`].
+    upscaler: Option<Box<dyn UpscalePass>>,
+    /// The next frame discards the upscaler's temporal history.
+    reset_history: bool,
+    /// Seconds between frames, as given to the upscaler.
+    frame_time: f32,
     /// Roofs that mask weather particles (none until `set_shelter_map`).
     shelter: ShelterBuffer,
     /// Thunder of the strikes since the last `take_thunder_events`.
@@ -427,6 +442,9 @@ impl Renderer {
                 water,
                 water_warned: false,
                 post: None,
+                upscaler: None,
+                reset_history: false,
+                frame_time: 1.0 / 60.0,
                 shelter,
                 thunder: Vec::new(),
                 last_weather_time: None,
@@ -609,12 +627,25 @@ impl Renderer {
             garbage.destroy(&mut self.ctx);
         }
 
-        // Opaque targets follow the output size; the old ones may still be
-        // in use by the other frame in flight.
-        let extent = match &self.target {
+        // Opaque targets follow the internal resolution: the output size, or
+        // what the upscaler asks for. The old ones may still be in use by the
+        // other frame in flight.
+        let display = match &self.target {
             Target::Windowed(w) => w.swapchain.as_ref().expect("checked above").extent,
             Target::Headless(o) => o.extent,
         };
+        let upscaling = self.upscaler.is_some();
+        let extent = match &self.upscaler {
+            Some(u) => {
+                let e = u.render_extent(display);
+                vk::Extent2D {
+                    width: e.width.clamp(1, display.width),
+                    height: e.height.clamp(1, display.height),
+                }
+            }
+            None => display,
+        };
+        let temporal = self.upscaler.as_ref().is_some_and(|u| u.is_temporal());
         if self.gbuffer.as_ref().is_none_or(|g| g.extent != extent) {
             let new = GBuffer::new(&mut self.ctx, extent)?;
             if let Some(old) = self.gbuffer.replace(new) {
@@ -702,20 +733,21 @@ impl Renderer {
             speed_lines: world.screen.speed_lines,
             ..PostParams::from_profile(ambience, underwater)
         });
+        if let Some(chain) = &mut self.post {
+            chain.temporal_aa = temporal;
+        }
         let post_active = self
             .post
             .as_ref()
             .is_some_and(|p| p.is_active(&post_params));
         if post_active {
-            let g = self.gbuffer.as_ref().expect("created above");
-            let inputs = PostInputs {
-                hdr: g.hdr.image,
-                hdr_view: g.hdr.view,
-                depth_view: g.depth.view,
-                normal_view: g.normal.view,
-            };
             let post = self.post.as_mut().expect("checked above");
-            post.ensure_targets(&mut self.ctx, g.extent, &inputs)?;
+            post.ensure_targets(&mut self.ctx, display)?;
+            // With an upscaler the contours run before it, at the internal
+            // resolution.
+            if upscaling && post.contours_active(&post_params) {
+                post.ensure_scene(&mut self.ctx, extent)?;
+            }
         }
         let sun_dir = glam::Vec3::from_array(ambience.sun.direction).normalize_or(glam::Vec3::Y);
         let cascades = (ambience.sun.intensity > 0.0).then(|| {
@@ -767,6 +799,10 @@ impl Renderer {
             buffer.mapped()[..instance_bytes.len()].copy_from_slice(instance_bytes);
         }
         let jitter = jitter_ndc(camera.jitter_px, (extent.width, extent.height));
+        let near_plane = camera.proj.w_axis.z;
+        let near_plane = if near_plane > 0.0 { near_plane } else { 0.1 };
+        let reset = std::mem::take(&mut self.reset_history);
+        let frame_time = self.frame_time;
 
         // Lighting block, written into this frame's uniform ring.
         let camera_pos = camera.view.inverse().w_axis.truncate();
@@ -843,6 +879,7 @@ impl Renderer {
             attachment(gbuffer.hdr.image),
             attachment(gbuffer.motion.image),
             attachment(gbuffer.normal.image),
+            attachment(gbuffer.reactive.image),
             ImageBarrier {
                 image: gbuffer.depth.image,
                 aspect: vk::ImageAspectFlags::DEPTH,
@@ -898,10 +935,12 @@ impl Renderer {
             src_access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
             dst_access: vk::AccessFlags::SHADER_READ | vk::AccessFlags::TRANSFER_READ,
         };
-        // With the post chain the HDR buffer (and the depth) are sampled first;
-        // the chain's result is moved to TRANSFER_SRC before the blit.
+        // With the post chain or an upscaler the HDR buffer (and the depth)
+        // are sampled first; the final result is moved to TRANSFER_SRC before
+        // the blit.
+        let sampled = post_active || upscaling;
         let mut end_barriers = vec![
-            if post_active {
+            if sampled {
                 shader_read(gbuffer.hdr.image)
             } else {
                 ImageBarrier {
@@ -915,6 +954,7 @@ impl Renderer {
             },
             shader_read(gbuffer.motion.image),
             shader_read(gbuffer.normal.image),
+            shader_read(gbuffer.reactive.image),
             ImageBarrier {
                 image,
                 aspect: color,
@@ -924,7 +964,7 @@ impl Renderer {
                 dst_access: vk::AccessFlags::TRANSFER_WRITE,
             },
         ];
-        if post_active {
+        if sampled {
             end_barriers.push(ImageBarrier {
                 image: gbuffer.depth.image,
                 aspect: vk::ImageAspectFlags::DEPTH,
@@ -935,8 +975,8 @@ impl Renderer {
             });
         }
         let corner = vk::Offset3D {
-            x: extent.width as i32,
-            y: extent.height as i32,
+            x: display.width as i32,
+            y: display.height as i32,
             z: 1,
         };
         let layers = vk::ImageSubresourceLayers {
@@ -944,12 +984,6 @@ impl Renderer {
             mip_level: 0,
             base_array_layer: 0,
             layer_count: 1,
-        };
-        let blit = vk::ImageBlit {
-            src_subresource: layers,
-            src_offsets: [vk::Offset3D::default(), corner],
-            dst_subresource: layers,
-            dst_offsets: [vk::Offset3D::default(), corner],
         };
         let (final_layout, final_access, final_stage) = if image_index.is_some() {
             (
@@ -1167,18 +1201,21 @@ impl Renderer {
                 device.cmd_draw(frame.cmd, 3, 1, 0, 0);
             }
             self.ctx.dynamic_rendering.cmd_end_rendering(frame.cmd);
-            // Weather: instanced quads per particle kind, alpha-blended into
-            // the HDR target and depth-tested against the scene, in a second
-            // rendering without the motion and normal targets; the push
-            // constant `kind` picks the shape.
+            // Water and weather, in a second rendering over the same targets
+            // plus the reactive mask. The water surface writes colour, depth,
+            // motion and normals; weather: instanced quads per particle
+            // kind, alpha-blended into the HDR target (and the reactive
+            // mask) and depth-tested against the scene; the push constant
+            // `kind` picks the shape.
             let counts = [
                 weather::particle_count(weather::KIND_RAIN, state.rain),
                 weather::particle_count(weather::KIND_SNOW, state.snow),
                 weather::particle_count(weather::KIND_SAND, state.sand),
                 if underwater { water::MOTE_COUNT } else { 0 },
             ];
-            // The water surface and the particles share this rendering.
-            if water.is_some() || counts.iter().any(|&c| c > 0) {
+            // The water surface and the particles share this rendering. An
+            // upscaler reads the reactive mask it clears.
+            if water.is_some() || counts.iter().any(|&c| c > 0) || upscaling {
                 // The first rendering's colour and depth writes before this
                 // one's blending and depth reads.
                 device.cmd_pipeline_barrier(
@@ -1201,11 +1238,24 @@ impl Renderer {
                     &[],
                     &[],
                 );
-                let hdr_load = [vk::RenderingAttachmentInfo::default()
-                    .image_view(gbuffer.hdr.view)
-                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .load_op(vk::AttachmentLoadOp::LOAD)
-                    .store_op(vk::AttachmentStoreOp::STORE)];
+                let load = |view| {
+                    vk::RenderingAttachmentInfo::default()
+                        .image_view(view)
+                        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                        .load_op(vk::AttachmentLoadOp::LOAD)
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                };
+                let hdr_load = [
+                    load(gbuffer.hdr.view),
+                    load(gbuffer.motion.view),
+                    load(gbuffer.normal.view),
+                    vk::RenderingAttachmentInfo::default()
+                        .image_view(gbuffer.reactive.view)
+                        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                        .load_op(vk::AttachmentLoadOp::CLEAR)
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                        .clear_value(clear_color([0.0; 4])),
+                ];
                 let depth_load = vk::RenderingAttachmentInfo::default()
                     .image_view(gbuffer.depth.view)
                     .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
@@ -1284,24 +1334,89 @@ impl Renderer {
                 &end_barriers,
             );
             let mut blit_source = gbuffer.hdr.image;
+            // Normally the display size: the post chain, an upscaler, or the
+            // scene itself when it is drawn at that size.
+            let mut blit_extent = extent;
+            let mut chain_input = PostInputs {
+                hdr: gbuffer.hdr.image,
+                hdr_view: gbuffer.hdr.view,
+                depth_view: gbuffer.depth.view,
+                normal_view: gbuffer.normal.view,
+            };
+            // Contours already drawn at the internal resolution.
+            let mut contours_done = false;
+            if let Some(upscaler) = self.upscaler.as_mut() {
+                let handle = |image: &frame::OwnedImage, format| ImageHandle {
+                    image: image.image,
+                    view: image.view,
+                    extent,
+                    format,
+                };
+                let mut colour = handle(&gbuffer.hdr, opaque::HDR_FORMAT);
+                if post_active {
+                    let chain = self.post.as_ref().expect("checked above");
+                    if let Some((image, view)) = chain.record_scene_contours(
+                        &self.ctx,
+                        frame.cmd,
+                        slot,
+                        &chain_input,
+                        &post_params,
+                        near_plane,
+                    )? {
+                        colour = ImageHandle {
+                            image,
+                            view,
+                            ..colour
+                        };
+                        contours_done = true;
+                    }
+                }
+                let inputs = UpscaleInputs {
+                    colour,
+                    depth: handle(&gbuffer.depth, opaque::DEPTH_FORMAT),
+                    motion: handle(&gbuffer.motion, opaque::MOTION_FORMAT),
+                    reactive: Some(handle(&gbuffer.reactive, opaque::REACTIVE_FORMAT)),
+                    display,
+                    jitter: camera.jitter_px,
+                    exposure: if post_active {
+                        post_params.exposure
+                    } else {
+                        1.0
+                    },
+                    frame_time,
+                    near: near_plane,
+                    far: f32::INFINITY,
+                    fov_y: fov_y(&camera.proj),
+                    reset,
+                };
+                let mut frame_ctx = FrameCtx {
+                    device,
+                    cmd: frame.cmd,
+                    slot,
+                    frames_in_flight: FRAMES_IN_FLIGHT,
+                    frame_index: self.frame_index,
+                };
+                let out = upscaler.execute(&mut frame_ctx, &inputs);
+                chain_input.hdr = out.image;
+                chain_input.hdr_view = out.view;
+                blit_source = out.image;
+                blit_extent = out.extent;
+            }
             if post_active {
                 let chain = self.post.as_ref().expect("checked above");
-                let near = camera.proj.w_axis.z;
-                let near = if near > 0.0 { near } else { 0.1 };
-                let inputs = PostInputs {
-                    hdr: gbuffer.hdr.image,
-                    hdr_view: gbuffer.hdr.view,
-                    depth_view: gbuffer.depth.view,
-                    normal_view: gbuffer.normal.view,
-                };
                 blit_source = chain.record(
                     &self.ctx,
                     frame.cmd,
-                    &inputs,
+                    slot,
+                    &chain_input,
                     &post_params,
-                    near,
+                    near_plane,
                     self.material_time,
-                );
+                    contours_done,
+                )?;
+                blit_extent = display;
+            }
+            if sampled {
                 image_barriers(
                     device,
                     frame.cmd,
@@ -1317,6 +1432,24 @@ impl Renderer {
                     }],
                 );
             }
+            let blit = vk::ImageBlit {
+                src_subresource: layers,
+                src_offsets: [
+                    vk::Offset3D::default(),
+                    vk::Offset3D {
+                        x: blit_extent.width as i32,
+                        y: blit_extent.height as i32,
+                        z: 1,
+                    },
+                ],
+                dst_subresource: layers,
+                dst_offsets: [vk::Offset3D::default(), corner],
+            };
+            let filter = if blit_extent == display {
+                vk::Filter::NEAREST
+            } else {
+                vk::Filter::LINEAR
+            };
             device.cmd_blit_image(
                 frame.cmd,
                 blit_source,
@@ -1324,7 +1457,7 @@ impl Renderer {
                 image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &[blit],
-                vk::Filter::NEAREST,
+                filter,
             );
             image_barriers(
                 device,
@@ -1551,6 +1684,76 @@ impl Renderer {
         Ok(())
     }
 
+    /// The Vulkan objects an upscaler needs to create its own resources (see
+    /// [`UpscalePass`]). Drop the upscaler before the renderer, or hand it to
+    /// [`Renderer::set_upscaler`], which does.
+    pub fn gpu_handles(&self) -> GpuHandles {
+        GpuHandles {
+            instance: self.ctx.instance.clone(),
+            device: self.ctx.device.clone(),
+            physical: self.ctx.physical,
+            queue_family: self.ctx.queue_family,
+        }
+    }
+
+    /// Installs the pass between the scene and the post chain, or removes it
+    /// (`None`, the default). The scene is then drawn at the pass's
+    /// [`UpscalePass::render_extent`]: the motion vectors, depth and
+    /// reactive mask it reads have that size, and the post chain, the
+    /// interface and the target have the display size. The previous pass is
+    /// dropped after the GPU went idle.
+    pub fn set_upscaler(&mut self, pass: Option<Box<dyn UpscalePass>>) -> Result<(), RenderError> {
+        // SAFETY: valid device; makes the old pass's resources unused.
+        unsafe { self.ctx.device.device_wait_idle() }?;
+        self.upscaler = pass;
+        self.reset_history = true;
+        Ok(())
+    }
+
+    /// True while an upscaler is installed.
+    pub fn has_upscaler(&self) -> bool {
+        self.upscaler.is_some()
+    }
+
+    /// The jitter the installed upscaler wants for `frame_index`, in internal
+    /// pixels; set it as [`Camera::jitter_px`]. Zero without an upscaler.
+    pub fn upscaler_jitter(&self, frame_index: u32) -> glam::Vec2 {
+        self.upscaler
+            .as_ref()
+            .map_or(glam::Vec2::ZERO, |u| u.jitter(frame_index))
+    }
+
+    /// The internal resolution the scene is drawn at for a display of the
+    /// given size (the display size itself without an upscaler).
+    pub fn internal_extent(&self, display: (u32, u32)) -> (u32, u32) {
+        match &self.upscaler {
+            Some(u) => {
+                let e = u.render_extent(vk::Extent2D {
+                    width: display.0,
+                    height: display.1,
+                });
+                (
+                    e.width.clamp(1, display.0.max(1)),
+                    e.height.clamp(1, display.1.max(1)),
+                )
+            }
+            None => display,
+        }
+    }
+
+    /// Makes the next frame discard the upscaler's temporal history: call it
+    /// on respawn, teleport and camera cuts.
+    pub fn reset_temporal_history(&mut self) {
+        self.reset_history = true;
+    }
+
+    /// Seconds between frames, passed to the upscaler (1/60 s by default).
+    pub fn set_frame_time(&mut self, seconds: f32) {
+        if seconds.is_finite() && seconds > 0.0 {
+            self.frame_time = seconds;
+        }
+    }
+
     /// Sets the time, in seconds, that animates water, lava, emissive and
     /// hologram materials from the next frame on (0 at creation).
     pub fn set_material_time(&mut self, seconds: f32) {
@@ -1662,6 +1865,16 @@ fn one_shot(
     Ok(())
 }
 
+/// Vertical field of view of a projection built by [`perspective_reverse_z`].
+fn fov_y(proj: &glam::Mat4) -> f32 {
+    let f = proj.y_axis.y.abs();
+    if f > 0.0 {
+        2.0 * (1.0 / f).atan()
+    } else {
+        0.0
+    }
+}
+
 /// IEEE 754 half to single precision.
 fn f16_to_f32(h: u16) -> f32 {
     let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
@@ -1697,6 +1910,8 @@ impl Drop for Renderer {
         unsafe {
             let _ = self.ctx.device.device_wait_idle();
         }
+        // The upscaler frees its own Vulkan objects, so before the device.
+        self.upscaler = None;
         for garbage in self.deferred.take_all() {
             garbage.destroy(&mut self.ctx);
         }

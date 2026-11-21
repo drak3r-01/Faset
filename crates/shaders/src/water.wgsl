@@ -9,7 +9,9 @@
 // from the analytic partial derivatives of the sum. Seen from above the
 // colour is a Fresnel mix of the water body (shallow to deep) and the sky
 // gradient plus a sun glint; seen from below it is the lit, fogged
-// underside, with the underwater fog replacing the height fog.
+// underside, with the underwater fog replacing the height fog. The surface
+// also writes the motion vectors (camera motion only) and the normals, like
+// the opaque pass, so temporal anti-aliasing and the contours see it.
 
 #include "noise.wgsl"
 #include "lighting.wgsl"
@@ -68,6 +70,10 @@ struct VertexOut {
     @builtin(position) position: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    // Unjittered clip positions of this frame and the previous one (the
+    // surface is taken as static in the world: camera motion only).
+    @location(2) clip: vec4<f32>,
+    @location(3) prev_clip: vec4<f32>,
 }
 
 fn grid_coord(i: u32) -> f32 {
@@ -99,11 +105,29 @@ fn vs_main(@builtin(vertex_index) vertex: u32) -> VertexOut {
     out.position = vec4<f32>(clip.xy + imm.jitter * clip.w, clip.zw);
     out.world_pos = world;
     out.normal = s.normal;
+    out.clip = clip;
+    out.prev_clip = lighting.sky_prev_view_proj * vec4<f32>(world, 1.0);
     return out;
 }
 
+struct FragmentOut {
+    @location(0) color: vec4<f32>,
+    @location(1) motion: vec2<f32>,
+    @location(2) normal: vec2<f32>,
+}
+
+// Octahedral encoding of a unit vector into [0, 1]^2 (as in `opaque.wgsl`).
+fn encode_octahedral(n: vec3<f32>) -> vec2<f32> {
+    let p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+    var e = p;
+    if n.z < 0.0 {
+        e = (1.0 - abs(p.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
+    }
+    return e * 0.5 + 0.5;
+}
+
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOut) -> FragmentOut {
     let n0 = normalize(in.normal);
     let v = normalize(lighting.camera_pos.xyz - in.world_pos);
     let sun = lighting.sun_dir.xyz;
@@ -124,5 +148,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let glint = lighting.sun_color.rgb * pow(max(dot(r, sun), 0.0), 220.0) * 2.0;
         colour = mix(lit, sky, fresnel) + glint;
     }
-    return vec4<f32>(apply_fog(colour, in.world_pos), 1.0);
+    var out: FragmentOut;
+    out.color = vec4<f32>(apply_fog(colour, in.world_pos), 1.0);
+    out.motion = 0.5 * (in.clip.xy / in.clip.w - in.prev_clip.xy / in.prev_clip.w);
+    out.normal = encode_octahedral(n0);
+    return out;
 }

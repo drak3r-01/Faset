@@ -201,8 +201,16 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
 }
 
 
+// The reactive mask (attachment 3) holds the particle opacity: temporal
+// anti-aliasing trusts the history less where it is high. The motion and
+// normal attachments (1 and 2) are masked out of this pipeline.
+struct FragmentOut {
+    @location(0) color: vec4<f32>,
+    @location(3) reactive: f32,
+}
+
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOut) -> FragmentOut {
     let kind = u32(imm.kind + 0.5);
     // Light reaching the particles: ambient plus some sun, never fully dark.
     let env = 0.5 * (lighting.ambient_sky.rgb + lighting.ambient_ground.rgb)
@@ -229,5 +237,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         alpha *= 0.6 * across * along;
         colour = vec3<f32>(0.78, 0.60, 0.36) * env * 1.4;
     }
-    return vec4<f32>(apply_fog(colour, in.world_pos), alpha);
+    var out: FragmentOut;
+    out.color = vec4<f32>(apply_fog(colour, in.world_pos), alpha);
+    out.reactive = alpha;
+    return out;
 }

@@ -13,7 +13,7 @@ use faset_core::glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::ambience::AmbienceProfile;
-use crate::opaque::{DEPTH_FORMAT, HDR_FORMAT};
+use crate::opaque::{DEPTH_FORMAT, HDR_FORMAT, MOTION_FORMAT, NORMAL_FORMAT, REACTIVE_FORMAT};
 use crate::shelter::ShelterInfo;
 use crate::sky::{hash_u32, Resolved, SkyParams};
 use crate::RenderError;
@@ -621,8 +621,9 @@ impl WeatherPipeline {
             .depth_test_enable(true)
             .depth_write_enable(false)
             .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
-        // Alpha blending into the HDR colour target only (a separate rendering
-        // without the motion and normal targets, which need no blending).
+        // Alpha blending into the HDR colour target; the motion and normal
+        // targets are masked out, and the reactive mask keeps the strongest
+        // particle opacity (max blending).
         let colour = vk::PipelineColorBlendAttachmentState::default()
             .blend_enable(true)
             .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
@@ -632,12 +633,23 @@ impl WeatherPipeline {
             .dst_alpha_blend_factor(vk::BlendFactor::ONE)
             .alpha_blend_op(vk::BlendOp::ADD)
             .color_write_mask(vk::ColorComponentFlags::RGBA);
-        let blend_attachments = [colour];
+        let masked = vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::empty());
+        let reactive = vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::ONE)
+            .dst_color_blend_factor(vk::BlendFactor::ONE)
+            .color_blend_op(vk::BlendOp::MAX)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+            .alpha_blend_op(vk::BlendOp::MAX)
+            .color_write_mask(vk::ColorComponentFlags::R);
+        let blend_attachments = [colour, masked, masked, reactive];
         let blend =
             vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);
         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
-        let color_formats = [HDR_FORMAT];
+        let color_formats = [HDR_FORMAT, MOTION_FORMAT, NORMAL_FORMAT, REACTIVE_FORMAT];
         let mut rendering = vk::PipelineRenderingCreateInfo::default()
             .color_attachment_formats(&color_formats)
             .depth_attachment_format(DEPTH_FORMAT);
