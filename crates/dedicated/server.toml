@@ -19,6 +19,8 @@ seed = 0
 rotation = ["test-arena"]
 # Seconds each map is played before the rotation advances.
 rotation_seconds = 300
+# Next map: "sequential" or "random" (every map once before any repeat).
+rotation_order = "sequential"
 # Number of bots and their skill (0 to 10).
 bots = 0
 bot_level = 5

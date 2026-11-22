@@ -19,6 +19,17 @@ pub enum SettingsError {
     Invalid(String),
 }
 
+/// How the next map of the rotation is chosen (lot 5.1).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum RotationOrder {
+    /// The maps in list order.
+    #[default]
+    Sequential,
+    /// Random, every map once before any repeat.
+    Random,
+}
+
 /// Command-line arguments. Every option overrides the same key of the file.
 #[derive(Debug, Default, Clone, Parser)]
 #[command(name = "dedicated", version, about = "Faset dedicated server")]
@@ -50,6 +61,9 @@ pub struct Cli {
     /// Seconds per map.
     #[arg(long)]
     pub rotation_seconds: Option<u32>,
+    /// How the next map is chosen.
+    #[arg(long, value_enum)]
+    pub rotation_order: Option<RotationOrder>,
     /// Number of bots.
     #[arg(long)]
     pub bots: Option<usize>,
@@ -85,6 +99,9 @@ pub struct Settings {
     pub rotation: Vec<String>,
     /// Seconds per map.
     pub rotation_seconds: u32,
+    /// How the next map is chosen: `sequential` or `random` (every map
+    /// once before any repeat).
+    pub rotation_order: RotationOrder,
     /// Number of bots.
     pub bots: usize,
     /// Bot skill, 0 to 10.
@@ -104,6 +121,7 @@ impl Default for Settings {
             seed: 0,
             rotation: vec![crate::maps::TEST_ARENA.into()],
             rotation_seconds: 300,
+            rotation_order: RotationOrder::Sequential,
             bots: 0,
             bot_level: 5,
             password: String::new(),
@@ -151,6 +169,7 @@ impl Settings {
             seed,
             rotation,
             rotation_seconds,
+            rotation_order,
             bots,
             bot_level,
             password
