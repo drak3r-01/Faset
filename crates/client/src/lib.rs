@@ -17,6 +17,10 @@
 //!   [`HISTORY_TICKS`] commands and predicted states, reconciles them against
 //!   server snapshots (replaying with the same simulation code) and hides
 //!   corrections behind a decaying [`VisualOffset`].
+//! * [`camera`] and [`feel`]: the first-person camera (eye height, speed FOV,
+//!   roll, landing dip), its TOML-compatible [`FeelParams`] and the mouse
+//!   sensitivity conversions.
+//! * [`hud`]: draws the FPS HUD model with egui.
 //! * [`map_load`]: turns a map file into collisions and render meshes (steps 1
 //!   to 3 of the map load pipeline) and uploads the meshes.
 //! * [`interpolation`]: shows remote entities a deliberate delay in the
@@ -38,13 +42,17 @@
 //! replay never re-emits them. Never predicted: damage, deaths, pickups.
 #![forbid(unsafe_code)]
 
+pub mod camera;
 pub mod clock;
 pub mod discovery;
+pub mod feel;
 pub mod hosting;
+pub mod hud;
 pub mod interpolation;
 pub mod map_load;
 pub mod prediction;
 
+pub use camera::{CameraPose, FirstPersonCamera, Look};
 pub use clock::{
     ClockConfig, ClockSync, DEFAULT_GAIN, DEFAULT_MARGIN_TICKS, DEFAULT_SYNC_SNAPSHOTS,
     MAX_TIMESCALE, MIN_TIMESCALE,
@@ -53,7 +61,9 @@ pub use discovery::{
     DiscoveryResponder, ServerBrowser, ServerEntry, ServerInfo, DISCOVERY_PORT, ENTRY_TTL,
     GAME_PORT, REFRESH_INTERVAL,
 };
+pub use feel::{cm_per_360, degrees_per_count, CriticalSpring, FeelParams, DEGREES_PER_COUNT};
 pub use hosting::{host_game, HostConfig, HostError, HostHandle, LanStatus};
+pub use hud::FpsHud;
 pub use interpolation::{
     hermite, interpolation_delay, lerp_angle, InterpolationBuffer, InterpolationConfig,
     RemoteInterpolation, RemoteState, RemoteView, SampleMode, ViewTime, BUFFER_SNAPSHOTS,

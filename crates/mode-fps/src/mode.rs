@@ -11,7 +11,7 @@
 //! it registered. Until the framework gets that hook, the host drives
 //! [`FpsRules`] itself ([`FpsRules::fire`], [`FpsRules::step`]).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 use faset_core::glam::Vec3;
 use faset_core::NetId;
@@ -21,14 +21,12 @@ use faset_minigame_api::{
 };
 use faset_sim::StaticWorld;
 
+use crate::hud::{HudInput, HudModel, HudState};
 use crate::message::ServerMsg;
 use crate::rules::{FpsHost, FpsRules};
 
 /// Descriptor id of the mode.
 pub const MODE_ID: &str = "fps-core";
-
-/// Kill-feed lines the client keeps.
-const FEED_LINES: usize = 5;
 
 /// What a client knows about a player, from the replicated state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +42,7 @@ pub struct FpsMode {
     rules: FpsRules,
     /// Client mirror of the replicated state.
     view: BTreeMap<NetId, PlayerView>,
-    kills: VecDeque<String>,
+    hud: HudState,
 }
 
 impl FpsMode {
@@ -63,6 +61,29 @@ impl FpsMode {
     #[must_use]
     pub fn view(&self, player: NetId) -> Option<PlayerView> {
         self.view.get(&player).copied()
+    }
+
+    /// Sets what the host knows for the HUD: ammo, speed, dispersion, match
+    /// timer and scores, scoreboard and class-choice state.
+    pub fn set_hud_input(&mut self, input: HudInput) {
+        self.hud.set_input(input);
+    }
+
+    /// Ages the HUD's feed, markers and damage numbers by `dt` seconds.
+    pub fn advance_hud(&mut self, dt: f32) {
+        self.hud.advance(dt);
+    }
+
+    /// The HUD data of this frame.
+    #[must_use]
+    pub fn hud_model(&self) -> HudModel {
+        let own = self
+            .hud
+            .input()
+            .player
+            .and_then(|p| self.view.get(&p))
+            .map(|v| (v.health, v.armour, v.alive));
+        self.hud.model(own, Vec::new(), Vec::new())
     }
 
     /// Layout: player count (2), then per player id (2), health (2),
@@ -202,25 +223,14 @@ impl GameModeClient for FpsMode {
         let GameEvent::Mode(bytes) = event else {
             return;
         };
-        if let Some(ServerMsg::Kill { attacker, victim }) = ServerMsg::decode(bytes) {
-            if self.kills.len() == FEED_LINES {
-                self.kills.pop_front();
-            }
-            self.kills
-                .push_back(format!("{} killed {}", attacker.0, victim.0));
+        if let Some(msg) = ServerMsg::decode(bytes) {
+            self.hud.on_msg(&msg);
         }
     }
 
     fn draw_hud(&mut self, ui: &mut HudCtx) {
-        for line in &self.kills {
-            ui.text(line.clone());
-        }
-        for (id, v) in &self.view {
-            let state = if v.alive { "alive" } else { "dead" };
-            ui.text(format!(
-                "Player {}: {} hp, {} armour, {state}",
-                id.0, v.health, v.armour
-            ));
+        for line in self.hud_model().text_lines() {
+            ui.text(line);
         }
     }
 }
@@ -274,7 +284,7 @@ mod tests {
         );
         let mut hud = HudCtx::new();
         client.draw_hud(&mut hud);
-        assert_eq!(hud.lines()[0], "1 killed 2");
+        assert_eq!(hud.lines()[0], "P1 killed P2");
         client.apply_state(&[1]);
         assert!(client.view(NetId(1)).is_some(), "bad state is ignored");
     }

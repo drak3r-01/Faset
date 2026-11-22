@@ -11,6 +11,9 @@ use faset_render::{jitter, perspective_reverse_z, Camera, RenderConfig, RenderWo
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::Layer;
 
+#[path = "lavapipe/hud_captures.rs"]
+mod hud_captures;
+
 const REFERENCE: &str = "tests/refs/example_map.png";
 const EXAMPLE: &str = include_str!("../../../assets/maps/example.ron");
 const SIZE: (u32, u32) = (640, 360);

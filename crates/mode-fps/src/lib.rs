@@ -28,6 +28,7 @@ pub mod balance;
 pub mod class;
 pub mod damage;
 pub mod explosion;
+pub mod hud;
 pub mod melee;
 pub mod message;
 pub mod mode;
@@ -50,6 +51,10 @@ pub use damage::{
 };
 pub use explosion::{
     blast, explosion_centre, explosion_effect, BlastEffect, CENTRE_OFFSET, SELF_DAMAGE_FACTOR,
+};
+pub use hud::{
+    focal_px, reticle_radius_px, BonusView, ChoiceMoment, ClassChoice, ClassOption, DamageNumber,
+    FeedLine, HudInput, HudModel, HudState, ScoreRow,
 };
 pub use melee::{melee_attack, rewound_hitboxes, MeleeReport};
 pub use message::ProjectileSpawn;

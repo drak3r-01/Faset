@@ -28,6 +28,7 @@ use faset_minigame_api::{
 };
 use faset_sim::StaticWorld;
 
+use crate::hud::{HudInput, HudModel, HudState};
 use crate::message::ServerMsg;
 use crate::pickup::{Pickup, PickupEvent, PickupKind, Pickups, TIMED};
 use crate::rules::{FpsHost, FpsRules};
@@ -52,7 +53,6 @@ pub const MAX_PLAYERS: usize = 32;
 /// Number of teams of team deathmatch.
 pub const TEAM_COUNT: u8 = 2;
 
-const FEED_LINES: usize = 5;
 const NO_TEAM: u8 = u8::MAX;
 
 /// What tells the two modes apart.
@@ -131,7 +131,7 @@ pub struct FpsPlay<V: Variant> {
     result: Option<MatchResult>,
     /// Client mirror of the replicated state.
     view: BTreeMap<NetId, PlayView>,
-    kills: Vec<String>,
+    hud: HudState,
     _variant: PhantomData<fn() -> V>,
 }
 
@@ -147,7 +147,7 @@ impl<V: Variant> Default for FpsPlay<V> {
             score_limit: V::SCORE_LIMIT,
             result: None,
             view: BTreeMap::new(),
-            kills: Vec::new(),
+            hud: HudState::default(),
             _variant: PhantomData,
         }
     }
@@ -191,6 +191,40 @@ impl<V: Variant> FpsPlay<V> {
     #[must_use]
     pub fn view(&self, player: NetId) -> Option<PlayView> {
         self.view.get(&player).copied()
+    }
+
+    /// Sets what the host knows for the HUD: ammo, speed, dispersion, match
+    /// timer and scores, scoreboard and class-choice state.
+    pub fn set_hud_input(&mut self, input: HudInput) {
+        self.hud.set_input(input);
+    }
+
+    /// Ages the HUD's feed, markers and damage numbers by `dt` seconds.
+    pub fn advance_hud(&mut self, dt: f32) {
+        self.hud.advance(dt);
+    }
+
+    /// The HUD data of this frame: the local player's health, armour and
+    /// timed bonuses and the team table come from the replicated state.
+    #[must_use]
+    pub fn hud_model(&self) -> HudModel {
+        let view = self.hud.input().player.and_then(|p| self.view.get(&p));
+        let own = view.map(|v| (v.health, v.armour, v.alive));
+        let bonuses = view
+            .map(|v| {
+                TIMED
+                    .iter()
+                    .zip(v.bonus_tenths)
+                    .map(|(&k, t)| (k, f32::from(t) / 10.0))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let teams = if V::TEAMS {
+            self.team_scores.values().copied().collect()
+        } else {
+            Vec::new()
+        };
+        self.hud.model(own, bonuses, teams)
     }
 
     /// Whether `viewer` has the big head bonus, so that enemy heads are drawn
@@ -592,18 +626,15 @@ impl<V: Variant> GameModeClient for FpsPlay<V> {
         let GameEvent::Mode(bytes) = event else {
             return;
         };
-        match ServerMsg::decode(bytes) {
-            Some(ServerMsg::Kill { attacker, victim }) => {
-                if self.kills.len() == FEED_LINES {
-                    self.kills.remove(0);
-                }
-                self.kills
-                    .push(format!("{} killed {}", attacker.0, victim.0));
-            }
-            Some(ServerMsg::PickupTaken { index, .. }) => {
+        let Some(msg) = ServerMsg::decode(bytes) else {
+            return;
+        };
+        self.hud.on_msg(&msg);
+        match msg {
+            ServerMsg::PickupTaken { index, .. } => {
                 self.pickups.set_available(usize::from(index), false);
             }
-            Some(ServerMsg::PickupRespawned { index }) => {
+            ServerMsg::PickupRespawned { index } => {
                 self.pickups.set_available(usize::from(index), true);
             }
             _ => {}
@@ -611,18 +642,8 @@ impl<V: Variant> GameModeClient for FpsPlay<V> {
     }
 
     fn draw_hud(&mut self, ui: &mut HudCtx) {
-        for line in &self.kills {
-            ui.text(line.clone());
-        }
-        for (team, score) in &self.team_scores {
-            ui.text(format!("Team {}: {score}", team.0));
-        }
-        for (id, v) in &self.view {
-            let state = if v.alive { "alive" } else { "dead" };
-            ui.text(format!(
-                "Player {}: {} hp, {} armour, {state}",
-                id.0, v.health, v.armour
-            ));
+        for line in self.hud_model().text_lines() {
+            ui.text(line);
         }
     }
 }
