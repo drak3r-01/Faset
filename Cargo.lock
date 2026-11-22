@@ -894,6 +894,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "faset-bots"
+version = "0.0.1-rc.1"
+dependencies = [
+ "faset-core",
+ "faset-mapfmt",
+ "faset-sim",
+ "parry3d",
+ "tracing",
+]
+
+[[package]]
 name = "faset-client"
 version = "0.0.1-rc.1"
 dependencies = [
