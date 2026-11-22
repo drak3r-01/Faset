@@ -21,6 +21,9 @@ use crate::link::ServerTransport;
 use crate::services::ModeServices;
 use crate::snapshot::{EntityState, InputPacket, Snapshot, SnapshotEncoder};
 
+mod rotation_host;
+use rotation_host::RotationState;
+
 /// Health reported for a player when no hosted mode tracks health.
 const DEFAULT_HEALTH: u8 = 100;
 
@@ -145,6 +148,10 @@ pub struct Server {
     game: Option<Match>,
     /// Bytes of the last match state sent to every client.
     sent_state: Option<Vec<u8>>,
+    /// The map rotation (lot 5.1), if configured.
+    rotation: Option<RotationState>,
+    /// Number of map switches so far.
+    map_generation: u32,
 }
 
 /// The hitboxes of a player as the sim holds it.
@@ -214,6 +221,8 @@ impl Server {
             services: ModeServices::default(),
             game: None,
             sent_state: None,
+            rotation: None,
+            map_generation: 0,
         })
     }
 
@@ -341,9 +350,12 @@ impl Server {
     /// Whether `player` may not move this tick: the match phase freezes
     /// everyone, or the mode says the player is dead.
     fn frozen(&self, player: NetId) -> bool {
-        self.game
+        self.rotation
             .as_ref()
-            .is_some_and(|g| !g.movement_allowed() || g.vitals(player).is_some_and(|v| !v.alive))
+            .is_some_and(|r| r.clock.between_maps())
+            || self.game.as_ref().is_some_and(|g| {
+                !g.movement_allowed() || g.vitals(player).is_some_and(|v| !v.alive)
+            })
     }
 
     /// Advances exactly one tick:
@@ -402,7 +414,14 @@ impl Server {
         );
         self.update_velocities();
         let zone_events = self.world.drain_zone_events();
-        self.run_match(&inputs, &zone_events);
+        if !self
+            .rotation
+            .as_ref()
+            .is_some_and(|r| r.clock.waiting_ready())
+        {
+            self.run_match(&inputs, &zone_events);
+        }
+        self.run_rotation();
 
         self.snapshot_acc += u32::from(self.config.snapshot_rate);
         if self.snapshot_acc >= u32::from(TICK_RATE) {
@@ -685,6 +704,15 @@ impl Server {
                     self.send(conn, Channel::Event, &state);
                 }
                 self.send_snapshot(conn);
+            }
+            (Phase::AwaitReady | Phase::InGame, msg @ Message::MapChunk { .. }) => {
+                self.serve_map(conn, &msg);
+            }
+            (Phase::InGame, Message::Ready) => {
+                // The client loaded the map of a `MapChange` (lot 5.1).
+                if let Some(r) = self.rotation.as_mut() {
+                    r.ready.insert(conn);
+                }
             }
             (Phase::InGame, Message::Event(Event::Mode(bytes))) => {
                 let player = self.clients.get(&conn).and_then(|c| c.player);

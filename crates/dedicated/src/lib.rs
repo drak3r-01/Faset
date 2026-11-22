@@ -9,6 +9,7 @@
 pub mod console;
 pub mod fps_bot;
 pub mod maps;
+pub mod provider;
 pub mod runner;
 pub mod settings;
 
