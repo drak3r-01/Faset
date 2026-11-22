@@ -943,10 +943,13 @@ dependencies = [
 name = "faset-editor"
 version = "0.0.1-rc.1"
 dependencies = [
+ "faset-assets",
  "faset-core",
  "faset-mapfmt",
  "faset-render",
  "faset-ui",
+ "map-tool",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
