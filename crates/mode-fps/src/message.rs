@@ -117,6 +117,11 @@ pub enum ServerMsg {
     Kill { attacker: NetId, victim: NetId },
     /// `player` respawned at `position` (capsule centre).
     Respawn { player: NetId, position: Vec3 },
+    /// The server confirms `player` took pickup `index` (lot 4.7). Clients
+    /// show a pickup as taken only after this.
+    PickupTaken { index: u16, player: NetId },
+    /// Pickup `index` is available again.
+    PickupRespawned { index: u16 },
 }
 
 impl ServerMsg {
@@ -158,6 +163,15 @@ impl ServerMsg {
                 out.push(2);
                 out.extend_from_slice(&attacker.0.to_le_bytes());
                 out.extend_from_slice(&victim.0.to_le_bytes());
+            }
+            Self::PickupTaken { index, player } => {
+                out.push(6);
+                out.extend_from_slice(&index.to_le_bytes());
+                out.extend_from_slice(&player.0.to_le_bytes());
+            }
+            Self::PickupRespawned { index } => {
+                out.push(7);
+                out.extend_from_slice(&index.to_le_bytes());
             }
             Self::Respawn { player, position } => {
                 out.push(3);
@@ -210,6 +224,13 @@ impl ServerMsg {
                     velocity,
                 }))
             }
+            (6, 4) => Some(Self::PickupTaken {
+                index: u16::from_le_bytes(b.get(0..2)?.try_into().ok()?),
+                player: id(2)?,
+            }),
+            (7, 2) => Some(Self::PickupRespawned {
+                index: u16::from_le_bytes(b.get(0..2)?.try_into().ok()?),
+            }),
             (5, 12) => {
                 let centre = Vec3::new(float(0)?, float(4)?, float(8)?);
                 centre.is_finite().then_some(Self::Explosion { centre })
@@ -272,6 +293,11 @@ mod tests {
             ServerMsg::Explosion {
                 centre: Vec3::new(4.0, 0.5, 9.0),
             },
+            ServerMsg::PickupTaken {
+                index: 513,
+                player: NetId(8),
+            },
+            ServerMsg::PickupRespawned { index: 7 },
         ] {
             assert_eq!(ServerMsg::decode(&m.encode()), Some(m));
         }

@@ -15,6 +15,8 @@
 //! * [`rules`] and [`mode`] - [`FpsRules`] (shots, kills, respawns) and
 //!   [`FpsMode`], its `minigame-api` adapter.
 //! * [`message`] - wire layouts of the mode's messages.
+//! * [`pickup`] and [`play`] - lot 4.7: pickups, timed bonuses, and the two
+//!   playable modes `fps.ffa` and `fps.team`.
 //! * [`class`] and [`balance`] - lot 4.6: classes, loadouts, the data catalog and
 //!   the time-to-kill table of `cargo xtask balance`.
 //!
@@ -29,6 +31,8 @@ pub mod explosion;
 pub mod melee;
 pub mod message;
 pub mod mode;
+pub mod pickup;
+pub mod play;
 pub mod projectile;
 pub mod recoil;
 pub mod respawn;
@@ -36,6 +40,9 @@ pub mod rules;
 pub mod shot;
 pub mod spread;
 pub mod weapon;
+
+#[cfg(test)]
+mod harness;
 
 pub use damage::{
     falloff_multiplier, pellet_damage, Combatant, DamageContext, DamageEvent, DamageOutcome,
@@ -48,6 +55,10 @@ pub use melee::{melee_attack, rewound_hitboxes, MeleeReport};
 pub use message::ProjectileSpawn;
 pub use message::{FireMsg, ServerMsg, FLAG_FRESH_PRESS, FLAG_SIGHTED};
 pub use mode::{FpsMode, PlayerView, MODE_ID};
+pub use pickup::{ActiveBonuses, Pickup, PickupEvent, PickupKind, Pickups, KINDS, RADIUS};
+pub use play::{
+    register_modes, FfaMode, FpsPlay, PlayView, TeamMode, FFA_ID, MAX_PLAYERS, PLAYERS, TEAM_ID,
+};
 pub use projectile::{
     advance_projectile, catch_up_time, launch, step_projectile, Detonation, Launch, ProjectileEnv,
     ProjectileEvent, ProjectileState, ProjectileStep, ProjectileSystem, GRAVITY, MAX_CATCH_UP,

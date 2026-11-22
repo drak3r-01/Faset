@@ -16,6 +16,7 @@ use faset_sim::StaticWorld;
 
 use crate::damage::{Combatant, DamageContext, DamageEvent, DamageOutcome, DEFAULT_HEALTH};
 use crate::message::{FireMsg, ServerMsg};
+use crate::pickup::{ActiveBonuses, PickupKind, ARMOUR_AMOUNT, HEAL_AMOUNT, MAX_ARMOUR};
 use crate::respawn::choose_spawn;
 use crate::shot::{fire, RayCaster, ShotInput, ShotReject, ShotReport, WeaponState};
 use crate::spread::{AimBasis, Stance};
@@ -48,6 +49,8 @@ pub struct Slot {
     pub weapon: WeaponState,
     /// Index into the weapon list.
     pub weapon_index: usize,
+    /// Timed bonuses (lot 4.7); lost on death.
+    pub bonuses: ActiveBonuses,
 }
 
 /// Circumstances of one shot, supplied by the host.
@@ -83,6 +86,10 @@ pub struct FpsRules {
     respawned: Vec<(NetId, Vec3)>,
     /// Friendly fire on or off (default off, as in the plan).
     pub friendly_fire: bool,
+    /// Score of a kill (lot 4.7 mode setting, default 1).
+    pub kill_score: i32,
+    /// Score of a suicide (default -1).
+    pub suicide_score: i32,
     now: f64,
 }
 
@@ -109,6 +116,8 @@ impl FpsRules {
             pending: Vec::new(),
             respawned: Vec::new(),
             friendly_fire: false,
+            kill_score: 1,
+            suicide_score: -1,
             now: 0.0,
         }
     }
@@ -123,6 +132,12 @@ impl FpsRules {
     #[must_use]
     pub fn slot(&self, player: NetId) -> Option<&Slot> {
         self.slots.get(&player)
+    }
+
+    /// State of a player, for tests that stage a situation.
+    #[cfg(test)]
+    pub(crate) fn slot_mut(&mut self, player: NetId) -> Option<&mut Slot> {
+        self.slots.get_mut(&player)
     }
 
     /// Players in ascending id order.
@@ -157,6 +172,7 @@ impl FpsRules {
             combatant: Combatant::spawned(now, DEFAULT_HEALTH),
             weapon: WeaponState::new(&self.weapons[weapon_index], now),
             weapon_index,
+            bonuses: ActiveBonuses::default(),
         }
     }
 
@@ -231,9 +247,15 @@ impl FpsRules {
                 .team_of(event.attacker)
                 .zip(host.team_of(event.victim))
                 .is_some_and(|(a, b)| a == b);
+        // The damage bonus is the attacker's and feeds the chain's bonus factor.
+        let bonus_multiplier = self
+            .slots
+            .get(&event.attacker)
+            .map_or(1.0, |s| s.bonuses.damage_multiplier(now));
         let ctx = DamageContext {
             same_team,
             friendly_fire: self.friendly_fire,
+            bonus_multiplier,
             ..DamageContext::default()
         };
         let Some(slot) = self.slots.get_mut(&event.victim) else {
@@ -247,6 +269,9 @@ impl FpsRules {
         else {
             return;
         };
+        if killed {
+            slot.bonuses.clear();
+        }
         host.emit(
             ServerMsg::Hit {
                 attacker: event.attacker,
@@ -257,12 +282,12 @@ impl FpsRules {
             .encode(),
         );
         if killed {
-            // Decision: a kill scores 1, a suicide -1.
+            // Decision: a kill scores `kill_score` (1), a suicide `suicide_score` (-1).
             if self.slots.contains_key(&event.attacker) {
                 let delta = if event.attacker == event.victim {
-                    -1
+                    self.suicide_score
                 } else {
-                    1
+                    self.kill_score
                 };
                 host.add_score(event.attacker, delta);
             }
@@ -339,6 +364,53 @@ impl FpsRules {
     /// life), oldest first.
     pub fn take_respawns(&mut self) -> Vec<(NetId, Vec3)> {
         std::mem::take(&mut self.respawned)
+    }
+
+    /// Applies the effect of a pickup to a living player at `now`. Returns
+    /// `false`, and changes nothing, when the pickup would be wasted: heal at
+    /// full health, ammo with a full reserve, armour at [`MAX_ARMOUR`], or a
+    /// dead or unknown player (decision: a useless instant pickup stays on
+    /// the map). Timed bonuses always apply.
+    pub fn apply_pickup(&mut self, player: NetId, kind: PickupKind, now: f64) -> bool {
+        let Some(slot) = self.slots.get_mut(&player) else {
+            return false;
+        };
+        if !slot.combatant.alive() {
+            return false;
+        }
+        let c = &mut slot.combatant;
+        match kind {
+            PickupKind::Heal if c.health >= c.max_health => return false,
+            PickupKind::Heal => c.health = (c.health + HEAL_AMOUNT).min(c.max_health),
+            PickupKind::Ammo => {
+                let full = self.weapons[slot.weapon_index].reserve;
+                if slot.weapon.reserve >= full {
+                    return false;
+                }
+                slot.weapon.reserve = full;
+            }
+            PickupKind::Armour if c.armour >= MAX_ARMOUR => return false,
+            PickupKind::Armour => c.armour = (c.armour + ARMOUR_AMOUNT).min(MAX_ARMOUR),
+            timed => slot.bonuses.activate(timed, now),
+        }
+        true
+    }
+
+    /// Run speed multiplier of a player at `now` (the host applies it to
+    /// the controller; `sim` has no per-player movement parameters yet).
+    #[must_use]
+    pub fn speed_multiplier(&self, player: NetId, now: f64) -> f32 {
+        self.slots
+            .get(&player)
+            .map_or(1.0, |s| s.bonuses.speed_multiplier(now))
+    }
+
+    /// Jump speed multiplier of a player at `now`.
+    #[must_use]
+    pub fn jump_multiplier(&self, player: NetId, now: f64) -> f32 {
+        self.slots
+            .get(&player)
+            .map_or(1.0, |s| s.bonuses.jump_multiplier(now))
     }
 
     /// Time of the last [`step`](Self::step).
