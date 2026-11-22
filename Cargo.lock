@@ -955,6 +955,7 @@ dependencies = [
 name = "faset-mode-fps"
 version = "0.0.1-rc.1"
 dependencies = [
+ "anyhow",
  "faset-core",
  "faset-minigame-api",
  "faset-server",

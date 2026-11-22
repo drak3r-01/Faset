@@ -12,6 +12,7 @@ faset-sim.workspace = true
 faset-server.workspace = true
 faset-minigame-api.workspace = true
 thiserror.workspace = true
+anyhow = "1"
 tracing.workspace = true
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"

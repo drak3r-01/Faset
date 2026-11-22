@@ -1,0 +1,8 @@
+(
+    id: "sprinter",
+    health: 85.0,
+    speed_factor: 1.12,
+    class_trait: DoubleJump,
+    main_weapon: "smg",
+    secondaries: ["sidearm", "baguette"],
+)

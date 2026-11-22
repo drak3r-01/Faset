@@ -15,11 +15,15 @@
 //! * [`rules`] and [`mode`] - [`FpsRules`] (shots, kills, respawns) and
 //!   [`FpsMode`], its `minigame-api` adapter.
 //! * [`message`] - wire layouts of the mode's messages.
+//! * [`class`] and [`balance`] - lot 4.6: classes, loadouts, the data catalog and
+//!   the time-to-kill table of `cargo xtask balance`.
 //!
 //! Time is in seconds as `f64` taken from the tick (`Tick::seconds`), never
 //! rounded to ticks. Units: metre, second, radian; -Z forward, Y up.
 #![forbid(unsafe_code)]
 
+pub mod balance;
+pub mod class;
 pub mod damage;
 pub mod explosion;
 pub mod melee;
@@ -57,6 +61,6 @@ pub use shot::{
 };
 pub use spread::{cone_sigma, decay_beta, spread_direction, state_multiplier, AimBasis, Stance};
 pub use weapon::{
-    DamageDef, ExplosionDef, FireMode, MeleeDef, ProjectileDef, RecoilDef, SightDef, SpreadDef,
-    WeaponDef, WeaponError, WeaponKind,
+    DamageDef, EffectDef, ExplosionDef, FireMode, MeleeDef, ProjectileDef, RecoilDef, SightDef,
+    SpreadDef, WeaponDef, WeaponError, WeaponKind,
 };

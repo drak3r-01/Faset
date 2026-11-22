@@ -1,0 +1,8 @@
+(
+    id: "marksman",
+    health: 80.0,
+    speed_factor: 1.0,
+    class_trait: Scope,
+    main_weapon: "precision_rifle",
+    secondaries: ["sidearm"],
+)

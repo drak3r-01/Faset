@@ -1,0 +1,34 @@
+// Marksman main weapon: 75 damage (plan: 95, a one-hit kill on 80 health, TTK 0), head multiplier 2.0 makes a headshot fatal on every class.
+(
+    id: "precision_rifle",
+    kind: Hitscan,
+    fire_mode: Semi,
+    rpm: 100.0,
+    pellets: 1,
+    damage: (
+        base: 75.0,
+        head_multiplier: 2.0,
+        falloff_start: 40.0,
+        falloff_end: 150.0,
+        min_multiplier: 0.8,
+    ),
+    magazine: 6,
+    reserve: 24,
+    reload_time: 2.4,
+    draw_time: 0.8,
+    range: 300.0,
+    spread: (
+        sigma_base: 0.0005,
+        sigma_max: 0.03,
+        delta_beta: 0.01,
+        tau: 0.3,
+        move_multiplier: 1.6,
+        air_multiplier: 2.2,
+    ),
+    recoil: (
+        pattern: [(0.0, 0.03)],
+        random_fraction: 0.2,
+        omega: 14.0,
+    ),
+    sight: (fov: 0.3, spread_multiplier: 0.05, speed_multiplier: 0.6),
+)

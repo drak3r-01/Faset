@@ -1,0 +1,34 @@
+// Trooper main weapon: 24 damage at 600 rpm.
+(
+    id: "assault_rifle",
+    kind: Hitscan,
+    fire_mode: Auto,
+    rpm: 600.0,
+    pellets: 1,
+    damage: (
+        base: 24.0,
+        head_multiplier: 2.0,
+        falloff_start: 20.0,
+        falloff_end: 60.0,
+        min_multiplier: 0.5,
+    ),
+    magazine: 30,
+    reserve: 120,
+    reload_time: 2.0,
+    draw_time: 0.5,
+    range: 300.0,
+    spread: (
+        sigma_base: 0.003,
+        sigma_max: 0.05,
+        delta_beta: 0.009,
+        tau: 0.3,
+        move_multiplier: 1.6,
+        air_multiplier: 2.2,
+    ),
+    recoil: (
+        pattern: [(0.0, 0.012)],
+        random_fraction: 0.2,
+        omega: 14.0,
+    ),
+    sight: (fov: 1.0, spread_multiplier: 0.5, speed_multiplier: 0.8),
+)

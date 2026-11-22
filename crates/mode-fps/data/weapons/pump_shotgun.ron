@@ -1,0 +1,34 @@
+// Bruiser main weapon: 8 pellets of 12 damage (96 per pull).
+(
+    id: "pump_shotgun",
+    kind: Hitscan,
+    fire_mode: Semi,
+    rpm: 90.0,
+    pellets: 8,
+    damage: (
+        base: 12.0,
+        head_multiplier: 1.5,
+        falloff_start: 6.0,
+        falloff_end: 20.0,
+        min_multiplier: 0.3,
+    ),
+    magazine: 8,
+    reserve: 32,
+    reload_time: 2.8,
+    draw_time: 0.7,
+    range: 300.0,
+    spread: (
+        sigma_base: 0.045,
+        sigma_max: 0.08,
+        delta_beta: 0.0,
+        tau: 0.3,
+        move_multiplier: 1.6,
+        air_multiplier: 2.2,
+    ),
+    recoil: (
+        pattern: [(0.0, 0.04)],
+        random_fraction: 0.2,
+        omega: 14.0,
+    ),
+    sight: (fov: 1.2, spread_multiplier: 0.8, speed_multiplier: 0.9),
+)

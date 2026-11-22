@@ -1,0 +1,8 @@
+(
+    id: "trooper",
+    health: 100.0,
+    speed_factor: 1.0,
+    class_trait: AllRound,
+    main_weapon: "assault_rifle",
+    secondaries: ["sidearm", "baguette"],
+)

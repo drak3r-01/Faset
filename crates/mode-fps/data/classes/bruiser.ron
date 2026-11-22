@@ -1,0 +1,8 @@
+(
+    id: "bruiser",
+    health: 130.0,
+    speed_factor: 0.92,
+    class_trait: Resistant,
+    main_weapon: "pump_shotgun",
+    secondaries: ["sidearm", "baguette"],
+)

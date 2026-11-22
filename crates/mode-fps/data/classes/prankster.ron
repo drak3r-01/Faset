@@ -1,0 +1,8 @@
+(
+    id: "prankster",
+    health: 95.0,
+    speed_factor: 1.05,
+    class_trait: QuirkyArsenal,
+    main_weapon: "rubber_chicken_launcher",
+    secondaries: ["sidearm", "banana_peel", "confetti_cannon", "baguette", "toaster", "bubble_gun"],
+)

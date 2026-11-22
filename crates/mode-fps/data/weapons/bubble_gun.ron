@@ -1,0 +1,35 @@
+// Quirky gadget: slowing pistol, sticky bubbles halve the victim speed.
+(
+    id: "bubble_gun",
+    kind: Hitscan,
+    fire_mode: Semi,
+    rpm: 240.0,
+    pellets: 1,
+    damage: (
+        base: 10.0,
+        head_multiplier: 1.0,
+        falloff_start: 10.0,
+        falloff_end: 30.0,
+        min_multiplier: 0.6,
+    ),
+    magazine: 10,
+    reserve: 40,
+    reload_time: 1.4,
+    draw_time: 0.3,
+    range: 100.0,
+    spread: (
+        sigma_base: 0.004,
+        sigma_max: 0.05,
+        delta_beta: 0.012,
+        tau: 0.3,
+        move_multiplier: 1.6,
+        air_multiplier: 2.2,
+    ),
+    recoil: (
+        pattern: [(0.0, 0.01)],
+        random_fraction: 0.2,
+        omega: 14.0,
+    ),
+    sight: (fov: 1.2, spread_multiplier: 0.8, speed_multiplier: 1.0),
+    effect: Some(Slow(duration: 2.5, factor: 0.5)),
+)
