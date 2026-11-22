@@ -361,3 +361,31 @@ fn bless_references() {
         &reference("overlay_on"),
     );
 }
+
+/// Every application screen draws on lavapipe without validation messages.
+#[test]
+fn every_state_screen_renders_without_validation_messages() {
+    use faset_ui::{AppState, MenuModel, StateScreen};
+
+    let (messages, _guard) = capture_messages();
+    {
+        let mut renderer = headless(DISPLAY);
+        let mut ui = fixed_ui(&mut renderer, false);
+        let mut model = MenuModel {
+            maps: vec!["example".to_owned()],
+            loading_map: "example".to_owned(),
+            loading: 0.4,
+            ..MenuModel::default()
+        };
+        for state in AppState::ALL {
+            let out = out_path(&format!("state_{state:?}.png"));
+            let mut screen = StateScreen::new(state, &mut model);
+            render_ui(&mut renderer, &mut ui, &mut screen, &out);
+            if state != AppState::InGame {
+                assert!(ui.stats().draw_calls > 0, "{state:?} drew nothing");
+            }
+        }
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}

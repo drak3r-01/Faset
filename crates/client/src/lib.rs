@@ -25,6 +25,11 @@
 //!   to 3 of the map load pipeline) and uploads the meshes.
 //! * [`map_sync`]: the map cache (by fingerprint) and the `MapChange` and map
 //!   download handler (lot 5.1).
+//! * [`state`], [`session`], [`app`] (lot 6.1): the stack of application states
+//!   ([`AppState`], [`StateStack`]), the reusable match [`Session`] (handshake,
+//!   prediction, interpolation over a memory or UDP link) and the [`App`] that
+//!   ties them to the menus; the `faset` executable (`src/bin/faset.rs`) puts a
+//!   window, the renderer and egui around it.
 //! * [`interpolation`]: shows remote entities a deliberate delay in the
 //!   past with Hermite interpolation between snapshots, extrapolating for at
 //!   most a quarter of a second, and gives the [`ViewTime`] a fire command
@@ -44,6 +49,7 @@
 //! replay never re-emits them. Never predicted: damage, deaths, pickups.
 #![forbid(unsafe_code)]
 
+pub mod app;
 pub mod camera;
 pub mod clock;
 pub mod discovery;
@@ -54,7 +60,10 @@ pub mod interpolation;
 pub mod map_load;
 pub mod map_sync;
 pub mod prediction;
+pub mod session;
+pub mod state;
 
+pub use app::{App, MapCatalogue, CONNECT_TIMEOUT};
 pub use camera::{CameraPose, FirstPersonCamera, Look};
 pub use clock::{
     ClockConfig, ClockSync, DEFAULT_GAIN, DEFAULT_MARGIN_TICKS, DEFAULT_SYNC_SNAPSHOTS,
@@ -79,3 +88,5 @@ pub use prediction::{
     PredictionHistory, ReconcileOutcome, Tolerance, VisualOffset, COMMANDS_PER_PACKET,
     HISTORY_TICKS, SMOOTHING_TAU, SNAP_DISTANCE,
 };
+pub use session::{map_config, Session, SessionError};
+pub use state::{AppState, StateError, StateStack, Transition};

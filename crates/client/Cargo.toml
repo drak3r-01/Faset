@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "faset"
+path = "src/bin/faset.rs"
+
 [dependencies]
 faset-core.workspace = true
 faset-protocol.workspace = true
@@ -15,15 +19,18 @@ faset-server.workspace = true
 faset-mapfmt.workspace = true
 faset-render.workspace = true
 faset-ui.workspace = true
+faset-minigame-api.workspace = true
 faset-mode-fps.workspace = true
+faset-mode-race.workspace = true
+anyhow = "1"
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 serde = { version = "1", features = ["derive"] }
 if-addrs = "0.13"
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-faset-minigame-api.workspace = true
 toml = "0.8"
 proptest.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }

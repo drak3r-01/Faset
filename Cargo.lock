@@ -918,10 +918,12 @@ dependencies = [
 name = "faset-client"
 version = "0.0.1-rc.1"
 dependencies = [
+ "anyhow",
  "faset-core",
  "faset-mapfmt",
  "faset-minigame-api",
  "faset-mode-fps",
+ "faset-mode-race",
  "faset-net",
  "faset-protocol",
  "faset-render",
@@ -936,6 +938,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "winit",
 ]
 
 [[package]]
@@ -1102,6 +1105,7 @@ dependencies = [
  "ash",
  "egui",
  "faset-core",
+ "faset-minigame-api",
  "faset-render",
  "faset-shaders",
  "gpu-allocator",

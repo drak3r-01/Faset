@@ -10,6 +10,7 @@ publish.workspace = true
 faset-core.workspace = true
 faset-render.workspace = true
 faset-shaders.workspace = true
+faset-minigame-api.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 ash = "0.38"
