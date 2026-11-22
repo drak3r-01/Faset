@@ -1,4 +1,4 @@
-// Metro: underground station. Team map, 16 players, MirrorZ (the file
+// Underline: underground station. Team map, 16 players, MirrorZ (the file
 // describes the team A half, z >= 0). Principle: corridors, trains,
 // flanking routes. Two raised platforms flank two tracks where stopped
 // trains split the lines of fire; gaps between the trains and ramps let
@@ -15,7 +15,7 @@
 Map(
     format_version: 1,
     meta: (
-        name: "Metro",
+        name: "Underline",
         author: "Faset",
         description: "A buried station of stopped trains, platform duels and service-tunnel flanks.",
         modes: ["fps"],

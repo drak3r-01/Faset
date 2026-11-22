@@ -1,4 +1,4 @@
-// Orbital: space station. Team map, 16 players, MirrorZ (the file describes
+// Gyrewheel: space station. Team map, 16 players, MirrorZ (the file describes
 // the team A half, z >= 0). Principle: low-gravity zones, corridors and
 // airlocks. Each spawn module opens through an airlock wall (three 2 m
 // doors) into three 4 m corridors with a service duct between them, then
@@ -18,7 +18,7 @@
 Map(
     format_version: 1,
     meta: (
-        name: "Orbital",
+        name: "Gyrewheel",
         author: "Faset",
         description: "A ring station where airlocked corridors meet a low-gravity reactor dome.",
         modes: ["fps"],
