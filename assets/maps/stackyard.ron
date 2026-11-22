@@ -1,4 +1,4 @@
-// Cargo: container dock at dusk. Small team map, 12 players, Rotate180 (the
+// Stackyard: container dock at dusk. Small team map, 12 players, Rotate180 (the
 // file describes the team A half, z >= 0). Principle: small map with
 // constant action. A 38 m x 28 m yard of containers; the central container
 // is climbed by stairs from both sides and holds the health.
@@ -12,7 +12,7 @@
 Map(
     format_version: 1,
     meta: (
-        name: "Cargo",
+        name: "Stackyard",
         author: "Faset",
         description: "A tight dusk-lit container yard where every lane meets the central stack.",
         modes: ["fps"],

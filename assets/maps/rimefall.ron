@@ -1,4 +1,4 @@
-// Frostbite: snowed-in mountain village in a storm. Team map, 16 players,
+// Rimefall: snowed-in mountain village in a storm. Team map, 16 players,
 // Rotate180 (the file describes the team A half, z >= 0). Principle: long
 // lines of sight. A straight 56 m main street between gabled houses, two
 // side paths behind them broken by sheds, alleys linking the three. Spawns
@@ -14,7 +14,7 @@
 Map(
     format_version: 1,
     meta: (
-        name: "Frostbite",
+        name: "Rimefall",
         author: "Faset",
         description: "A storm-bound village street, long and open, with alleys for the brave.",
         modes: ["fps"],
