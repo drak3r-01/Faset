@@ -1,4 +1,4 @@
-// Character controller parameters (lot 4.2, plan section 15).
+// Character controller parameters (lots 4.2 and 4.3, plan section 15).
 // Units: metre, second. Missing fields take their default value.
 (
     run_speed: 7.0,
@@ -23,4 +23,15 @@
     snap_down: 0.3,
     crouch_speed_scale: 0.5,
     eye_speed: 8.0,
+    // Slide and wall jump (lot 4.3).
+    slide_min_speed: 5.0,
+    slide_exit_speed: 3.0,
+    slide_duration: 1.5,
+    slide_cooldown: 1.0,
+    slide_steer: 1.5,
+    slide_land_factor: 0.25,
+    slide_land_max: 4.0,
+    wall_jump_push: 5.0,
+    wall_jump_up: 0.9,
+    wall_max_ny: 0.2,
 )

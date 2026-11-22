@@ -10,14 +10,17 @@ pub mod components;
 pub mod controller;
 pub mod map_collision;
 pub mod rng;
+pub mod slide;
 pub mod trace;
 pub mod world;
+pub mod zones;
 
 pub use collision::{RayHit, StaticWorld, SweepHit, Volume};
 pub use controller::{step_player, MoveCmd, MoveEvents, MoveParams};
 pub use map_collision::MapCollision;
 pub use trace::Trace;
 pub use world::World;
+pub use zones::{ZoneEvent, Zones};
 
 /// Fixed-step accumulator: feeds variable frame times into 1/60 s steps.
 ///
