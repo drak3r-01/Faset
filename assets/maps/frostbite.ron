@@ -1,0 +1,92 @@
+// Frostbite: snowed-in mountain village in a storm. Team map, 16 players,
+// Rotate180 (the file describes the team A half, z >= 0). Principle: long
+// lines of sight. A straight 56 m main street between gabled houses, two
+// side paths behind them broken by sheds, alleys linking the three. Spawns
+// sit in a yard behind the chapel, out of the street's sightline.
+//
+//   z=40 +---------------------------------------+
+//        |  spawn yard (8 spawns, z=36)          |
+//   z=32 |        [   chapel   ]          [shed] |
+//        |path [H2     ]  main   [H4     ]  path |
+//        |[shed]  alley  street  alley           |
+//        |     [H1     ]         [H3     ]       |
+//    z=0 +-----------------(well)----------------+  rotation centre
+Map(
+    format_version: 1,
+    meta: (
+        name: "Frostbite",
+        author: "Faset",
+        description: "A storm-bound village street, long and open, with alleys for the brave.",
+        modes: ["fps"],
+        players: (2, 16),
+    ),
+    theme: (
+        ambience: "snow",
+        sky: "overcast",
+        weather: [(from_s: 0.0, weather: "snow"), (from_s: 150.0, weather: "storm"), (from_s: 240.0, weather: "snow")],
+        palette: "snow",
+    ),
+    symmetry: Rotate180,
+    brushes: [
+        // Ground and enclosure.
+        Box(min: (-50, -2, 0), max: (50, 0, 80), material: "snow"),
+        Box(min: (-50, 0, 0), max: (-48, 16, 80), material: "snow"),
+        Box(min: (48, 0, 0), max: (50, 16, 80), material: "snow"),
+        Box(min: (-50, 0, 78), max: (50, 16, 80), material: "snow"),
+        // West houses with gabled roofs.
+        Box(min: (-34, 0, 8), max: (-12, 10, 24), material: "wood"),
+        Wedge(min: (-34, 10, 8), max: (-23, 14, 24), rise: PosX, material: "snow"),
+        Wedge(min: (-23, 10, 8), max: (-12, 14, 24), rise: NegX, material: "snow"),
+        Box(min: (-34, 0, 32), max: (-12, 10, 52), material: "wood"),
+        Wedge(min: (-34, 10, 32), max: (-23, 14, 52), rise: PosX, material: "snow"),
+        Wedge(min: (-23, 10, 32), max: (-12, 14, 52), rise: NegX, material: "snow"),
+        // East houses.
+        Box(min: (12, 0, 4), max: (34, 10, 20), material: "brick"),
+        Wedge(min: (12, 10, 4), max: (23, 14, 20), rise: PosX, material: "snow"),
+        Wedge(min: (23, 10, 4), max: (34, 14, 20), rise: NegX, material: "snow"),
+        Box(min: (12, 0, 28), max: (34, 10, 48), material: "brick"),
+        Wedge(min: (12, 10, 28), max: (23, 14, 48), rise: PosX, material: "snow"),
+        Wedge(min: (23, 10, 28), max: (34, 14, 48), rise: NegX, material: "snow"),
+        // Chapel closing the street, and its bell tower.
+        Box(min: (-16, 0, 56), max: (16, 16, 64), material: "brick"),
+        Box(min: (-4, 16, 56), max: (4, 28, 64), material: "brick"),
+        // Sheds breaking the side paths.
+        Box(min: (-48, 0, 36), max: (-40, 8, 44), material: "wood"),
+        Box(min: (40, 0, 52), max: (48, 8, 60), material: "wood"),
+        // Well and street cover.
+        Cylinder(min: (-3, 0, -3), max: (3, 2, 3), axis: Y, sides: 10, material: "concrete"),
+        Box(min: (4, 0, 28), max: (10, 2, 29), material: "wood"),
+        Box(min: (-10, 0, 12), max: (-4, 2, 13), material: "wood"),
+    ],
+    props: [
+        (recipe: "snow_drift", at: (-3.0, 0.0, 20.0), yaw: 0.0),
+        (recipe: "sled", at: (4.0, 0.0, 8.0), yaw: 30.0),
+        (recipe: "snowy_pine", at: (-21.0, 0.0, 2.0), yaw: 0.0),
+        (recipe: "snowy_pine", at: (21.0, 0.0, 24.0), yaw: 45.0),
+        (recipe: "wood_stack", at: (-20.0, 0.0, 28.0), yaw: 90.0),
+        (recipe: "snow_lamp", at: (5.5, 0.0, 33.0), yaw: 0.0),
+    ],
+    spawns: [
+        (at: (-21.0, 0.0, 36.0), yaw: 0.0, team: A),
+        (at: (-15.0, 0.0, 36.0), yaw: 0.0, team: A),
+        (at: (-9.0, 0.0, 36.0), yaw: 0.0, team: A),
+        (at: (-3.0, 0.0, 36.0), yaw: 0.0, team: A),
+        (at: (3.0, 0.0, 36.0), yaw: 0.0, team: A),
+        (at: (9.0, 0.0, 36.0), yaw: 0.0, team: A),
+        (at: (15.0, 0.0, 36.0), yaw: 0.0, team: A),
+        (at: (21.0, 0.0, 36.0), yaw: 0.0, team: A),
+    ],
+    pickups: [
+        (kind: Health, at: (-11.5, 0.5, 14.0), respawn_s: 30),
+        (kind: Armor, at: (21.0, 0.5, 6.0), respawn_s: 45),
+        (kind: Weapon("precision_rifle"), at: (0.0, 0.5, 24.0), respawn_s: 45),
+    ],
+    zones: [
+        Box(min: (-52, -20, 0), max: (52, -4, 82), kind: KillVolume),
+    ],
+    lights: [
+        (at: (0.0, 6.0, 24.0), color: (1.0, 0.8, 0.55), intensity: 1.5, range: 14.0),
+        (at: (-11.5, 4.0, 14.0), color: (1.0, 0.8, 0.55), intensity: 1.0, range: 8.0),
+        (at: (11.5, 4.0, 12.0), color: (1.0, 0.8, 0.55), intensity: 1.0, range: 8.0),
+    ],
+)

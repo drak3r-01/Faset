@@ -1,0 +1,89 @@
+// Souk: desert city at midday. Team map, 16 players, MirrorZ (the file
+// describes the team A half, z >= 0). Principle: three corridors and
+// chokepoints. Three parallel lanes (left, middle, right) between building
+// blocks, each narrowed to a 3 m chokepoint; a cross street at z = 0 links
+// them. Spawn plaza at the far end of each half.
+//
+//   z=40 +---------------------------------+  back wall
+//        |   spawn plaza (8 spawns, z=34)  |
+//   z=28 |  +-----------+   +-----------+  |
+//        |L |  block L2 | M |  block R2 | R|
+//   z=14 |#.|  block L1 |#.#|  block R1 |.#|  chokepoints (3 m)
+//    z=4 |  +-----------+   +-----------+  |
+//    z=0 |   cross street, fountain        |  mirror plane
+Map(
+    format_version: 1,
+    meta: (
+        name: "Souk",
+        author: "Faset",
+        description: "Three market lanes through a sun-baked desert city, each squeezed by an arch.",
+        modes: ["fps"],
+        players: (2, 16),
+    ),
+    theme: (
+        ambience: "desert",
+        sky: "clear",
+        weather: [(from_s: 0.0, weather: "clear"), (from_s: 240.0, weather: "sand")],
+        palette: "desert",
+    ),
+    symmetry: MirrorZ,
+    brushes: [
+        // Ground and enclosure.
+        Box(min: (-60, -2, 0), max: (60, 0, 80), material: "sand"),
+        Box(min: (-60, 0, 0), max: (-58, 16, 80), material: "brick"),
+        Box(min: (58, 0, 0), max: (60, 16, 80), material: "brick"),
+        Box(min: (-60, 0, 78), max: (60, 16, 80), material: "brick"),
+        // Building blocks between the lanes (6 m and 8 m high).
+        Box(min: (-46, 0, 8), max: (-8, 12, 32), material: "brick"),
+        Box(min: (-46, 0, 32), max: (-8, 16, 56), material: "brick"),
+        Box(min: (8, 0, 8), max: (46, 16, 32), material: "brick"),
+        Box(min: (8, 0, 32), max: (46, 12, 56), material: "brick"),
+        // Chokepoints: left and right lanes narrowed to 3 m.
+        Box(min: (-58, 0, 26), max: (-52, 8, 30), material: "brick"),
+        Box(min: (52, 0, 26), max: (58, 8, 30), material: "brick"),
+        // Middle lane arch: two piers and a lintel, 3 m wide and 3 m high.
+        Box(min: (-8, 0, 26), max: (-3, 8, 30), material: "brick"),
+        Box(min: (3, 0, 26), max: (8, 8, 30), material: "brick"),
+        Box(min: (-3, 6, 26), max: (3, 8, 30), material: "wood"),
+        // Cross street: fountain and market stalls (low cover).
+        Cylinder(min: (-4, 0, -4), max: (4, 2, 4), axis: Y, sides: 12, material: "tiles"),
+        Box(min: (-32, 0, 2), max: (-26, 2, 6), material: "wood"),
+        Box(min: (24, 0, 2), max: (30, 2, 6), material: "wood"),
+        // Spawn plaza low walls.
+        Box(min: (-24, 0, 60), max: (-12, 2, 61), material: "sand"),
+        Box(min: (12, 0, 60), max: (24, 2, 61), material: "sand"),
+    ],
+    props: [
+        (recipe: "palm_tree", at: (-27.5, 0.0, 22.0), yaw: 0.0),
+        (recipe: "palm_tree", at: (27.5, 0.0, 9.0), yaw: 45.0),
+        (recipe: "pottery_jar", at: (-24.5, 0.0, 9.0), yaw: 10.0),
+        (recipe: "water_barrel", at: (25.0, 0.0, 20.0), yaw: 0.0),
+        (recipe: "crate_wood", at: (-2.5, 0.0, 10.0), yaw: 20.0),
+        (recipe: "crate_wood", at: (2.5, 0.0, 19.0), yaw: 70.0),
+        (recipe: "cart_wheel", at: (-18.0, 0.0, 37.0), yaw: 30.0),
+    ],
+    spawns: [
+        (at: (-21.0, 0.0, 34.0), yaw: 0.0, team: A),
+        (at: (-15.0, 0.0, 34.0), yaw: 0.0, team: A),
+        (at: (-9.0, 0.0, 34.0), yaw: 0.0, team: A),
+        (at: (-3.0, 0.0, 34.0), yaw: 0.0, team: A),
+        (at: (3.0, 0.0, 34.0), yaw: 0.0, team: A),
+        (at: (9.0, 0.0, 34.0), yaw: 0.0, team: A),
+        (at: (15.0, 0.0, 34.0), yaw: 0.0, team: A),
+        (at: (21.0, 0.0, 34.0), yaw: 0.0, team: A),
+    ],
+    pickups: [
+        (kind: Health, at: (0.0, 0.5, 20.0), respawn_s: 30),
+        (kind: Health, at: (-26.0, 0.5, 6.0), respawn_s: 30),
+        (kind: Armor, at: (26.0, 0.5, 2.0), respawn_s: 45),
+        (kind: Weapon("precision_rifle"), at: (-10.0, 0.5, 2.0), respawn_s: 45),
+    ],
+    zones: [
+        Box(min: (-62, -20, 0), max: (62, -4, 82), kind: KillVolume),
+    ],
+    lights: [
+        (at: (0.0, 3.5, 0.0), color: (1.0, 0.85, 0.6), intensity: 1.5, range: 14.0),
+        (at: (-26.0, 3.0, 14.0), color: (1.0, 0.6, 0.3), intensity: 1.2, range: 10.0),
+        (at: (26.0, 3.0, 14.0), color: (1.0, 0.6, 0.3), intensity: 1.2, range: 10.0),
+    ],
+)
