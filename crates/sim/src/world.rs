@@ -13,6 +13,8 @@ use crate::components::{
     Health, Inventory, PlayerState, Team, Transform, Velocity, WeaponState, STANDING_HEIGHT,
 };
 use crate::controller::{self, MoveCmd, MoveParams};
+use crate::zones::{ZoneEvent, ZoneTracker, Zones};
+use faset_mapfmt::ZoneKind;
 
 /// Stub walk speed in m/s (real movement equations arrive with lots 4.x).
 const STUB_SPEED: f32 = 5.0;
@@ -44,6 +46,10 @@ pub struct World {
     players: BTreeMap<NetId, Entity>,
     /// Character controller parameters; `None` keeps the stub movement.
     controller: Option<MoveParams>,
+    /// Gameplay zones (controller worlds only).
+    zones: Zones,
+    /// Zone events since the last [`Self::drain_zone_events`].
+    zone_events: Vec<(NetId, ZoneEvent)>,
 }
 
 impl World {
@@ -62,7 +68,23 @@ impl World {
             seed,
             players: BTreeMap::new(),
             controller: None,
+            zones: Zones::default(),
+            zone_events: Vec::new(),
         }
+    }
+
+    /// Sets the gameplay zones, applied at the end of each player's
+    /// controller tick (controller worlds only, lot 4.3). A kill volume sets
+    /// the player's health to 0; turning that into a death and a
+    /// `GameEvent` belongs to the damage and mode lots.
+    pub fn set_zones(&mut self, zones: Zones) {
+        self.zones = zones;
+    }
+
+    /// Zone events of the ticks since the last call, in tick then ascending
+    /// `NetId` order.
+    pub fn drain_zone_events(&mut self) -> Vec<(NetId, ZoneEvent)> {
+        std::mem::take(&mut self.zone_events)
     }
 
     /// World whose players move with the character controller (lot 4.2)
@@ -145,7 +167,7 @@ impl World {
         ));
         if self.controller.is_some() {
             let state = controller::PlayerState::spawn(position);
-            self.ecs.insert_one(e, state).ok();
+            self.ecs.insert(e, (state, ZoneTracker::default())).ok();
         }
         self.players.insert(id, e);
     }
@@ -155,6 +177,13 @@ impl World {
     pub fn position(&self, id: NetId) -> Option<Vec3> {
         let e = *self.players.get(&id)?;
         self.ecs.get::<&Transform>(e).ok().map(|t| t.position)
+    }
+
+    /// Health of a player, if present.
+    #[must_use]
+    pub fn health(&self, id: NetId) -> Option<i16> {
+        let e = *self.players.get(&id)?;
+        self.ecs.get::<&Health>(e).ok().map(|h| h.0)
     }
 
     /// Advances one tick with no hooks.
@@ -218,15 +247,24 @@ impl World {
             let Some(&e) = self.players.get(id) else {
                 continue;
             };
-            let Ok((t, v, s)) =
-                self.ecs
-                    .query_one_mut::<(&mut Transform, &mut Velocity, &mut controller::PlayerState)>(
-                        e,
-                    )
-            else {
+            let Ok((t, v, s, zt, hp)) = self.ecs.query_one_mut::<(
+                &mut Transform,
+                &mut Velocity,
+                &mut controller::PlayerState,
+                &mut ZoneTracker,
+                &mut Health,
+            )>(e) else {
                 continue;
             };
             controller::step_player_in(s, MoveCmd::from(*cmd), &self.statics, params, DT);
+            let mut events = Vec::new();
+            self.zones.apply(s, zt, params, &mut events);
+            for ev in events {
+                if ev == ZoneEvent::Triggered(ZoneKind::KillVolume) {
+                    hp.0 = 0;
+                }
+                self.zone_events.push((*id, ev));
+            }
             t.position = s.pos;
             t.yaw = dequantize_yaw(cmd.yaw);
             t.pitch = dequantize_pitch_command(cmd.pitch);
@@ -255,7 +293,7 @@ impl World {
                 h.write(&hp.0.to_le_bytes());
             }
             if let Ok(s) = self.ecs.get::<&controller::PlayerState>(e) {
-                for b in s.bits() {
+                for b in s.bits().into_iter().chain(s.technique_bits()) {
                     h.write(&b.to_le_bytes());
                 }
             }

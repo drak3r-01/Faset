@@ -8,8 +8,9 @@
 //! Tick order: read the command and build the wish direction; update crouch,
 //! slide and timers; ground test; jump; friction (on ground, no jump);
 //! acceleration (ground or air); gravity half-step; move with collision,
-//! steps and snapping; gravity half-step; ground test and landing event.
-//! Zone triggers come with lot 4.3.
+//! steps and snapping; gravity half-step; wall jump; ground test and landing
+//! event (and landing slide). Zone triggers ([`crate::zones`]) run after this
+//! function, at the end of the player tick.
 //!
 //! Decisions (unspecified by the plan):
 //! - On the ground (and on the tick of a jump, before it fires) the vertical
@@ -44,8 +45,20 @@
 //!   bounded by 5 mm in the tests (edges and rotated faces).
 //! - Soft brake: above 15 m/s, a landing removes 25 % of the horizontal speed
 //!   in excess.
-//! - Slide is out of scope: its parameters and `slide_timer` exist (the timer
-//!   only counts down), no slide behaviour yet.
+//! - Slide and slide-hop live in [`crate::slide`] (lot 4.3).
+//! - Wall jump (lot 4.3): a jump press (button down after up; no buffer, no
+//!   auto-hop) while airborne and touching a wall fires it, checked after the
+//!   move so that "a collision this tick or the previous tick with a surface
+//!   whose `|n_y| ≤ 0.2`" includes this tick's move. Touching also counts an
+//!   exact ray within 1 cm of the capsule side, toward the motion or the last
+//!   wall (sweeps that start in contact can miss). The push replaces the
+//!   velocity component along the wall normal by
+//!   [`MoveParams::wall_jump_push`] (5 m/s) and sets the vertical speed to
+//!   [`MoveParams::wall_jump_up`] × jump speed (0.9 × 6.5 = 5.85 m/s); the
+//!   tangential speed is kept. One per contact: re-armed on the first tick
+//!   with no wall contact.
+//! - Gravity is scaled by [`PlayerState::gravity_scale`], set by the zones of
+//!   the previous tick ([`crate::zones`], low gravity).
 //! - Yaw sine and cosine come from fixed polynomials, not the platform libm, so
 //!   a Windows client and a Linux server build the same wish direction.
 
@@ -58,6 +71,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::collision::StaticWorld;
 use crate::map_collision::{MapCollision, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS};
+use crate::slide;
 
 /// Button bit: jump.
 pub const BUTTON_JUMP: u16 = 1 << 0;
@@ -98,9 +112,9 @@ pub struct MoveParams {
     pub gravity: f32,
     /// Jump speed `v_j`, m/s.
     pub jump_speed: f32,
-    /// Slide friction `f_slide`, 1/s (slide comes in a later lot).
+    /// Slide friction `f_slide`, 1/s.
     pub slide_friction: f32,
-    /// Slide impulse `b`, m/s (slide comes in a later lot).
+    /// Slide impulse `b`, m/s.
     pub slide_impulse: f32,
     /// Highest step climbed without jumping, metres.
     pub max_step: f32,
@@ -126,6 +140,26 @@ pub struct MoveParams {
     pub crouch_speed_scale: f32,
     /// Eye height smoothing speed, m/s.
     pub eye_speed: f32,
+    /// Lowest horizontal speed that starts a slide on the ground, m/s.
+    pub slide_min_speed: f32,
+    /// A slide ends below this horizontal speed, m/s.
+    pub slide_exit_speed: f32,
+    /// Longest slide, seconds.
+    pub slide_duration: f32,
+    /// Shortest time between two slide impulses, seconds.
+    pub slide_cooldown: f32,
+    /// Slide steering rate (direction blend toward the wish), 1/s.
+    pub slide_steer: f32,
+    /// Landing slide impulse per m/s of fall speed, `k`.
+    pub slide_land_factor: f32,
+    /// Largest landing slide impulse `b_max`, m/s.
+    pub slide_land_max: f32,
+    /// Wall jump speed away from the wall, m/s.
+    pub wall_jump_push: f32,
+    /// Wall jump vertical speed as a fraction of the jump speed.
+    pub wall_jump_up: f32,
+    /// Largest `|n_y|` of a surface that counts as a wall.
+    pub wall_max_ny: f32,
 }
 
 impl Default for MoveParams {
@@ -153,6 +187,16 @@ impl Default for MoveParams {
             snap_down: 0.3,
             crouch_speed_scale: 0.5,
             eye_speed: 8.0,
+            slide_min_speed: 5.0,
+            slide_exit_speed: 3.0,
+            slide_duration: 1.5,
+            slide_cooldown: 1.0,
+            slide_steer: 1.5,
+            slide_land_factor: 0.25,
+            slide_land_max: 4.0,
+            wall_jump_push: 5.0,
+            wall_jump_up: 0.9,
+            wall_max_ny: 0.2,
         }
     }
 }
@@ -287,7 +331,7 @@ pub struct PlayerState {
     pub crouched: bool,
     /// Eye height above the feet, smoothed, metres.
     pub eye_height: f32,
-    /// Seconds of slide left (slide comes in a later lot).
+    /// Seconds of slide left; sliding while above zero.
     pub slide_timer: f32,
     /// Seconds a jump request stays valid.
     pub jump_buffer: f32,
@@ -295,6 +339,16 @@ pub struct PlayerState {
     pub coyote_timer: f32,
     /// Jump button state of the previous tick (press detection).
     pub jump_held: bool,
+    /// Seconds before the next slide impulse is allowed.
+    pub slide_cooldown: f32,
+    /// A ground slide started during this crouch press (cleared on release).
+    pub slide_latch: bool,
+    /// Normal of the wall touched during the previous tick, or zero.
+    pub wall_normal: Vec3,
+    /// A wall jump is available (cleared by a wall jump, re-armed off walls).
+    pub wall_jump_armed: bool,
+    /// Gravity factor set by the zones the player is in (1 outside).
+    pub gravity_scale: f32,
 }
 
 impl PlayerState {
@@ -312,6 +366,11 @@ impl PlayerState {
             jump_buffer: 0.0,
             coyote_timer: 0.0,
             jump_held: false,
+            slide_cooldown: 0.0,
+            slide_latch: false,
+            wall_normal: Vec3::ZERO,
+            wall_jump_armed: true,
+            gravity_scale: 1.0,
         }
     }
 
@@ -356,6 +415,20 @@ impl PlayerState {
             self.coyote_timer.to_bits(),
         ]
     }
+
+    /// Fields added by lot 4.3, as bit patterns (state hashing, after
+    /// [`Self::bits`]).
+    #[must_use]
+    pub fn technique_bits(&self) -> [u32; 6] {
+        [
+            self.slide_cooldown.to_bits(),
+            u32::from(self.slide_latch) | u32::from(self.wall_jump_armed) << 1,
+            self.wall_normal.x.to_bits(),
+            self.wall_normal.y.to_bits(),
+            self.wall_normal.z.to_bits(),
+            self.gravity_scale.to_bits(),
+        ]
+    }
 }
 
 /// What happened during one tick.
@@ -367,6 +440,10 @@ pub struct MoveEvents {
     pub landed: bool,
     /// Downward speed just before the landing, m/s (0 without landing).
     pub impact_speed: f32,
+    /// A wall jump fired.
+    pub wall_jumped: bool,
+    /// A slide started (on the ground or on landing).
+    pub slide_started: bool,
 }
 
 /// Advances one player by one tick on a map. See the module docs.
@@ -405,6 +482,7 @@ pub fn step_player_in(
     let eye_step = p.eye_speed * dt;
     state.eye_height += (eye_target - state.eye_height).clamp(-eye_step, eye_step);
     state.slide_timer = (state.slide_timer - dt).max(0.0);
+    state.slide_cooldown = (state.slide_cooldown - dt).max(0.0);
     let jump_down = cmd.jump();
     let pressed = jump_down && !state.jump_held;
     state.jump_held = jump_down;
@@ -421,8 +499,12 @@ pub fn step_player_in(
         state.coyote_timer = p.coyote_time;
     }
     let started_on_ground = state.on_ground;
+    let gravity = p.gravity * state.gravity_scale;
 
-    // 4. Jump.
+    // 3b. Slide entry and exit.
+    ev.slide_started = slide::update(state, cmd.crouch(), p, active);
+
+    // 4. Jump (a slide-hop keeps all speed: the slide just ends).
     let mut jumped = false;
     if state.on_ground {
         state.vel.y = 0.0;
@@ -432,17 +514,25 @@ pub fn step_player_in(
         state.on_ground = false;
         state.coyote_timer = 0.0;
         state.jump_buffer = 0.0;
+        state.slide_timer = 0.0;
         jumped = true;
         ev.jumped = true;
     }
+    let sliding = state.on_ground && slide::is_sliding(state);
 
     // 5. Friction.
-    if state.on_ground {
+    if sliding {
+        slide::friction(&mut state.vel, p, dt);
+    } else if state.on_ground {
         apply_friction(&mut state.vel, p.friction, p.stop_speed, dt);
     }
 
-    // 6. Acceleration.
-    if state.on_ground {
+    // 6. Acceleration (slide: weak steering and slope gravity).
+    if sliding {
+        state.vel = slide::steer(state.vel, wish_dir, p, dt);
+        let n = ground_normal(world, state, min_ny);
+        state.vel = slide::slope_gravity(state.vel, n, gravity, dt);
+    } else if state.on_ground {
         if state.crouched {
             wish_speed *= p.crouch_speed_scale;
         }
@@ -462,14 +552,14 @@ pub fn step_player_in(
     // 7. Gravity half-step.
     let airborne = !state.on_ground;
     if airborne {
-        state.vel.y -= 0.5 * p.gravity * dt;
+        state.vel.y -= 0.5 * gravity * dt;
     }
     state.vel = state.vel.clamp_length_max(p.max_speed);
     let fall_speed = (-state.vel.y).max(0.0);
 
     // 8. Move with collision, steps and snap-down.
     let height = state.height();
-    let (pos, vel) = move_with_steps(
+    let (pos, vel, wall) = move_with_steps(
         world,
         state.pos,
         state.vel,
@@ -490,9 +580,23 @@ pub fn step_player_in(
 
     // 9. Gravity half-step.
     if airborne {
-        state.vel.y -= 0.5 * p.gravity * dt;
+        state.vel.y -= 0.5 * gravity * dt;
     }
     state.vel = state.vel.clamp_length_max(p.max_speed);
+
+    // 9b. Wall jump.
+    let wall = wall.or_else(|| touching_wall(world, state, p.wall_max_ny));
+    let contact = wall.or((state.wall_normal != Vec3::ZERO).then_some(state.wall_normal));
+    if let Some(n) = contact {
+        if pressed && airborne && !jumped && state.wall_jump_armed {
+            wall_jump(state, n, p);
+            ev.wall_jumped = true;
+            jumped = true;
+        }
+    } else {
+        state.wall_jump_armed = true;
+    }
+    state.wall_normal = wall.unwrap_or(Vec3::ZERO);
 
     // 10. Ground test and landing.
     let can_land = !jumped && (started_on_ground || state.vel.y <= 0.0);
@@ -508,6 +612,11 @@ pub fn step_player_in(
             ev.impact_speed = fall_speed;
             state.vel.y = state.vel.y.max(0.0);
             soft_brake(&mut state.vel, p);
+            if cmd.crouch() {
+                let b = slide::landing_impulse(fall_speed, p);
+                slide::start(state, b, wish_dir, p, active);
+                ev.slide_started = true;
+            }
         }
         state.on_ground = true;
     } else {
@@ -515,6 +624,7 @@ pub fn step_player_in(
             state.coyote_timer = p.coyote_time;
         }
         state.on_ground = false;
+        state.slide_timer = 0.0;
     }
     state.pos = settle_axes(world, state.pos, state.height());
     ev
@@ -684,6 +794,42 @@ pub fn accelerate(
     vel + wish_dir * (accel * wish_speed * dt).min(delta)
 }
 
+/// Normal of the walkable ground under the bottom sphere (an exact ray
+/// straight down), or `+Y` when none is found (edges).
+fn ground_normal(world: &StaticWorld, state: &PlayerState, min_ny: f32) -> Vec3 {
+    let bottom = state.pos - Vec3::Y * half_segment(state.height());
+    world
+        .ray_cast(bottom, Vec3::NEG_Y, 2.0 * PLAYER_RADIUS)
+        .filter(|h| h.normal.y >= min_ny)
+        .map_or(Vec3::Y, |h| h.normal)
+}
+
+/// Wall within 1 cm of the capsule side, found by exact rays from the centre
+/// toward the horizontal motion and toward the last touched wall.
+fn touching_wall(world: &StaticWorld, state: &PlayerState, max_ny: f32) -> Option<Vec3> {
+    let motion = Vec3::new(state.vel.x, 0.0, state.vel.z).normalize_or_zero();
+    [motion, -state.wall_normal]
+        .into_iter()
+        .filter(|d| *d != Vec3::ZERO)
+        .find_map(|d| {
+            world
+                .ray_cast(state.pos, d, PLAYER_RADIUS + 0.01)
+                .filter(|h| h.normal.y.abs() <= max_ny)
+                .map(|h| h.normal)
+        })
+}
+
+/// Pushes off the wall of normal `n`; see the module docs.
+fn wall_jump(state: &mut PlayerState, n: Vec3, p: &MoveParams) {
+    let n = Vec3::new(n.x, 0.0, n.z).normalize_or_zero();
+    let h = Vec3::new(state.vel.x, 0.0, state.vel.z);
+    let h = h - n * h.dot(n) + n * p.wall_jump_push;
+    state.vel = Vec3::new(h.x, p.wall_jump_up * p.jump_speed, h.z).clamp_length_max(p.max_speed);
+    state.wall_jump_armed = false;
+    state.jump_buffer = 0.0;
+    state.coyote_timer = 0.0;
+}
+
 fn soft_brake(vel: &mut Vec3, p: &MoveParams) {
     let s = (vel.x * vel.x + vel.z * vel.z).sqrt();
     if s > p.soft_brake_speed {
@@ -698,7 +844,8 @@ fn horizontal_len_sq(v: Vec3) -> f32 {
 }
 
 /// Slide move, then for grounded players a step-up retry (raise, move,
-/// lower); keeps the result that went further horizontally.
+/// lower); keeps the result that went further horizontally. Also returns
+/// the wall touched by the plain move, if any.
 #[allow(clippy::too_many_arguments)]
 fn move_with_steps(
     world: &StaticWorld,
@@ -709,11 +856,12 @@ fn move_with_steps(
     grounded: bool,
     p: &MoveParams,
     min_ny: f32,
-) -> (Vec3, Vec3) {
+) -> (Vec3, Vec3, Option<Vec3>) {
     let upright = grounded.then_some(min_ny);
-    let (down_pos, down_vel, blocked) = slide_move(world, pos, vel, height, dt, upright);
+    let (down_pos, down_vel, blocked, wall) =
+        slide_move(world, pos, vel, height, dt, upright, p.wall_max_ny);
     if !grounded || !blocked || p.max_step <= 0.0 {
-        return (down_pos, down_vel);
+        return (down_pos, down_vel, wall);
     }
     let up = Vec3::Y * p.max_step;
     let raised = match world.shape_cast(pos, up, height) {
@@ -721,19 +869,20 @@ fn move_with_steps(
         Some(h) => (h.toi * p.max_step - SKIN).max(0.0),
     };
     if raised <= SKIN {
-        return (down_pos, down_vel);
+        return (down_pos, down_vel, wall);
     }
     let up_pos = pos + Vec3::Y * raised;
     let flat = Vec3::new(vel.x, 0.0, vel.z);
-    let (step_pos, step_vel, _) = slide_move(world, up_pos, flat, height, dt, upright);
+    let (step_pos, step_vel, _, _) =
+        slide_move(world, up_pos, flat, height, dt, upright, p.wall_max_ny);
     // Lower back to the starting level at most.
     let lower = step_pos.y - pos.y;
     let Some(hit) = world.shape_cast(step_pos, Vec3::NEG_Y * lower, height) else {
-        return (down_pos, down_vel);
+        return (down_pos, down_vel, wall);
     };
     let at = step_pos - Vec3::Y * (hit.toi * lower);
     if surface_normal(world, at, height, hit.normal).y < min_ny {
-        return (down_pos, down_vel);
+        return (down_pos, down_vel, wall);
     }
     let landed = step_pos - Vec3::Y * ground_drop(hit.toi * lower);
     // The round bottom can rest on an edge above the step height (centre
@@ -743,9 +892,9 @@ fn move_with_steps(
     let feet = pos.y - 0.5 * height;
     let rise_ok = contact.y - feet <= p.max_step + 2.0 * SKIN;
     if rise_ok && horizontal_len_sq(landed - pos) > horizontal_len_sq(down_pos - pos) {
-        (landed, step_vel)
+        (landed, step_vel, wall)
     } else {
-        (down_pos, down_vel)
+        (down_pos, down_vel, wall)
     }
 }
 
@@ -779,8 +928,8 @@ fn resolve(vel: Vec3, planes: &[Vec3]) -> Vec3 {
 }
 
 /// Sweeps along `vel · dt` in up to [`MAX_ITERATIONS`] parts, sliding on each
-/// contact. Returns the end position, the velocity and whether anything was
-/// hit.
+/// contact. Returns the end position, the velocity, whether anything was
+/// hit and the last wall touched (a surface with `|n_y| <= wall_ny`).
 ///
 /// `upright` (grounded players: the walkable limit) turns non-walkable
 /// contacts into vertical walls, so a grounded player never rides up a steep
@@ -792,13 +941,15 @@ fn slide_move(
     height: f32,
     dt: f32,
     upright: Option<f32>,
-) -> (Vec3, Vec3, bool) {
+    wall_ny: f32,
+) -> (Vec3, Vec3, bool, Option<Vec3>) {
     let start = pos;
     let primal = vel;
     let mut planes = [Vec3::ZERO; 3];
     let mut n_planes = 0;
     let mut time_left = dt;
     let mut blocked = false;
+    let mut wall = None;
     for _ in 0..MAX_ITERATIONS {
         let delta = vel * time_left;
         let len = delta.length();
@@ -810,6 +961,9 @@ fn slide_move(
             break;
         };
         blocked = true;
+        if hit.normal.y.abs() <= wall_ny {
+            wall = Some(hit.normal);
+        }
         // Advance to the impact minus the skin, then restore the skin
         // against the touched plane (exact ray, sweeps are mm-accurate).
         let travel = (hit.toi * len - SKIN).max(0.0);
@@ -846,7 +1000,7 @@ fn slide_move(
     if let Some(dir) = Vec3::new(moved.x, 0.0, moved.z).try_normalize() {
         pos = settle(world, pos, height, -dir);
     }
-    (pos, vel, blocked)
+    (pos, vel, blocked, wall)
 }
 
 #[cfg(test)]
