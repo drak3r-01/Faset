@@ -6,8 +6,8 @@
 //!
 //! - [`Ui`]: [`Ui::begin_frame`] takes the frame's input, [`Ui::draw`] runs
 //!   one [`Screen`] (and the debug [`Overlay`]) and queues the result for the
-//!   renderer. The application state stack that picks the screen belongs to
-//!   phase 6;
+//!   renderer. The screens module holds one screen function per [`AppState`], driven by
+//!   the state stack of `faset-client` through [`UiCommand`]s;
 //! - [`Theme`]: the colour tokens every screen uses;
 //! - [`text`]: interface text looked up by translation key;
 //! - [`Overlay`]: profiling, frame times, network graph and simulation
@@ -25,6 +25,7 @@ mod error;
 mod i18n;
 mod overlay;
 mod paint;
+mod screens;
 mod theme;
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -39,6 +40,9 @@ pub use error::UiError;
 pub use i18n::text;
 pub use overlay::{NetSample, Overlay, SimStats, UiStats};
 pub use paint::EguiPass;
+pub use screens::{
+    show_state, AppState, MenuModel, ModeChoice, PlayRequest, ServerRow, StateScreen, UiCommand,
+};
 pub use theme::Theme;
 
 /// egui, re-exported so screens use the version this crate was built with.
