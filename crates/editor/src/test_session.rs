@@ -42,12 +42,14 @@ impl TestSession {
     /// of the map's BLAKE3 id.
     #[must_use]
     pub fn server_config(map: &MapFile, spawn: Vec3) -> ServerConfig {
-        let collision = MapCollision::build(&expand(map));
+        let expanded = expand(map);
+        let collision = MapCollision::build(&expanded);
         ServerConfig {
             map: MapConfig {
                 statics: collision.world().clone(),
                 fingerprint: map_fingerprint(faset_mapfmt::to_ron(map).as_bytes()),
                 spawn_points: vec![spawn],
+                zones: faset_sim::Zones::from_map(&expanded),
             },
             ..ServerConfig::default()
         }
