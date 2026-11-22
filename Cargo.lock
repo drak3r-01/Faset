@@ -945,6 +945,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "faset-editor"
+version = "0.0.1-rc.1"
+dependencies = [
+ "faset-assets",
+ "faset-client",
+ "faset-core",
+ "faset-mapfmt",
+ "faset-net",
+ "faset-protocol",
+ "faset-render",
+ "faset-server",
+ "faset-sim",
+ "faset-ui",
+ "map-tool",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "faset-mapfmt"
 version = "0.0.1-rc.1"
 dependencies = [
@@ -1699,9 +1718,11 @@ name = "map-tool"
 version = "0.0.1-rc.1"
 dependencies = [
  "anyhow",
+ "faset-bots",
  "faset-client",
  "faset-core",
  "faset-mapfmt",
+ "faset-protocol",
  "faset-render",
  "faset-sim",
  "image",

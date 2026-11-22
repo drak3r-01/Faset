@@ -21,6 +21,7 @@
 pub mod nav;
 mod report;
 mod settings;
+pub mod trial;
 pub mod view;
 
 use std::collections::HashSet;
