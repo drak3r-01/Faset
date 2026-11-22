@@ -78,9 +78,33 @@ impl FireMsg {
     }
 }
 
+/// Creation event of a projectile: the only thing replicated about it
+/// (no per-frame state); every client simulates it locally from here.
+///
+/// The plan puts this on the protocol's event channel, but `protocol` has no
+/// such variant and lot 4.5 may not add one: it travels as mode bytes
+/// ([`ServerMsg::Projectile`]) inside `ModeMessage` until a lot owning
+/// `protocol` moves it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectileSpawn {
+    pub shooter: NetId,
+    /// Index of the weapon in the match's weapon list.
+    pub weapon: u8,
+    /// Tick of the shot command.
+    pub tick: u32,
+    /// Per-projectile seed (derived from the match seed and the shot).
+    pub seed: u32,
+    pub origin: Vec3,
+    pub velocity: Vec3,
+}
+
 /// Server to clients: what a shot did, sent as mode events.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ServerMsg {
+    /// A projectile was created (see [`ProjectileSpawn`]).
+    Projectile(ProjectileSpawn),
+    /// A blast went off at `centre` (visual and audio cue).
+    Explosion { centre: Vec3 },
     /// `attacker` hurt `victim`.
     Hit {
         attacker: NetId,
@@ -99,7 +123,25 @@ impl ServerMsg {
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
+        let push_vec = |out: &mut Vec<u8>, v: Vec3| {
+            for c in v.to_array() {
+                out.extend_from_slice(&c.to_le_bytes());
+            }
+        };
         match *self {
+            Self::Projectile(p) => {
+                out.push(4);
+                out.extend_from_slice(&p.shooter.0.to_le_bytes());
+                out.push(p.weapon);
+                out.extend_from_slice(&p.tick.to_le_bytes());
+                out.extend_from_slice(&p.seed.to_le_bytes());
+                push_vec(&mut out, p.origin);
+                push_vec(&mut out, p.velocity);
+            }
+            Self::Explosion { centre } => {
+                out.push(5);
+                push_vec(&mut out, centre);
+            }
             Self::Hit {
                 attacker,
                 victim,
@@ -153,6 +195,25 @@ impl ServerMsg {
                 player: id(0)?,
                 position: Vec3::new(float(2)?, float(6)?, float(10)?),
             }),
+            (4, 35) => {
+                let origin = Vec3::new(float(11)?, float(15)?, float(19)?);
+                let velocity = Vec3::new(float(23)?, float(27)?, float(31)?);
+                if !(origin.is_finite() && velocity.is_finite()) {
+                    return None;
+                }
+                Some(Self::Projectile(ProjectileSpawn {
+                    shooter: id(0)?,
+                    weapon: b[2],
+                    tick: u32::from_le_bytes(b.get(3..7)?.try_into().ok()?),
+                    seed: u32::from_le_bytes(b.get(7..11)?.try_into().ok()?),
+                    origin,
+                    velocity,
+                }))
+            }
+            (5, 12) => {
+                let centre = Vec3::new(float(0)?, float(4)?, float(8)?);
+                centre.is_finite().then_some(Self::Explosion { centre })
+            }
             _ => None,
         }
     }
@@ -199,6 +260,17 @@ mod tests {
             ServerMsg::Respawn {
                 player: NetId(5),
                 position: Vec3::new(1.0, 2.0, -3.0),
+            },
+            ServerMsg::Projectile(ProjectileSpawn {
+                shooter: NetId(6),
+                weapon: 3,
+                tick: 99_999,
+                seed: 0xdead_beef,
+                origin: Vec3::new(1.0, 1.6, -2.0),
+                velocity: Vec3::new(0.0, 5.0, -35.0),
+            }),
+            ServerMsg::Explosion {
+                centre: Vec3::new(4.0, 0.5, 9.0),
             },
         ] {
             assert_eq!(ServerMsg::decode(&m.encode()), Some(m));

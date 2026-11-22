@@ -6,8 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// What a weapon fires. Only [`Hitscan`](Self::Hitscan) is handled by this
-/// crate; the others are named so data files can already declare them.
+/// What a weapon fires. [`Hitscan`](Self::Hitscan) goes through
+/// [`fire`](crate::shot::fire), [`Projectile`](Self::Projectile) through
+/// [`launch`](crate::projectile::launch) and [`Melee`](Self::Melee) through
+/// [`melee_attack`](crate::melee::melee_attack); `Beam` is only named.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WeaponKind {
     Hitscan,
@@ -82,15 +84,68 @@ pub struct SightDef {
     pub speed_multiplier: f32,
 }
 
-/// Projectile block, read by lot 4.5.
+fn default_radius() -> f32 {
+    0.1
+}
+
+fn default_restitution() -> f32 {
+    0.5
+}
+
+fn default_exponent() -> f32 {
+    1.5
+}
+
+/// Projectile block (lot 4.5). Per tick the projectile accelerates by
+/// `a = gravity * g - drag * |v| * v` (g being the world's gravity vector).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectileDef {
     /// Muzzle speed, m/s.
     pub speed: f32,
-    /// Gravity multiplier.
+    /// k_g: gravity multiplier.
     pub gravity: f32,
     /// Lifetime, seconds.
     pub lifetime: f32,
+    /// k_d: quadratic drag coefficient, 1/m (0 = none).
+    #[serde(default)]
+    pub drag: f32,
+    /// Radius of the swept sphere, metres.
+    #[serde(default = "default_radius")]
+    pub radius: f32,
+    /// Number of bounces on walls before the projectile detonates.
+    #[serde(default)]
+    pub bounces: u32,
+    /// Fraction of the speed kept by a bounce, in `0..=1` (decision: the
+    /// plan gives none, 0.5 by default).
+    #[serde(default = "default_restitution")]
+    pub restitution: f32,
+    /// Blast released when the projectile ends (impact, last bounce or
+    /// timeout). Without it a player contact deals `damage.base` directly.
+    #[serde(default)]
+    pub explosion: Option<ExplosionDef>,
+}
+
+/// Area blast: damage `D0 * (1 - d/R)^p` and knockback `K * (1 - d/R)`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExplosionDef {
+    /// R: blast radius, metres.
+    pub radius: f32,
+    /// D0: damage at the centre.
+    pub damage: f32,
+    /// p: falloff exponent of the damage (decision: 1.5 by default).
+    #[serde(default = "default_exponent")]
+    pub exponent: f32,
+    /// K: knockback speed at the centre, m/s.
+    pub knockback: f32,
+}
+
+/// Melee block (lot 4.5): a short-range arc in front of the eye.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MeleeDef {
+    /// Reach from the eye to the surface of the target, metres.
+    pub range: f32,
+    /// Full opening angle of the arc, radians.
+    pub arc: f32,
 }
 
 fn default_burst_count() -> u32 {
@@ -130,9 +185,12 @@ pub struct WeaponDef {
     pub spread: SpreadDef,
     pub recoil: RecoilDef,
     pub sight: SightDef,
-    /// Read by lot 4.5.
+    /// Required for [`WeaponKind::Projectile`].
     #[serde(default)]
     pub projectile: Option<ProjectileDef>,
+    /// Required for [`WeaponKind::Melee`]; the cooldown is `60 / rpm`.
+    #[serde(default)]
+    pub melee: Option<MeleeDef>,
 }
 
 /// A weapon file that cannot be used.
@@ -216,11 +274,43 @@ impl WeaponDef {
         if !(self.reload_time >= 0.0 && self.draw_time >= 0.0) {
             return bad("reload and draw times must be non-negative");
         }
+        match (self.kind, &self.projectile, &self.melee) {
+            (WeaponKind::Projectile, None, _) => {
+                return bad("projectile weapon needs a projectile block")
+            }
+            (WeaponKind::Melee, _, None) => return bad("melee weapon needs a melee block"),
+            _ => {}
+        }
+        if let Some(p) = &self.projectile {
+            if !(finite_pos(p.speed) && finite_pos(p.lifetime) && finite_pos(p.radius)) {
+                return bad("projectile speed, lifetime and radius must be positive");
+            }
+            if !(p.gravity.is_finite() && p.drag.is_finite() && p.drag >= 0.0) {
+                return bad("projectile gravity must be finite and drag non-negative");
+            }
+            if !(0.0..=1.0).contains(&p.restitution) {
+                return bad("projectile restitution must be in 0..=1");
+            }
+            if let Some(e) = &p.explosion {
+                if !(finite_pos(e.radius) && finite_pos(e.exponent)) {
+                    return bad("explosion radius and exponent must be positive");
+                }
+                let ok = |v: f32| v.is_finite() && v >= 0.0;
+                if !(ok(e.damage) && ok(e.knockback)) {
+                    return bad("explosion damage and knockback must be non-negative");
+                }
+            }
+        }
+        if let Some(m) = &self.melee {
+            if !(finite_pos(m.range) && finite_pos(m.arc) && m.arc <= std::f32::consts::TAU) {
+                return bad("melee range must be positive and arc in (0, 2 pi]");
+            }
+        }
         Ok(())
     }
 
-    /// The weapons shipped with the crate: rifle, pistol and shotgun
-    /// (decision: example values, the class and loadout numbers belong to
+    /// The weapons shipped with the crate: rifle, pistol, shotgun, rocket
+    /// launcher, grenade launcher and knife (decision: example values, the class and loadout numbers belong to
     /// lot 4.6).
     ///
     /// # Panics
@@ -231,6 +321,9 @@ impl WeaponDef {
             include_str!("../weapons/rifle.ron"),
             include_str!("../weapons/pistol.ron"),
             include_str!("../weapons/shotgun.ron"),
+            include_str!("../weapons/rocket_launcher.ron"),
+            include_str!("../weapons/grenade_launcher.ron"),
+            include_str!("../weapons/knife.ron"),
         ]
         .into_iter()
         .map(|t| Self::from_ron(t).expect("embedded weapon file is valid"))
@@ -245,10 +338,12 @@ mod tests {
     #[test]
     fn builtin_weapons_load_and_are_valid() {
         let all = WeaponDef::builtin();
-        assert_eq!(all.len(), 3);
+        assert_eq!(all.len(), 6);
         assert!((all[0].interval() - 0.1).abs() < 1e-9);
         assert_eq!(all[2].pellets, 8);
-        assert!(all.iter().all(|w| w.kind == WeaponKind::Hitscan));
+        assert!(all[..3].iter().all(|w| w.kind == WeaponKind::Hitscan));
+        assert_eq!(all[3].kind, WeaponKind::Projectile);
+        assert_eq!(all[5].kind, WeaponKind::Melee);
     }
 
     #[test]
