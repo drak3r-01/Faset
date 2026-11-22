@@ -1,0 +1,48 @@
+// Bot difficulty levels (lot 4.10). Units: second, radian, metre per second.
+// `aim_sigma` and `aim_tau` are the standard deviation and the correlation time
+// of the aim error (Ornstein-Uhlenbeck process); `aim_spring` is the stiffness
+// of the angular spring (rad/s per rad) and `aim_max_speed` its rotation speed
+// cap. `fire_tolerance` scales the hit radius used to decide when to shoot.
+// `lead` is the fraction of the target velocity the bot leads by (1 = full).
+(
+    easy: (
+        reaction_s: 0.6,
+        aim_sigma: 0.06,
+        aim_tau: 0.35,
+        aim_spring: 7.0,
+        aim_max_speed: 3.5,
+        fire_tolerance: 1.8,
+        lead: 0.5,
+        moves: (bunny_hop: false, slide: false, slide_hop: false, dodge: false),
+    ),
+    normal: (
+        reaction_s: 0.4,
+        aim_sigma: 0.035,
+        aim_tau: 0.3,
+        aim_spring: 11.0,
+        aim_max_speed: 6.0,
+        fire_tolerance: 1.4,
+        lead: 0.8,
+        moves: (bunny_hop: false, slide: false, slide_hop: false, dodge: true),
+    ),
+    hard: (
+        reaction_s: 0.25,
+        aim_sigma: 0.018,
+        aim_tau: 0.25,
+        aim_spring: 16.0,
+        aim_max_speed: 9.0,
+        fire_tolerance: 1.1,
+        lead: 1.0,
+        moves: (bunny_hop: false, slide: true, slide_hop: false, dodge: true),
+    ),
+    expert: (
+        reaction_s: 0.15,
+        aim_sigma: 0.006,
+        aim_tau: 0.2,
+        aim_spring: 28.0,
+        aim_max_speed: 15.0,
+        fire_tolerance: 0.9,
+        lead: 1.0,
+        moves: (bunny_hop: true, slide: true, slide_hop: true, dodge: true),
+    ),
+)

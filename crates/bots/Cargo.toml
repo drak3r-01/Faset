@@ -1,6 +1,6 @@
 [package]
 name = "faset-bots"
-description = "Bot navigation: automatic navigation graph from a map, A* pathfinding, path smoothing."
+description = "Bots: navigation graph and A* (4.9), utility decisions, delayed perception, aim and difficulty levels (4.10)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,5 +10,10 @@ publish.workspace = true
 faset-core.workspace = true
 faset-sim.workspace = true
 faset-mapfmt.workspace = true
+faset-protocol.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 parry3d = "0.31"
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+libm = "0.2"
