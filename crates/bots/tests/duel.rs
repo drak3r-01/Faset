@@ -29,7 +29,7 @@ fn play_for(levels: [Level; 2], seed: u64, seconds: f64) -> Outcome {
         Fighter::new(1, levels[0], seed.wrapping_mul(2) + 1, spawn(0)),
         Fighter::new(2, levels[1], seed.wrapping_mul(2) + 2, spawn(1)),
     ]);
-    while arena.time() < MATCH_SECONDS && arena.fighters.iter().all(|x| x.kills < SCORE_LIMIT) {
+    while arena.time() < seconds && arena.fighters.iter().all(|x| x.kills < SCORE_LIMIT) {
         arena.step();
     }
     let k = |i: usize| &arena.fighters[i];
