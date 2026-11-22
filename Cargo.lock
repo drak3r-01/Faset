@@ -941,6 +941,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "faset-mode-fps"
+version = "0.0.1-rc.1"
+dependencies = [
+ "faset-core",
+ "faset-minigame-api",
+ "faset-server",
+ "faset-sim",
+ "libm",
+ "parry3d",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "faset-mode-race"
 version = "0.0.1-rc.1"
 dependencies = [

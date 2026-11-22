@@ -1,0 +1,34 @@
+// Sidearm: semi-automatic, 300 rpm.
+(
+    id: "pistol",
+    kind: Hitscan,
+    fire_mode: Semi,
+    rpm: 300.0,
+    pellets: 1,
+    damage: (
+        base: 30.0,
+        head_multiplier: 2.5,
+        falloff_start: 15.0,
+        falloff_end: 45.0,
+        min_multiplier: 0.4,
+    ),
+    magazine: 12,
+    reserve: 60,
+    reload_time: 1.5,
+    draw_time: 0.3,
+    range: 200.0,
+    spread: (
+        sigma_base: 0.002,
+        sigma_max: 0.04,
+        delta_beta: 0.012,
+        tau: 0.3,
+        move_multiplier: 1.8,
+        air_multiplier: 2.5,
+    ),
+    recoil: (
+        pattern: [(0.0, 0.02)],
+        random_fraction: 0.25,
+        omega: 16.0,
+    ),
+    sight: (fov: 1.2, spread_multiplier: 0.7, speed_multiplier: 0.9),
+)
