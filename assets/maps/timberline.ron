@@ -1,0 +1,91 @@
+// Timberline: sawmill in a pine forest. Team map, 16 players, Rotate180 (the
+// file describes the team A half, z >= 0). Principle: elevated central point
+// to hold. The sawmill stands on a 4 m timber platform in the clearing,
+// reached by four ramps; the "hill" objective covers its floor. Forest and a
+// lumber shed fill the approaches.
+//
+//   z=35 +------------------------------------------+
+//        |  A   A   A   A   A   A   A   A  (z=30)   |
+//        | [shed]      ^ north ramp      trees      |
+//   z=10 |      +------+--+------+                  |
+//        |trees | platform 4 m   |< east ramp       |
+//        |      |  [ sawmill ]   |                  |
+//    z=0 +------+----------------+------------------+  rotation centre
+Map(
+    format_version: 1,
+    meta: (
+        name: "Timberline",
+        author: "Faset",
+        description: "Hold the raised sawmill in a pine clearing while the forest closes in.",
+        modes: ["fps"],
+        players: (2, 16),
+    ),
+    theme: (
+        ambience: "day",
+        sky: "overcast",
+        weather: [(from_s: 0.0, weather: "clear"), (from_s: 200.0, weather: "rain")],
+        palette: "nature",
+    ),
+    symmetry: Rotate180,
+    brushes: [
+        // Forest floor and cliffs.
+        Box(min: (-70, -2, 0), max: (70, 0, 70), material: "sand"),
+        Box(min: (-70, 0, 0), max: (-68, 20, 70), material: "concrete"),
+        Box(min: (68, 0, 0), max: (70, 20, 70), material: "concrete"),
+        Box(min: (-70, 0, 68), max: (70, 20, 70), material: "concrete"),
+        // Central platform (4 m) and its ramps.
+        Box(min: (-20, 0, 0), max: (20, 8, 20), material: "wood"),
+        Wedge(min: (-4, 0, 20), max: (4, 8, 36), rise: NegZ, material: "wood"),
+        Wedge(min: (20, 0, 4), max: (36, 8, 12), rise: NegX, material: "wood"),
+        // Sawmill hut on the platform: walls, door lintel, roof.
+        Box(min: (-12, 8, 11), max: (-2, 16, 12), material: "wood"),
+        Box(min: (2, 8, 11), max: (12, 16, 12), material: "wood"),
+        Box(min: (-2, 13, 11), max: (2, 16, 12), material: "wood"),
+        Box(min: (11, 8, 4), max: (12, 16, 12), material: "wood"),
+        Box(min: (-12, 8, 0), max: (-11, 16, 12), material: "wood"),
+        Box(min: (-12, 16, 0), max: (12, 17, 12), material: "wood"),
+        // Saw bench and blade.
+        Box(min: (-6, 8, -2), max: (6, 10, 2), material: "metal"),
+        Cylinder(min: (-1, 10, -2), max: (1, 14, 2), axis: X, sides: 12, material: "metal"),
+        // Log fences at the platform edge (low cover).
+        Box(min: (12, 8, 18), max: (20, 10, 19), material: "wood"),
+        Box(min: (-20, 8, 18), max: (-12, 10, 19), material: "wood"),
+        // Lumber shed near the spawns.
+        Box(min: (-56, 0, 32), max: (-40, 8, 44), material: "wood"),
+    ],
+    props: [
+        (recipe: "tree_pine", at: (-25.0, 0.0, 8.0), yaw: 0.0),
+        (recipe: "tree_pine", at: (-14.0, 0.0, 14.0), yaw: 40.0),
+        (recipe: "tree_pine", at: (22.0, 0.0, 14.0), yaw: 10.0),
+        (recipe: "tree_pine", at: (27.0, 0.0, 3.0), yaw: 70.0),
+        (recipe: "tree_pine", at: (14.0, 0.0, 22.0), yaw: 20.0),
+        (recipe: "tree_pine", at: (-8.0, 0.0, 24.0), yaw: 50.0),
+        (recipe: "tree_pine", at: (30.0, 0.0, 22.0), yaw: 0.0),
+        (recipe: "log_pile", at: (-17.0, 0.0, 26.0), yaw: 90.0),
+        (recipe: "stump", at: (6.0, 0.0, 16.0), yaw: 0.0),
+        (recipe: "boulder_pile", at: (-30.0, 0.0, 14.0), yaw: 30.0),
+    ],
+    spawns: [
+        (at: (-21.0, 0.0, 30.0), yaw: 0.0, team: A),
+        (at: (-15.0, 0.0, 30.0), yaw: 0.0, team: A),
+        (at: (-9.0, 0.0, 30.0), yaw: 0.0, team: A),
+        (at: (-3.0, 0.0, 30.0), yaw: 0.0, team: A),
+        (at: (3.0, 0.0, 30.0), yaw: 0.0, team: A),
+        (at: (9.0, 0.0, 30.0), yaw: 0.0, team: A),
+        (at: (15.0, 0.0, 30.0), yaw: 0.0, team: A),
+        (at: (21.0, 0.0, 30.0), yaw: 0.0, team: A),
+    ],
+    pickups: [
+        (kind: Health, at: (-20.0, 0.5, 10.0), respawn_s: 30),
+        (kind: Armor, at: (8.0, 4.5, 8.0), respawn_s: 45),
+        (kind: Weapon("assault_rifle"), at: (25.0, 0.5, 10.0), respawn_s: 40),
+    ],
+    zones: [
+        Box(min: (-72, -20, 0), max: (72, -4, 72), kind: KillVolume),
+        Box(min: (-10, 8, 0), max: (10, 16, 10), kind: Objective(id: "hill")),
+    ],
+    lights: [
+        (at: (0.0, 7.0, 0.0), color: (1.0, 0.75, 0.45), intensity: 1.5, range: 12.0),
+        (at: (-24.0, 3.0, 19.0), color: (1.0, 0.75, 0.45), intensity: 1.0, range: 10.0),
+    ],
+)

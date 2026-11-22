@@ -1,0 +1,88 @@
+// Mesa Fort: two adobe forts on mesas at the ends of a canyon. Team map, 16
+// players, MirrorZ (the file describes the team A half, z >= 0). Principle:
+// symmetric bases linked by a bridge. A 4 m railed bridge at mesa height
+// (6 m) spans the canyon; the canyon floor below is the slow, covered route,
+// joined to each mesa by two ramps.
+//
+//   z=45 +----------------------------------+
+//        |    [tower]  fort (8 spawns)      |  mesa top 6 m
+//   z=24 |  ====wall====  gate  ====wall==  |
+//   z=20 +--ramp--------+bridge+-----ramp---+
+//        |   canyon     | 6 m  |   canyon   |  canyon floor 0 m
+//    z=0 +--------------+------+------------+  mirror plane
+Map(
+    format_version: 1,
+    meta: (
+        name: "Mesa Fort",
+        author: "Faset",
+        description: "Twin canyon forts joined by a single exposed bridge and a covered floor.",
+        modes: ["fps"],
+        players: (2, 16),
+    ),
+    theme: (
+        ambience: "sunset",
+        sky: "clear",
+        weather: [(from_s: 0.0, weather: "clear"), (from_s: 240.0, weather: "sand")],
+        palette: "desert",
+    ),
+    symmetry: MirrorZ,
+    brushes: [
+        // Canyon floor, cliffs and back wall.
+        Box(min: (-40, -2, 0), max: (40, 0, 90), material: "sand"),
+        Box(min: (-40, 0, 0), max: (-36, 28, 90), material: "sand"),
+        Box(min: (36, 0, 0), max: (40, 28, 90), material: "sand"),
+        Box(min: (-40, 0, 88), max: (40, 28, 90), material: "sand"),
+        // Mesa (6 m) and its ramps down to the canyon.
+        Box(min: (-36, 0, 40), max: (36, 12, 88), material: "sand"),
+        Wedge(min: (-34, 0, 16), max: (-24, 12, 40), rise: PosZ, material: "sand"),
+        Wedge(min: (24, 0, 16), max: (34, 12, 40), rise: PosZ, material: "sand"),
+        // Bridge deck, railings and central pier.
+        Box(min: (-4, 11, 0), max: (4, 12, 40), material: "wood"),
+        Box(min: (-5, 12, 0), max: (-4, 14, 40), material: "wood"),
+        Box(min: (4, 12, 0), max: (5, 14, 40), material: "wood"),
+        Box(min: (-2, 0, 18), max: (2, 11, 22), material: "brick"),
+        // Fort walls (4 m) with a 4 m gate.
+        Box(min: (-28, 12, 48), max: (-4, 20, 49), material: "brick"),
+        Box(min: (4, 12, 48), max: (28, 20, 49), material: "brick"),
+        Box(min: (-28, 12, 48), max: (-27, 20, 80), material: "brick"),
+        Box(min: (27, 12, 48), max: (28, 20, 80), material: "brick"),
+        Box(min: (-28, 12, 80), max: (28, 20, 81), material: "brick"),
+        // Watchtower (10 m) and its stairs.
+        Box(min: (-27, 12, 72), max: (-19, 20, 80), material: "brick"),
+        Stairs(min: (-19, 12, 74), max: (-3, 20, 80), rise: NegX, steps: 8, material: "wood"),
+        // Canyon cover.
+        Box(min: (-24, 0, 4), max: (-16, 4, 10), material: "sand"),
+        Box(min: (16, 0, 24), max: (22, 2, 28), material: "sand"),
+        Box(min: (10, 0, 2), max: (14, 2, 4), material: "wood"),
+    ],
+    props: [
+        (recipe: "rock_boulder", at: (-8.0, 0.0, 12.0), yaw: 0.0),
+        (recipe: "rock_boulder", at: (12.0, 0.0, 9.0), yaw: 60.0),
+        (recipe: "cactus_large", at: (-14.0, 0.0, 15.0), yaw: 0.0),
+        (recipe: "wagon_wreck", at: (8.0, 6.0, 22.0), yaw: 20.0),
+        (recipe: "water_barrel", at: (-10.0, 6.0, 38.0), yaw: 0.0),
+    ],
+    spawns: [
+        (at: (-10.0, 6.0, 29.0), yaw: 0.0, team: A),
+        (at: (-6.0, 6.0, 29.0), yaw: 0.0, team: A),
+        (at: (-2.0, 6.0, 29.0), yaw: 0.0, team: A),
+        (at: (2.0, 6.0, 29.0), yaw: 0.0, team: A),
+        (at: (6.0, 6.0, 29.0), yaw: 0.0, team: A),
+        (at: (10.0, 6.0, 29.0), yaw: 0.0, team: A),
+        (at: (-8.0, 6.0, 33.0), yaw: 0.0, team: A),
+        (at: (8.0, 6.0, 33.0), yaw: 0.0, team: A),
+    ],
+    pickups: [
+        (kind: Health, at: (0.0, 0.5, 5.0), respawn_s: 30),
+        (kind: Armor, at: (0.0, 6.5, 2.0), respawn_s: 45),
+        (kind: Health, at: (15.0, 6.5, 22.0), respawn_s: 30),
+        (kind: Weapon("precision_rifle"), at: (-11.5, 10.5, 38.0), respawn_s: 45),
+    ],
+    zones: [
+        Box(min: (-42, -20, 0), max: (42, -4, 92), kind: KillVolume),
+    ],
+    lights: [
+        (at: (0.0, 8.0, 30.0), color: (1.0, 0.7, 0.4), intensity: 1.5, range: 16.0),
+        (at: (0.0, 3.0, 10.0), color: (1.0, 0.6, 0.35), intensity: 1.0, range: 12.0),
+    ],
+)

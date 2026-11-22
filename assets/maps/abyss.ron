@@ -1,0 +1,93 @@
+// Abyss: underwater research base. Team map, 16 players, Rotate180 (the file
+// describes the team A half, z >= 0). Principle: tight interiors, submerged
+// exterior. Each base is a 3.5 m high interior (spawn rooms, an inner wall
+// with two doors, a 3 m corridor) opening through three doors onto a flooded
+// seabed in the middle, with a wreck, a reef wall and the central pylon.
+//
+//   z=30 +----------------------------------------------+
+//        | spawn room W  (A)  |  spawn room E (A)       |  ceiling 3.5 m
+//   z=18 |======]  [==========|===========]  [==========|  inner wall
+//        |          corridor (3 m)                      |
+//   z=14 |=====]  [=========]  [=========]  [===========|  front wall, 3 doors
+//        |   ~~~ water ~~~  [wreck]     [reef]   ~~~    |
+//    z=0 +---------------------(pylon)------------------+  rotation centre
+Map(
+    format_version: 1,
+    meta: (
+        name: "Abyss",
+        author: "Faset",
+        description: "Cramped corridors of a deep-sea base around a flooded seabed.",
+        modes: ["fps"],
+        players: (2, 16),
+    ),
+    theme: (
+        ambience: "underwater",
+        palette: "underwater",
+    ),
+    symmetry: Rotate180,
+    brushes: [
+        // Seabed and outer walls.
+        Box(min: (-60, -2, 0), max: (60, 0, 60), material: "sand"),
+        Box(min: (-60, 0, 0), max: (-58, 28, 60), material: "concrete"),
+        Box(min: (58, 0, 0), max: (60, 28, 60), material: "concrete"),
+        Box(min: (-60, 0, 58), max: (60, 28, 60), material: "concrete"),
+        // Base ceiling (3.5 m).
+        Box(min: (-58, 7, 28), max: (58, 9, 58), material: "metal"),
+        // Front wall (z 14..14.5), doors at x = -20, 0, 20.
+        Box(min: (-58, 0, 28), max: (-42, 7, 29), material: "metal"),
+        Box(min: (-38, 0, 28), max: (-2, 7, 29), material: "metal"),
+        Box(min: (2, 0, 28), max: (38, 7, 29), material: "metal"),
+        Box(min: (42, 0, 28), max: (58, 7, 29), material: "metal"),
+        Box(min: (-42, 5, 28), max: (-38, 7, 29), material: "hazard"),
+        Box(min: (-2, 5, 28), max: (2, 7, 29), material: "hazard"),
+        Box(min: (38, 5, 28), max: (42, 7, 29), material: "hazard"),
+        // Inner wall (z 17.5..18), doors at x = -11 and 11.
+        Box(min: (-58, 0, 35), max: (-24, 7, 36), material: "metal"),
+        Box(min: (-20, 0, 35), max: (20, 7, 36), material: "metal"),
+        Box(min: (24, 0, 35), max: (58, 7, 36), material: "metal"),
+        Box(min: (-24, 5, 35), max: (-20, 7, 36), material: "hazard"),
+        Box(min: (20, 5, 35), max: (24, 7, 36), material: "hazard"),
+        // Divider between the two spawn rooms, with a 3 m opening.
+        Box(min: (-1, 0, 36), max: (1, 7, 44), material: "metal"),
+        Box(min: (-1, 0, 50), max: (1, 7, 58), material: "metal"),
+        // Spawn room pillars.
+        Box(min: (-32, 0, 44), max: (-30, 7, 46), material: "grid"),
+        Box(min: (30, 0, 44), max: (32, 7, 46), material: "grid"),
+        // Seabed: wreck hull, reef wall, central pylon.
+        Box(min: (-28, 0, 8), max: (-8, 6, 16), material: "wood"),
+        Box(min: (16, 0, 4), max: (24, 10, 12), material: "concrete"),
+        Cylinder(min: (-4, 0, -4), max: (4, 12, 4), axis: Y, sides: 12, material: "metal"),
+    ],
+    props: [
+        (recipe: "coral_mound", at: (4.0, 0.0, 9.0), yaw: 0.0),
+        (recipe: "giant_clam", at: (-20.0, 0.0, 3.0), yaw: 40.0),
+        (recipe: "kelp_stalk", at: (26.0, 0.0, 2.0), yaw: 0.0),
+        (recipe: "anchor", at: (-4.0, 0.0, 12.0), yaw: 80.0),
+        (recipe: "sunken_chest", at: (12.0, 0.0, 1.0), yaw: 15.0),
+    ],
+    spawns: [
+        (at: (-26.0, 0.0, 21.0), yaw: 0.0, team: A),
+        (at: (-20.0, 0.0, 25.0), yaw: 0.0, team: A),
+        (at: (-12.0, 0.0, 21.0), yaw: 0.0, team: A),
+        (at: (-6.0, 0.0, 26.0), yaw: 0.0, team: A),
+        (at: (6.0, 0.0, 21.0), yaw: 0.0, team: A),
+        (at: (12.0, 0.0, 26.0), yaw: 0.0, team: A),
+        (at: (20.0, 0.0, 21.0), yaw: 0.0, team: A),
+        (at: (26.0, 0.0, 25.0), yaw: 0.0, team: A),
+    ],
+    pickups: [
+        (kind: Health, at: (-25.0, 0.5, 16.0), respawn_s: 30),
+        (kind: Armor, at: (10.0, 0.5, 8.5), respawn_s: 45),
+        (kind: Weapon("smg"), at: (-9.0, 0.5, 10.0), respawn_s: 40),
+    ],
+    zones: [
+        Box(min: (-62, -20, 0), max: (62, -4, 62), kind: KillVolume),
+        Box(min: (-58, 0, 0), max: (58, 24, 28), kind: Water),
+    ],
+    lights: [
+        (at: (0.0, 3.0, 16.0), color: (0.6, 0.9, 1.0), intensity: 1.2, range: 12.0),
+        (at: (-15.0, 3.0, 24.0), color: (0.6, 0.9, 1.0), intensity: 1.0, range: 10.0),
+        (at: (15.0, 3.0, 24.0), color: (0.6, 0.9, 1.0), intensity: 1.0, range: 10.0),
+        (at: (0.0, 8.0, 6.0), color: (0.2, 0.6, 0.8), intensity: 1.5, range: 20.0),
+    ],
+)
