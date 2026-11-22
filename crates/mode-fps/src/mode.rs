@@ -5,11 +5,11 @@
 //! score. Rules of play (deathmatch, teams, pickups, bonuses) come with lot
 //! 4.7 on top of [`FpsRules`].
 //!
-//! Gap (reported, not worked around): [`GameMode`] has no hook for messages
-//! sent by clients and [`Match`](faset_minigame_api::Match) hides its mode
-//! instance, so a host cannot hand a [`FireMsg`](crate::FireMsg) to the mode
-//! it registered. Until the framework gets that hook, the host drives
-//! [`FpsRules`] itself ([`FpsRules::fire`], [`FpsRules::step`]).
+//! Lot 4.11: each tick resolves the commands the host simulated
+//! ([`FpsRules::command`]: the protocol's fire, sight and reload bits, the
+//! weapon slot, the weapon kind choosing hitscan, projectile or melee),
+//! steps the live projectiles, then runs the damage chain; respawns become
+//! spawn requests and knockback host pushes.
 
 use std::collections::BTreeMap;
 
@@ -17,10 +17,11 @@ use faset_core::glam::Vec3;
 use faset_core::NetId;
 use faset_minigame_api::{
     GameEvent, GameMode, GameModeClient, HudCtx, MatchResult, ModeCtx, ModeDescriptor, SettingKind,
-    SettingSpec, TeamId, TIME_LIMIT_SETTING,
+    SettingSpec, TeamId, Vitals, TIME_LIMIT_SETTING,
 };
 use faset_sim::StaticWorld;
 
+use crate::drive;
 use crate::hud::{HudInput, HudModel, HudState};
 use crate::message::ServerMsg;
 use crate::rules::{FpsHost, FpsRules};
@@ -156,6 +157,12 @@ impl FpsHost for CtxHost<'_, '_> {
     fn emit(&mut self, bytes: Vec<u8>) {
         self.0.emit(GameEvent::Mode(bytes));
     }
+    fn broadcast(&mut self, event: GameEvent) {
+        self.0.broadcast(event);
+    }
+    fn push(&mut self, player: NetId, delta_v: Vec3) {
+        self.0.push_player(player, delta_v);
+    }
 }
 
 impl GameMode for FpsMode {
@@ -198,7 +205,10 @@ impl GameMode for FpsMode {
 
     fn on_tick(&mut self, ctx: &mut ModeCtx) {
         let now = ctx.tick().seconds();
+        let calls = drive::resolve(&mut self.rules, ctx);
+        drive::replay(calls, &mut CtxHost(ctx));
         self.rules.step(now, &mut CtxHost(ctx));
+        drive::finish(&mut self.rules, ctx);
     }
 
     fn on_event(&mut self, _ctx: &mut ModeCtx, _event: &GameEvent) {}
@@ -209,6 +219,16 @@ impl GameMode for FpsMode {
 
     fn replicated_state(&self) -> Vec<u8> {
         self.encode()
+    }
+
+    fn vitals(&self, player: NetId) -> Option<Vitals> {
+        let c = self.rules.combatant(player)?;
+        Some(Vitals {
+            health: c.health,
+            max_health: c.max_health,
+            alive: c.alive(),
+            team: None,
+        })
     }
 }
 

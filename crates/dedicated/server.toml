@@ -7,10 +7,15 @@ name = "Faset server"
 port = 7777
 # Maximum players, humans and bots together (1 to 64).
 max_players = 16
-# Game mode id sent to clients in the handshake.
+# Game mode id sent to clients in the handshake when no game mode is hosted.
 mode = 0
-# Maps played in order. Names resolve against the maps embedded in the binary,
-# then the `maps/` folder next to the executable.
+# Hosted game mode: "fps.ffa" (free for all) or "fps.team" (team deathmatch).
+# Empty: no match, players move freely.
+game_mode = ""
+# World seed (weapon spread, respawn draws).
+seed = 0
+# Maps played in order. Names resolve against the maps embedded in the binary
+# ("test-arena", "example"), then the `maps/` folder next to the executable.
 rotation = ["test-arena"]
 # Seconds each map is played before the rotation advances.
 rotation_seconds = 300

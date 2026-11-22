@@ -27,6 +27,7 @@
 pub mod balance;
 pub mod class;
 pub mod damage;
+mod drive;
 pub mod explosion;
 pub mod hud;
 pub mod melee;
@@ -70,7 +71,10 @@ pub use projectile::{
 };
 pub use recoil::RecoilState;
 pub use respawn::{choose_spawn, visible_from, BEST_COUNT};
-pub use rules::{FireError, FpsHost, FpsRules, ShotContext, Slot};
+pub use rules::{
+    present_hitboxes, shooter_in, ClassMsg, CommandEnv, FireError, FpsHost, FpsRules, Shooter,
+    ShotContext, Slot, DEFAULT_CLASS, KILL_VOLUME_DAMAGE, MOVING_SPEED,
+};
 pub use shot::{
     fire, ray_sphere, PelletReport, PlayerContact, RayCaster, RewindCaster, SceneCaster,
     ServerCaster, ShotInput, ShotReject, ShotReport, WeaponState, CADENCE_TOLERANCE, SPRAY_RESET,

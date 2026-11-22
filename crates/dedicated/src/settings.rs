@@ -38,6 +38,12 @@ pub struct Cli {
     /// Game mode id.
     #[arg(long)]
     pub mode: Option<u8>,
+    /// Hosted game mode (`fps.ffa`, `fps.team`); empty for none.
+    #[arg(long)]
+    pub game_mode: Option<String>,
+    /// World seed.
+    #[arg(long)]
+    pub seed: Option<u64>,
     /// Map rotation, comma separated.
     #[arg(long, value_delimiter = ',')]
     pub rotation: Option<Vec<String>>,
@@ -68,8 +74,13 @@ pub struct Settings {
     pub port: u16,
     /// Maximum players, humans and bots.
     pub max_players: usize,
-    /// Game mode id.
+    /// Game mode id sent in the handshake when no `game_mode` is hosted.
     pub mode: u8,
+    /// Hosted game mode, by descriptor id (`fps.ffa`, `fps.team`; lot
+    /// 4.11). Empty (the default): no match, players move freely.
+    pub game_mode: String,
+    /// World seed (spread, respawn draws).
+    pub seed: u64,
     /// Map names, played in order.
     pub rotation: Vec<String>,
     /// Seconds per map.
@@ -89,6 +100,8 @@ impl Default for Settings {
             port: 7777,
             max_players: 16,
             mode: 0,
+            game_mode: String::new(),
+            seed: 0,
             rotation: vec![crate::maps::TEST_ARENA.into()],
             rotation_seconds: 300,
             bots: 0,
@@ -134,6 +147,8 @@ impl Settings {
             port,
             max_players,
             mode,
+            game_mode,
+            seed,
             rotation,
             rotation_seconds,
             bots,

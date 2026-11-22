@@ -49,7 +49,7 @@ mod server;
 mod services;
 pub mod snapshot;
 
-pub use services::ModeServices;
+pub use services::{ModeServices, VIEW_DELAY};
 
 pub use clock::{TickClock, MAX_CATCH_UP};
 pub use commands::CommandBuffer;

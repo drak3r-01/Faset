@@ -341,9 +341,9 @@ impl Server {
     /// Whether `player` may not move this tick: the match phase freezes
     /// everyone, or the mode says the player is dead.
     fn frozen(&self, player: NetId) -> bool {
-        self.game.as_ref().is_some_and(|g| {
-            !g.movement_allowed() || g.vitals(player).is_some_and(|v| !v.alive)
-        })
+        self.game
+            .as_ref()
+            .is_some_and(|g| !g.movement_allowed() || g.vitals(player).is_some_and(|v| !v.alive))
     }
 
     /// Advances exactly one tick:
@@ -656,7 +656,10 @@ impl Server {
                     return self.reject(conn, RejectReason::ServerFull);
                 };
                 let hello = Message::ServerHello {
-                    mode: self.game.as_ref().map_or(self.config.mode, |g| g.mode_id().0),
+                    mode: self
+                        .game
+                        .as_ref()
+                        .map_or(self.config.mode, |g| g.mode_id().0),
                     player_id: id,
                     map_fingerprint: self.config.map.fingerprint,
                     tick_rate: self.config.tick_rate,

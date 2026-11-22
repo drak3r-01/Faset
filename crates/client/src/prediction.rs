@@ -402,7 +402,11 @@ fn simulate(
     world.step(&[(me, applied)]);
     world.drain_zone_events();
     let (state, controller) = read_state(world, me, command);
-    (state, controller, world.zone_tracker(me).unwrap_or_default())
+    (
+        state,
+        controller,
+        world.zone_tracker(me).unwrap_or_default(),
+    )
 }
 
 impl Prediction {
@@ -838,8 +842,14 @@ mod tests {
         assert_eq!(p.state().unwrap(), *replay.last().unwrap());
         // The same jump, 20 cm further.
         let shifted = p.state().unwrap().position;
-        assert!((shifted.y - uncorrected.y).abs() < 1e-4, "{shifted} {uncorrected}");
-        assert!((shifted.z - uncorrected.z - 0.2).abs() < 1e-4, "{shifted} {uncorrected}");
+        assert!(
+            (shifted.y - uncorrected.y).abs() < 1e-4,
+            "{shifted} {uncorrected}"
+        );
+        assert!(
+            (shifted.z - uncorrected.z - 0.2).abs() < 1e-4,
+            "{shifted} {uncorrected}"
+        );
         let confirm = snapshot(41, 40, p.state().unwrap());
         assert!(p.reconcile(&confirm).is_some_and(|o| !o.corrected));
     }
@@ -871,7 +881,10 @@ mod tests {
             p.predict(cmd(t, 0, 127)).unwrap();
         }
         let v = p.state().unwrap().velocity;
-        assert!((v.length() - 2.0 * MoveParams::default().run_speed).abs() < 0.05, "{v}");
+        assert!(
+            (v.length() - 2.0 * MoveParams::default().run_speed).abs() < 0.05,
+            "{v}"
+        );
     }
 
     #[test]

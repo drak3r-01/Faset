@@ -561,7 +561,10 @@ mod tests {
         // then a small difference (1 + 12 bits).
         assert_eq!(data.len(), (1 + 32 + 8 + 8 + 16 * 41usize).div_ceil(8));
         // A long move sends the full axis (1 + 24 bits).
-        let far = snap(4, (1..=16).map(|i| entity(i, 100.0 + f32::from(i))).collect());
+        let far = snap(
+            4,
+            (1..=16).map(|i| entity(i, 100.0 + f32::from(i))).collect(),
+        );
         let Message::SnapshotDelta { data, .. } = enc.encode(&far).unwrap() else {
             panic!("expected a delta");
         };

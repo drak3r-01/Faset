@@ -9,18 +9,31 @@
 use std::collections::BTreeMap;
 
 use faset_core::glam::Vec3;
-use faset_core::{NetId, DT};
-use faset_minigame_api::TeamId;
+use faset_core::{NetId, Tick, DT};
+use faset_minigame_api::{GameEvent, TeamId};
+use faset_protocol::{InputCommand, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_SIGHT};
+use faset_server::{Hitbox, ModeServices};
+use faset_sim::components::STANDING_HEIGHT;
 use faset_sim::rng::Pcg32;
-use faset_sim::StaticWorld;
+use faset_sim::{StaticWorld, World};
 
-use crate::damage::{Combatant, DamageContext, DamageEvent, DamageOutcome, DEFAULT_HEALTH};
-use crate::message::{FireMsg, ServerMsg};
+use crate::class::{Catalog, ClassDef};
+use crate::damage::{
+    Combatant, DamageContext, DamageEvent, DamageOutcome, DamageType, HitZone, DEFAULT_HEALTH,
+};
+use crate::melee::{melee_attack, rewound_hitboxes};
+use crate::message::{FireMsg, ServerMsg, FLAG_FRESH_PRESS, FLAG_SIGHTED};
 use crate::pickup::{ActiveBonuses, PickupKind, ARMOUR_AMOUNT, HEAL_AMOUNT, MAX_ARMOUR};
+use crate::projectile::{catch_up_time, launch, Detonation, ProjectileSystem};
 use crate::respawn::choose_spawn;
-use crate::shot::{fire, RayCaster, ShotInput, ShotReject, ShotReport, WeaponState};
+use crate::shot::{
+    fire, RayCaster, RewindCaster, SceneCaster, ShotInput, ShotReject, ShotReport, WeaponState,
+};
 use crate::spread::{AimBasis, Stance};
-use crate::weapon::WeaponDef;
+use crate::weapon::{WeaponDef, WeaponKind};
+
+/// Lethal damage of a kill volume (lot 4.11, decision: any health dies).
+pub const KILL_VOLUME_DAMAGE: f32 = 100_000.0;
 
 /// What the rules need from the match around them.
 pub trait FpsHost {
@@ -40,6 +53,117 @@ pub trait FpsHost {
     fn feed(&mut self, text: String);
     /// Replicates mode bytes ([`ServerMsg`]) to every client.
     fn emit(&mut self, bytes: Vec<u8>);
+    /// Replicates a typed framework event (projectile creation, explosion;
+    /// lot 4.11). Ignored by default.
+    fn broadcast(&mut self, _event: GameEvent) {}
+    /// Adds `delta_v` to a player's velocity: knockback and the explosive
+    /// jump (lot 4.11). Ignored by default.
+    fn push(&mut self, _player: NetId, _delta_v: Vec3) {}
+}
+
+/// Where a shooter stands when its command is resolved (lot 4.11).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shooter {
+    /// Eye position.
+    pub eye: Vec3,
+    /// Movement state (the sight flag comes from the command).
+    pub stance: Stance,
+}
+
+/// What the rules need to resolve the commands of one tick (lot 4.11).
+pub struct CommandEnv<'a> {
+    /// Time of the tick, seconds.
+    pub now: f64,
+    /// The tick (projectile creation events carry it).
+    pub tick: u32,
+    /// Server seed of the match.
+    pub seed: u64,
+    pub statics: &'a StaticWorld,
+    /// The living players as they stand now, ascending id.
+    pub present: &'a [(NetId, Hitbox)],
+    /// The server's hitbox history and round trips: hitscan and melee are
+    /// resolved as the shooter saw the scene. Without it (headless tests)
+    /// they use `present`.
+    pub services: Option<&'a mut ModeServices>,
+}
+
+/// Mode messages a client sends to the FPS modes (lot 4.11).
+///
+/// Layout: tag 2 (1), class index (1, into the catalog's classes), secondary
+/// (1, 255 for the class default, else an index into the class's
+/// secondaries).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClassMsg {
+    pub class: u8,
+    pub secondary: Option<u8>,
+}
+
+impl ClassMsg {
+    const TAG: u8 = 2;
+
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        vec![Self::TAG, self.class, self.secondary.unwrap_or(u8::MAX)]
+    }
+
+    /// Inverse of [`encode`](Self::encode).
+    #[must_use]
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        match *bytes {
+            [Self::TAG, class, secondary] => Some(Self {
+                class,
+                secondary: (secondary != u8::MAX).then_some(secondary),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// Horizontal speed above which a shooter counts as moving for the spread,
+/// m/s (decision).
+pub const MOVING_SPEED: f32 = 1.0;
+
+/// The hitboxes of the players in `world` among `ids`, as the server
+/// records them (crouched and sliding players have the short body).
+#[must_use]
+pub fn present_hitboxes(
+    world: &World,
+    ids: impl IntoIterator<Item = NetId>,
+) -> Vec<(NetId, Hitbox)> {
+    let mut out: Vec<(NetId, Hitbox)> = ids
+        .into_iter()
+        .filter_map(|id| {
+            let hb = match world.controller_state(id) {
+                Some(s) => Hitbox {
+                    position: s.feet() + Vec3::Y * (STANDING_HEIGHT * 0.5),
+                    sliding: s.crouched,
+                },
+                None => Hitbox::standing(world.position(id)?),
+            };
+            Some((id, hb))
+        })
+        .collect();
+    out.sort_by_key(|(id, _)| *id);
+    out
+}
+
+/// Eye and stance of a player in `world`.
+#[must_use]
+pub fn shooter_in(world: &World, id: NetId) -> Option<Shooter> {
+    match world.controller_state(id) {
+        Some(s) => Some(Shooter {
+            eye: s.eye(),
+            stance: Stance {
+                moving: s.vel.x.hypot(s.vel.z) > MOVING_SPEED,
+                airborne: !s.on_ground,
+                sighted: false,
+            },
+        }),
+        None => Some(Shooter {
+            eye: Hitbox::standing(world.position(id)?).eye(),
+            stance: Stance::default(),
+        }),
+    }
 }
 
 /// One player of the FPS core.
@@ -51,6 +175,17 @@ pub struct Slot {
     pub weapon_index: usize,
     /// Timed bonuses (lot 4.7); lost on death.
     pub bonuses: ActiveBonuses,
+    /// Index of the class in the catalog, for catalog rules (lot 4.11).
+    pub class: Option<usize>,
+    /// Weapon indices the player carries: slot 0 the main weapon, slot 1
+    /// the secondary (lot 4.11). `weapon_index` is one of them.
+    pub loadout: Vec<usize>,
+    /// Loadout slot in hand.
+    pub active: usize,
+    /// States of the holstered weapons, by loadout slot.
+    pub stash: Vec<Option<WeaponState>>,
+    /// Buttons of the previous command (fresh press detection).
+    pub last_buttons: u16,
 }
 
 /// Circumstances of one shot, supplied by the host.
@@ -91,6 +226,15 @@ pub struct FpsRules {
     /// Score of a suicide (default -1).
     pub suicide_score: i32,
     now: f64,
+    /// Classes of the catalog (lot 4.11); empty for the plain weapon list.
+    classes: Vec<ClassDef>,
+    default_class: usize,
+    /// Class and secondary weapon index chosen by each player, applied at
+    /// its next spawn.
+    choices: BTreeMap<NetId, (usize, Option<usize>)>,
+    projectiles: ProjectileSystem,
+    /// Movement multipliers last asked of the host.
+    scales: BTreeMap<NetId, (f32, f32)>,
 }
 
 impl Default for FpsRules {
@@ -98,6 +242,10 @@ impl Default for FpsRules {
         Self::new(WeaponDef::builtin())
     }
 }
+
+/// Class chosen when a player has not picked one (decision: the all-round
+/// trooper).
+pub const DEFAULT_CLASS: &str = "trooper";
 
 impl FpsRules {
     /// Rules with `weapons` available; every player carries the first one
@@ -119,7 +267,102 @@ impl FpsRules {
             kill_score: 1,
             suicide_score: -1,
             now: 0.0,
+            classes: Vec::new(),
+            default_class: 0,
+            choices: BTreeMap::new(),
+            projectiles: ProjectileSystem::new(),
+            scales: BTreeMap::new(),
         }
+    }
+
+    /// Rules over a class catalog (lot 4.11): the weapon list is the
+    /// catalog's (id order), each player carries its class's main weapon
+    /// (slot 0) and a secondary (slot 1, the first allowed one unless it
+    /// chose another), with the class's health and speed. Players start as
+    /// [`DEFAULT_CLASS`].
+    #[must_use]
+    pub fn from_catalog(catalog: &Catalog) -> Self {
+        let mut rules = Self::new(catalog.weapons().cloned().collect());
+        rules.classes = catalog.classes().to_vec();
+        rules.default_class = rules
+            .classes
+            .iter()
+            .position(|c| c.id == DEFAULT_CLASS)
+            .unwrap_or(0);
+        rules
+    }
+
+    /// The classes of the catalog (empty without one).
+    #[must_use]
+    pub fn classes(&self) -> &[ClassDef] {
+        &self.classes
+    }
+
+    /// Index of the weapon `id` in the weapon list.
+    #[must_use]
+    pub fn weapon_index(&self, id: &str) -> Option<usize> {
+        self.weapons.iter().position(|w| w.id == id)
+    }
+
+    /// Records the class choice of a player (index into
+    /// [`classes`](Self::classes), and optionally an index into that
+    /// class's secondaries). It applies at the player's next spawn, or at
+    /// once when `now_if_idle` is given (outside play). Returns whether the
+    /// choice is valid.
+    pub fn choose_class(
+        &mut self,
+        player: NetId,
+        class: usize,
+        secondary: Option<usize>,
+        now_if_idle: Option<f64>,
+    ) -> bool {
+        let Some(def) = self.classes.get(class) else {
+            return false;
+        };
+        let secondary = match secondary {
+            None => None,
+            Some(i) => match def.secondaries.get(i).and_then(|s| self.weapon_index(s)) {
+                Some(w) => Some(w),
+                None => return false,
+            },
+        };
+        self.choices.insert(player, (class, secondary));
+        if let (Some(now), true) = (now_if_idle, self.slots.contains_key(&player)) {
+            let slot = self.fresh_slot(player, 0, now);
+            self.slots.insert(player, slot);
+        }
+        true
+    }
+
+    /// Weapons, health and class a player spawns with.
+    fn loadout_of(&self, player: NetId, weapon_index: usize) -> (Vec<usize>, f32, Option<usize>) {
+        if self.classes.is_empty() {
+            return (vec![weapon_index], DEFAULT_HEALTH, None);
+        }
+        let (c, secondary) = self
+            .choices
+            .get(&player)
+            .copied()
+            .unwrap_or((self.default_class, None));
+        let class = &self.classes[c];
+        let main = self.weapon_index(&class.main_weapon).unwrap_or(0);
+        let mut loadout = vec![main];
+        if let Some(s) =
+            secondary.or_else(|| class.secondaries.first().and_then(|s| self.weapon_index(s)))
+        {
+            loadout.push(s);
+        }
+        (loadout, class.health, Some(c))
+    }
+
+    /// Run speed factor of a player's class (1 without classes).
+    #[must_use]
+    pub fn class_speed(&self, player: NetId) -> f32 {
+        self.slots
+            .get(&player)
+            .and_then(|s| s.class)
+            .and_then(|c| self.classes.get(c))
+            .map_or(1.0, |c| c.speed_factor)
     }
 
     /// The weapon list.
@@ -147,32 +390,44 @@ impl FpsRules {
 
     /// A player enters, alive and protected, with a full first weapon.
     pub fn join(&mut self, player: NetId, now: f64) {
-        let slot = self.fresh_slot(0, now);
+        let slot = self.fresh_slot(player, 0, now);
         self.slots.insert(player, slot);
     }
 
     /// A player leaves.
     pub fn leave(&mut self, player: NetId) {
         self.slots.remove(&player);
+        self.choices.remove(&player);
+        self.scales.remove(&player);
     }
 
     /// Everyone back to full health and ammo (a match starts).
     pub fn reset(&mut self, now: f64) {
         self.pending.clear();
+        self.projectiles = ProjectileSystem::new();
         let ids: Vec<NetId> = self.slots.keys().copied().collect();
         for id in ids {
             let index = self.slots[&id].weapon_index;
-            let slot = self.fresh_slot(index, now);
+            let slot = self.fresh_slot(id, index, now);
             self.slots.insert(id, slot);
         }
     }
 
-    fn fresh_slot(&self, weapon_index: usize, now: f64) -> Slot {
+    /// A new life for `player`: its class loadout, or `weapon_index` alone
+    /// without classes.
+    fn fresh_slot(&self, player: NetId, weapon_index: usize, now: f64) -> Slot {
+        let (loadout, health, class) = self.loadout_of(player, weapon_index);
+        let weapon_index = loadout[0];
         Slot {
-            combatant: Combatant::spawned(now, DEFAULT_HEALTH),
+            combatant: Combatant::spawned(now, health),
             weapon: WeaponState::new(&self.weapons[weapon_index], now),
             weapon_index,
             bonuses: ActiveBonuses::default(),
+            class,
+            stash: vec![None; loadout.len()],
+            loadout,
+            active: 0,
+            last_buttons: 0,
         }
     }
 
@@ -338,10 +593,11 @@ impl FpsRules {
                 tracing::warn!(player = id.0, "no spawn point: respawn postponed");
                 continue;
             };
-            let slot = self.slots.get_mut(&id).expect("due player is in the slots");
-            let index = slot.weapon_index;
-            slot.combatant.respawn(now);
-            slot.weapon = WeaponState::new(&self.weapons[index], now);
+            // A new life: the class chosen meanwhile applies now; without
+            // classes the weapon in hand is kept.
+            let index = self.slots[&id].weapon_index;
+            let fresh = self.fresh_slot(id, index, now);
+            self.slots.insert(id, fresh);
             self.respawned.push((id, point));
             host.emit(
                 ServerMsg::Respawn {
@@ -417,6 +673,245 @@ impl FpsRules {
     #[must_use]
     pub fn now(&self) -> f64 {
         self.now
+    }
+
+    /// Projectiles in flight.
+    #[must_use]
+    pub fn projectiles(&self) -> &ProjectileSystem {
+        &self.projectiles
+    }
+
+    /// Health and alive flag of a player.
+    #[must_use]
+    pub fn combatant(&self, player: NetId) -> Option<Combatant> {
+        self.slots.get(&player).map(|s| s.combatant)
+    }
+
+    /// Resolves the command `player` simulated this tick (lot 4.11): weapon
+    /// slot, reload and trigger, the weapon kind choosing the path
+    /// (hitscan through [`fire`](Self::fire), projectiles through
+    /// [`launch`] and the live [`ProjectileSystem`], melee through
+    /// [`melee_attack`]). A fresh press is the fire bit set in this command
+    /// and not in the previous one. An empty magazine starts a reload.
+    /// Damage is queued for the next [`step`](Self::step); projectile
+    /// creations and immediate detonations go to `host`.
+    pub fn command(
+        &mut self,
+        player: NetId,
+        cmd: &InputCommand,
+        shooter: Shooter,
+        env: &mut CommandEnv,
+        host: &mut dyn FpsHost,
+    ) {
+        let now = env.now;
+        let Some(slot) = self.slots.get_mut(&player) else {
+            return;
+        };
+        let pressed = cmd.buttons & BUTTON_FIRE != 0;
+        let fresh = pressed && slot.last_buttons & BUTTON_FIRE == 0;
+        slot.last_buttons = cmd.buttons;
+        if !slot.combatant.alive() {
+            return;
+        }
+        // Weapon slot: 0 main, 1 secondary; anything else keeps the hand.
+        let wanted = usize::from(cmd.weapon_slot);
+        if wanted != slot.active && wanted < slot.loadout.len() {
+            let stashed =
+                std::mem::replace(&mut slot.weapon, WeaponState::new(&self.weapons[0], now));
+            slot.stash[slot.active] = Some(stashed);
+            let index = slot.loadout[wanted];
+            let def = &self.weapons[index];
+            slot.weapon = match slot.stash[wanted].take() {
+                Some(mut w) => {
+                    w.next_fire = w.next_fire.max(now + f64::from(def.draw_time));
+                    w
+                }
+                None => WeaponState::new(def, now),
+            };
+            slot.active = wanted;
+            slot.weapon_index = index;
+        }
+        if cmd.buttons & BUTTON_RELOAD != 0 {
+            self.reload(player, now);
+        }
+        if !pressed {
+            return;
+        }
+        let Some(slot) = self.slots.get_mut(&player) else {
+            return;
+        };
+        let index = slot.weapon_index;
+        let def = &self.weapons[index];
+        let sighted = cmd.buttons & BUTTON_SIGHT != 0;
+        let input = ShotInput {
+            now,
+            seed: env.seed,
+            shooter: player,
+            origin: shooter.eye,
+            basis: AimBasis::from_quantized(cmd.yaw, cmd.pitch),
+            stance: Stance {
+                sighted,
+                ..shooter.stance
+            },
+            fresh_press: fresh,
+        };
+        let view = env
+            .services
+            .as_deref()
+            .map(|s| (s.view_instant(player, Tick(env.tick)), s.rtt(player)));
+        let result = match def.kind {
+            WeaponKind::Hitscan => {
+                let msg = FireMsg {
+                    view_tick: 0,
+                    view_fraction: 0.0,
+                    yaw: cmd.yaw,
+                    pitch: cmd.pitch,
+                    flags: (u8::from(fresh) * FLAG_FRESH_PRESS)
+                        | (u8::from(sighted) * FLAG_SIGHTED),
+                };
+                let shot = ShotContext {
+                    now,
+                    seed: env.seed,
+                    origin: shooter.eye,
+                    stance: shooter.stance,
+                };
+                let outcome = match (env.services.as_deref_mut(), view) {
+                    (Some(services), Some(((view_tick, view_fraction), rtt))) => {
+                        let mut caster = RewindCaster {
+                            lag: services.lag_mut(),
+                            statics: env.statics,
+                            shooter: player,
+                            rtt,
+                            view_tick,
+                            view_fraction,
+                        };
+                        self.fire(player, &msg, &shot, &mut caster)
+                    }
+                    _ => {
+                        let mut caster = SceneCaster {
+                            statics: env.statics,
+                            shooter: player,
+                            targets: env.present,
+                        };
+                        self.fire(player, &msg, &shot, &mut caster)
+                    }
+                };
+                outcome.map(|_| ()).map_err(|e| match e {
+                    FireError::Rejected(r) => r,
+                    _ => ShotReject::Reloading,
+                })
+            }
+            WeaponKind::Projectile => {
+                let slot = self.slots.get_mut(&player).expect("checked above");
+                let weapon_byte = u8::try_from(index).unwrap_or(u8::MAX);
+                launch(def, weapon_byte, &mut slot.weapon, &input, env.tick).map(|l| {
+                    let catch_up = view.map_or(0.0, |(_, rtt)| catch_up_time(rtt));
+                    for spawn in l.spawns {
+                        host.broadcast(GameEvent::Projectile(faset_protocol::ProjectileSpawn {
+                            shooter: spawn.shooter,
+                            weapon: spawn.weapon,
+                            tick: Tick(spawn.tick),
+                            seed: spawn.seed,
+                            origin: spawn.origin,
+                            velocity: spawn.velocity,
+                        }));
+                        if let Some(d) = self.projectiles.spawn(
+                            &self.weapons,
+                            &spawn,
+                            catch_up,
+                            env.statics,
+                            env.present,
+                        ) {
+                            self.detonate(&d, host);
+                        }
+                    }
+                })
+            }
+            WeaponKind::Melee => {
+                let targets = match (env.services.as_deref(), view) {
+                    (Some(s), Some(((view_tick, view_fraction), rtt))) => rewound_hitboxes(
+                        s.lag(),
+                        player,
+                        env.present.iter().map(|(id, _)| *id),
+                        view_tick,
+                        view_fraction,
+                        rtt,
+                    ),
+                    _ => env.present.to_vec(),
+                };
+                let slot = self.slots.get_mut(&player).expect("checked above");
+                melee_attack(def, &mut slot.weapon, &input, &targets, env.statics).map(|r| {
+                    self.pending.extend(r.damage);
+                })
+            }
+            WeaponKind::Beam => Ok(()),
+        };
+        if result == Err(ShotReject::Empty) {
+            self.reload(player, now);
+        }
+    }
+
+    /// One tick of the live projectiles against the living players as they
+    /// stand now; detonations queue their damage and push the players
+    /// they reach (lot 4.11).
+    pub fn step_projectiles(&mut self, env: &CommandEnv, host: &mut dyn FpsHost) {
+        for d in self
+            .projectiles
+            .step(&self.weapons, env.statics, env.present)
+        {
+            self.detonate(&d, host);
+        }
+    }
+
+    fn detonate(&mut self, d: &Detonation, host: &mut dyn FpsHost) {
+        self.pending.extend(d.damage.iter().copied());
+        for &(player, dv) in &d.knockback {
+            host.push(player, dv);
+        }
+        if d.exploded {
+            host.broadcast(GameEvent::Explosion {
+                owner: d.owner,
+                weapon: u8::try_from(d.weapon).unwrap_or(u8::MAX),
+                centre: d.centre,
+            });
+        }
+    }
+
+    /// A living player entered a kill volume: it dies (self-inflicted, so a
+    /// suicide for the score).
+    pub fn kill_volume(&mut self, player: NetId, position: Vec3) {
+        self.pending.push(DamageEvent {
+            attacker: player,
+            victim: player,
+            amount: KILL_VOLUME_DAMAGE,
+            kind: DamageType::Explosion,
+            zone: HitZone::Body,
+            position,
+        });
+    }
+
+    /// Run and jump multipliers of a player at `now`: its class speed and
+    /// its timed bonuses.
+    #[must_use]
+    pub fn move_scale(&self, player: NetId, now: f64) -> (f32, f32) {
+        (
+            self.class_speed(player) * self.speed_multiplier(player, now),
+            self.jump_multiplier(player, now),
+        )
+    }
+
+    /// The multipliers that changed since the last call, for the host.
+    pub fn changed_move_scales(&mut self, now: f64) -> Vec<(NetId, (f32, f32))> {
+        let ids: Vec<NetId> = self.slots.keys().copied().collect();
+        let mut out = Vec::new();
+        for id in ids {
+            let scale = self.move_scale(id, now);
+            if self.scales.get(&id) != Some(&scale) {
+                self.scales.insert(id, scale);
+                out.push((id, scale));
+            }
+        }
+        out
     }
 }
 

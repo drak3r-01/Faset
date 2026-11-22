@@ -282,7 +282,9 @@ impl GameEvent {
             },
             G_ENDED => {
                 let n = r.u16()?;
-                let winners = (0..n).map(|_| r.u16().map(NetId)).collect::<Result<_, _>>()?;
+                let winners = (0..n)
+                    .map(|_| r.u16().map(NetId))
+                    .collect::<Result<_, _>>()?;
                 let winning_team = match r.u8()? {
                     u8::MAX => None,
                     t => Some(TeamId(t)),
@@ -354,7 +356,9 @@ mod tests {
                 reason: EndReason::TimeLimit,
             }),
             GameEvent::MatchEnded(MatchResult::winner(NetId(2))),
-            GameEvent::MapChanged { map: "arena".into() },
+            GameEvent::MapChanged {
+                map: "arena".into(),
+            },
             GameEvent::Feed("P1 killed P2".into()),
             GameEvent::Mode(vec![1, 2, 3]),
             GameEvent::Projectile(ProjectileSpawn {

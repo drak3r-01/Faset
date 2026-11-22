@@ -95,7 +95,7 @@ pub struct ModeCtx<'a> {
     pub(crate) host: Option<&'a mut dyn Any>,
 }
 
-impl ModeCtx<'_> {
+impl<'a> ModeCtx<'a> {
     /// Current simulation tick (after the world step).
     #[must_use]
     pub fn tick(&self) -> Tick {
@@ -122,9 +122,10 @@ impl ModeCtx<'_> {
             .map(|end| f64::from(end.0.saturating_sub(self.tick.0)) * f64::from(DT))
     }
 
-    /// The simulation world, read only.
+    /// The simulation world, read only (borrowed for the whole call, not
+    /// just from the context).
     #[must_use]
-    pub fn world(&self) -> &World {
+    pub fn world(&self) -> &'a World {
         self.world
     }
 
@@ -151,13 +152,13 @@ impl ModeCtx<'_> {
 
     /// Every command of this tick, ascending id.
     #[must_use]
-    pub fn commands(&self) -> &[(NetId, InputCommand)] {
+    pub fn commands(&self) -> &'a [(NetId, InputCommand)] {
         self.commands
     }
 
     /// Zone events of this tick (kill volumes, pads, objectives).
     #[must_use]
-    pub fn zone_events(&self) -> &[(NetId, ZoneEvent)] {
+    pub fn zone_events(&self) -> &'a [(NetId, ZoneEvent)] {
         self.zone_events
     }
 

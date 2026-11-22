@@ -28,13 +28,13 @@ mod runner;
 pub mod services;
 
 pub use ctx::{HostEffect, HostFrame, HudCtx, HudScore, MapPickup, ModeCtx, ObjectiveZone};
-pub use mirror::MatchMirror;
 pub use descriptor::{
     ModeDescriptor, SettingKind, SettingSpec, SettingValue, Settings, SettingsError,
     TIME_LIMIT_SETTING,
 };
 pub use event::{EndReason, GameEvent, MatchResult};
 pub use message::{DecodeError, MatchState, ModeId, ModeMessage};
+pub use mirror::MatchMirror;
 pub use phase::{Phase, COUNTDOWN_TICKS, LOADING_TICKS, MAP_CHANGE_TICKS, ROUND_END_TICKS};
 pub use registry::{ModeEntry, Registry, RegistryError};
 pub use runner::{Match, MatchConfig, DEFAULT_MIN_PLAYERS, DEFAULT_TIME_LIMIT_TICKS};

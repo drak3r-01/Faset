@@ -10,12 +10,19 @@
 //! `pickup.<kind>` (see [`crate::pickup::ZONE_PREFIX`]); the zone centre is
 //! the trigger sphere centre.
 //!
-//! Gaps (reported, not worked around): `GameMode` has no hook for client
-//! messages, so shots reach [`FpsRules`] through the host only; `sim` has no
-//! per-player movement parameters, so the speed and jump bonuses are exposed
-//! as multipliers ([`FpsRules::speed_multiplier`]) for the host to apply;
-//! `SpawnPoints` cannot be asked for a chosen point, so respawn positions
-//! stay in [`FpsRules::take_respawns`].
+//! Pickups placed in the map file (`ModeCtx::pickups`, lot 4.11) join them:
+//! `health`, `armor` and `ammo` map to heal, armour and ammo, and any kind
+//! name of [`PickupKind`] is accepted; weapon pickups are not handled.
+//!
+//! Lot 4.11 wiring: the rules come from the class [`Catalog`] (trooper by
+//! default, [`ClassMsg`] from a client picks another class for its next
+//! spawn, at once outside play); each tick resolves the commands the host
+//! simulated ([`FpsRules::command`]), the kill volumes and the projectiles;
+//! respawns are spawn requests ([`SpawnPoints::request`](faset_minigame_api::SpawnPoints::request)),
+//! class speed and timed bonuses are speed multipliers and blasts push the
+//! players through the host; everyone is moved to a spawn point when play
+//! starts. The replicated state carries each player's class so a client
+//! predicts with its own speed ([`GameModeClient::move_scale`]).
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -24,14 +31,27 @@ use faset_core::glam::Vec3;
 use faset_core::NetId;
 use faset_minigame_api::{
     EndReason, GameEvent, GameMode, GameModeClient, HudCtx, MatchResult, ModeCtx, ModeDescriptor,
-    Registry, RegistryError, SettingKind, SettingSpec, TeamId, TIME_LIMIT_SETTING,
+    Phase, Registry, RegistryError, SettingKind, SettingSpec, TeamId, Vitals, TIME_LIMIT_SETTING,
 };
 use faset_sim::StaticWorld;
 
+use crate::class::Catalog;
+use crate::drive;
 use crate::hud::{HudInput, HudModel, HudState};
 use crate::message::ServerMsg;
-use crate::pickup::{Pickup, PickupEvent, PickupKind, Pickups, TIMED};
-use crate::rules::{FpsHost, FpsRules};
+use crate::pickup::{
+    Pickup, PickupEvent, PickupKind, Pickups, JUMP_MULTIPLIER, KINDS, SPEED_MULTIPLIER, TIMED,
+};
+use crate::rules::{ClassMsg, FpsHost, FpsRules};
+
+/// The kind of a map file pickup name (lot 4.11).
+fn map_pickup_kind(name: &str) -> Option<PickupKind> {
+    match name {
+        "health" => Some(PickupKind::Heal),
+        "armor" => Some(PickupKind::Armour),
+        other => KINDS.into_iter().find(|k| k.name() == other),
+    }
+}
 
 /// Descriptor id of free-for-all.
 pub const FFA_ID: &str = "fps.ffa";
@@ -113,6 +133,16 @@ pub struct PlayView {
     /// Tenths of a second left on each of [`TIMED`] (speed, damage, super
     /// jump, big head).
     pub bonus_tenths: [u16; 4],
+    /// Index of the class in the catalog (lot 4.11).
+    pub class: Option<u8>,
+}
+
+/// The rules over the built-in catalog, parsed once.
+fn catalog_rules() -> FpsRules {
+    static RULES: std::sync::OnceLock<FpsRules> = std::sync::OnceLock::new();
+    RULES
+        .get_or_init(|| FpsRules::from_catalog(&Catalog::builtin()))
+        .clone()
 }
 
 /// A playable FPS mode, server and client side.
@@ -138,7 +168,7 @@ pub struct FpsPlay<V: Variant> {
 impl<V: Variant> Default for FpsPlay<V> {
     fn default() -> Self {
         Self {
-            rules: FpsRules::default(),
+            rules: catalog_rules(),
             pickups: Pickups::default(),
             members: BTreeMap::new(),
             team_scores: BTreeMap::new(),
@@ -237,7 +267,8 @@ impl<V: Variant> FpsPlay<V> {
     }
 
     /// Layout: player count (2), per player id (2), health (2), armour (2),
-    /// alive (1), team (1, 255 none), four bonus tenths (2 each); pickup
+    /// alive (1), team (1, 255 none), class (1, 255 none; lot 4.11), four
+    /// bonus tenths (2 each); pickup
     /// count (2), per pickup kind (1), available (1), position (12); team
     /// count (1), per team score (4).
     fn encode(&self) -> Vec<u8> {
@@ -252,6 +283,11 @@ impl<V: Variant> FpsPlay<V> {
             out.extend_from_slice(&to_u16(c.armour).to_le_bytes());
             out.push(u8::from(c.alive()));
             out.push(self.team_byte(id));
+            out.push(
+                slot.class
+                    .and_then(|c| u8::try_from(c).ok())
+                    .unwrap_or(u8::MAX),
+            );
             for kind in TIMED {
                 // Rounded up, with a margin for the float error of `until - now`.
                 let tenths =
@@ -293,6 +329,10 @@ impl<V: Variant> FpsPlay<V> {
                 NO_TEAM => None,
                 t => Some(TeamId(t)),
             };
+            let class = match r.u8()? {
+                u8::MAX => None,
+                c => Some(c),
+            };
             let mut bonus_tenths = [0; 4];
             for t in &mut bonus_tenths {
                 *t = r.u16()?;
@@ -305,6 +345,7 @@ impl<V: Variant> FpsPlay<V> {
                     alive,
                     team,
                     bonus_tenths,
+                    class,
                 },
             );
         }
@@ -477,6 +518,12 @@ impl FpsHost for PlayHost<'_, '_> {
     fn emit(&mut self, bytes: Vec<u8>) {
         self.ctx.emit(GameEvent::Mode(bytes));
     }
+    fn broadcast(&mut self, event: GameEvent) {
+        self.ctx.broadcast(event);
+    }
+    fn push(&mut self, player: NetId, delta_v: Vec3) {
+        self.ctx.push_player(player, delta_v);
+    }
 }
 
 impl<V: Variant> GameMode for FpsPlay<V> {
@@ -536,11 +583,15 @@ impl<V: Variant> GameMode for FpsPlay<V> {
         self.rules.kill_score = int(KILL_SCORE_SETTING, 1);
         self.rules.friendly_fire = false;
         let delay = int(PICKUP_DELAY_SETTING, 100);
-        self.pickups = Pickups::new(
-            ctx.objectives()
-                .iter()
-                .filter_map(|z| Some((PickupKind::from_zone_id(&z.id)?, (z.min + z.max) * 0.5))),
-        );
+        let zones = ctx
+            .objectives()
+            .iter()
+            .filter_map(|z| Some((PickupKind::from_zone_id(&z.id)?, (z.min + z.max) * 0.5)));
+        let placed = ctx
+            .pickups()
+            .iter()
+            .filter_map(|p| Some((map_pickup_kind(&p.kind)?, p.position)));
+        self.pickups = Pickups::new(zones.chain(placed).collect::<Vec<_>>());
         self.pickups
             .set_delay_percent(u32::try_from(delay).unwrap_or(100));
         self.result = None;
@@ -554,6 +605,10 @@ impl<V: Variant> GameMode for FpsPlay<V> {
             .map(|t| (TeamId(t), 0))
             .collect();
         self.setup_teams(ctx, true);
+        // Everyone starts the round on a spawn point.
+        for player in ctx.players().to_vec() {
+            ctx.spawns().respawn(player);
+        }
         ctx.feed(format!("{}: first to the score limit wins", V::NAME));
     }
 
@@ -574,14 +629,15 @@ impl<V: Variant> GameMode for FpsPlay<V> {
 
     fn on_tick(&mut self, ctx: &mut ModeCtx) {
         let now = ctx.tick().seconds();
-        self.rules.step(
-            now,
-            &mut PlayHost {
-                ctx: &mut *ctx,
-                members: &self.members,
-                team_scores: &mut self.team_scores,
-            },
-        );
+        let calls = drive::resolve(&mut self.rules, ctx);
+        let mut host = PlayHost {
+            ctx: &mut *ctx,
+            members: &self.members,
+            team_scores: &mut self.team_scores,
+        };
+        drive::replay(calls, &mut host);
+        self.rules.step(now, &mut host);
+        drive::finish(&mut self.rules, ctx);
         let present: Vec<(NetId, Vec3)> = self
             .rules
             .players()
@@ -611,9 +667,70 @@ impl<V: Variant> GameMode for FpsPlay<V> {
     fn replicated_state(&self) -> Vec<u8> {
         self.encode()
     }
+
+    fn on_client_message(&mut self, ctx: &mut ModeCtx, player: NetId, bytes: &[u8]) {
+        let Some(msg) = ClassMsg::decode(bytes) else {
+            return;
+        };
+        let idle = (ctx.phase() != Phase::Playing).then(|| ctx.tick().seconds());
+        let ok = self.rules.choose_class(
+            player,
+            usize::from(msg.class),
+            msg.secondary.map(usize::from),
+            idle,
+        );
+        if !ok {
+            tracing::debug!(player = player.0, ?msg, "invalid class choice ignored");
+        }
+    }
+
+    fn vitals(&self, player: NetId) -> Option<Vitals> {
+        let c = self.rules.combatant(player)?;
+        Some(Vitals {
+            health: c.health,
+            max_health: c.max_health,
+            alive: c.alive(),
+            team: self.members.get(&player).copied(),
+        })
+    }
 }
 
 impl<V: Variant> GameModeClient for FpsPlay<V> {
+    fn vitals(&self, player: NetId) -> Option<Vitals> {
+        let v = self.view.get(&player)?;
+        let max_health = v
+            .class
+            .and_then(|c| self.rules.classes().get(usize::from(c)))
+            .map_or(f32::from(v.health), |c| c.health);
+        Some(Vitals {
+            health: f32::from(v.health),
+            max_health,
+            alive: v.alive,
+            team: v.team,
+        })
+    }
+
+    fn move_scale(&self, player: NetId) -> (f32, f32) {
+        let Some(v) = self.view.get(&player) else {
+            return (1.0, 1.0);
+        };
+        let class = v
+            .class
+            .and_then(|c| self.rules.classes().get(usize::from(c)))
+            .map_or(1.0, |c| c.speed_factor);
+        let speed = if v.bonus_tenths[0] > 0 {
+            SPEED_MULTIPLIER
+        } else {
+            1.0
+        };
+        let jump = if v.bonus_tenths[2] > 0 {
+            JUMP_MULTIPLIER
+        } else {
+            1.0
+        };
+        (class * speed, jump)
+    }
+
     fn apply_state(&mut self, bytes: &[u8]) {
         if let Some(d) = Self::decode(bytes) {
             self.view = d.view;
