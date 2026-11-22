@@ -930,6 +930,7 @@ dependencies = [
  "faset-server",
  "faset-sim",
  "faset-ui",
+ "faset-upscale",
  "if-addrs",
  "image",
  "proptest",
@@ -946,6 +947,11 @@ name = "faset-core"
 version = "0.0.1-rc.1"
 dependencies = [
  "glam 0.33.12",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
