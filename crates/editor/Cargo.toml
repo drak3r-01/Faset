@@ -7,8 +7,13 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+faset-assets.workspace = true
 faset-core.workspace = true
 faset-mapfmt.workspace = true
 faset-render.workspace = true
 faset-ui.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+map-tool = { path = "../../tools/map-tool", version = "0.0.1-rc.1" }

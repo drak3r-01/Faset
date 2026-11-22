@@ -18,19 +18,30 @@
 //! - [`MeshCache`]: only the 16 m blocks touched by a command are rebuilt;
 //! - an egui panel and input handling ([`faset_ui::Screen`] for [`Editor`]).
 //!
-//! Library, prop placement UI, gameplay points, ambience and symmetry belong
-//! to lot 5.3; validation, test launch and file I/O to lot 5.4.
+//! Lot 5.3 adds the [`Library`] (props with CPU-rendered thumbnails,
+//! materials, palettes), the placement tools for props, prefab instances,
+//! spawns, pickups, zones and lights, the map info, theme and physics panels,
+//! and the symmetry modes: with a [`Symmetry`](faset_mapfmt::Symmetry) on,
+//! every placement, deletion and handle edit also applies to its mirror twin
+//! in the same history step (see [`Mirror`]).
+//!
+//! Validation, test launch and file I/O belong to lot 5.4.
 #![forbid(unsafe_code)]
 
 mod camera;
 mod command;
 mod create;
+mod edit;
 mod editor;
 mod element;
+mod gameplay;
 mod handles;
+mod library;
 mod math;
 mod mesh;
+mod panels;
 mod snap;
+mod symmetry;
 mod ui;
 
 pub use camera::{orthographic_reverse_z, ray_from_ndc, CameraInput, CameraMode, EditorCamera};
@@ -38,14 +49,25 @@ pub use command::{
     AddBrush, AddProp, Command, History, RemoveBrush, RemoveProp, ReplaceBrush, ReplaceProp,
 };
 pub use create::{make_brush, BrushKind, CreateStage, Creation, CreationSettings};
+pub use edit::{
+    AddItem, AddPrefab, Batch, Item, PlacePrefab, RemoveItem, ReplaceItem, SetMeta, SetPhysics,
+    SetTheme,
+};
 pub use editor::{new_map, Editor, EditorState, Tool};
 pub use element::{
     brush_aabb, brush_extent, brush_grid_bounds, element_centre, prop_rotation, ray_prop,
     resize_brush, rotate_brush, translate_brush, Element, PropBounds, Selection, UnitPropBounds,
 };
+pub use gameplay::{PlaceSettings, ThemePreview};
 pub use handles::{
     handle_length, pick_handle, Drag, HandleAxis, HandleMode, HANDLE_SCREEN_FRACTION,
 };
+pub use library::{
+    render_thumbnail, Library, LibraryBounds, LibraryError, PropEntry, Thumbnail, AMBIENCES,
+    MATERIALS, PALETTES, SKIES, THUMBNAIL_SIZE, WEATHERS,
+};
 pub use math::{axis_drag_param, ray_aabb, ray_horizontal_plane, Aabb, Ray};
 pub use mesh::{Block, MeshCache};
+pub use panels::{LibraryTab, PanelState};
 pub use snap::SnapSettings;
+pub use symmetry::Mirror;

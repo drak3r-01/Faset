@@ -130,7 +130,24 @@ impl Editor {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.tool, Tool::Select, "Select");
-                    ui.selectable_value(&mut self.tool, Tool::Create, "Create");
+                    ui.selectable_value(&mut self.tool, Tool::Create, "Brush");
+                    ui.selectable_value(&mut self.tool, Tool::Prop, "Prop");
+                });
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.tool, Tool::Spawn, "Spawn");
+                    ui.selectable_value(&mut self.tool, Tool::Pickup, "Pickup");
+                    ui.selectable_value(&mut self.tool, Tool::Zone, "Zone");
+                    ui.selectable_value(&mut self.tool, Tool::Light, "Light");
+                });
+                self.symmetry_combo(ui);
+                ui.horizontal(|ui| {
+                    ui.toggle_value(&mut self.panels.show_library, "Library");
+                    ui.toggle_value(&mut self.panels.show_gameplay, "Gameplay");
+                });
+                ui.horizontal(|ui| {
+                    ui.toggle_value(&mut self.panels.show_meta, "Info");
+                    ui.toggle_value(&mut self.panels.show_theme, "Theme");
+                    ui.toggle_value(&mut self.panels.show_physics, "Physics");
                 });
                 if self.tool == Tool::Create {
                     ui.horizontal_wrapped(|ui| {
@@ -142,7 +159,7 @@ impl Editor {
                             );
                         }
                     });
-                } else {
+                } else if self.tool == Tool::Select {
                     ui.horizontal(|ui| {
                         ui.selectable_value(&mut self.handle_mode, HandleMode::Move, "Move");
                         ui.selectable_value(&mut self.handle_mode, HandleMode::Rotate, "Rotate");
@@ -196,6 +213,7 @@ impl Editor {
 impl Screen for Editor {
     fn show(&mut self, ctx: &egui::Context, _theme: &Theme) {
         self.toolbar(ctx);
+        self.panels(ctx);
         self.handle_input(ctx);
     }
 }

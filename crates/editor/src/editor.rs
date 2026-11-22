@@ -3,6 +3,12 @@
 use faset_core::glam::Vec3;
 use faset_mapfmt::{Brush, MapFile, Meta, Prop, Symmetry, Theme};
 
+use crate::edit::Batch;
+use crate::gameplay::PlaceSettings;
+use crate::library::{Library, LibraryBounds};
+use crate::panels::PanelState;
+use crate::symmetry::Mirror;
+
 use crate::camera::{CameraMode, EditorCamera};
 use crate::command::{
     AddBrush, AddProp, Command, History, RemoveBrush, RemoveProp, ReplaceBrush, ReplaceProp,
@@ -22,8 +28,18 @@ pub enum Tool {
     /// Pick elements and drag their handles.
     #[default]
     Select,
-    /// Draw new volumes.
+    /// Draw new volumes (the brush tool).
     Create,
+    /// Place props, or prefab instances when a prefab is chosen.
+    Prop,
+    /// Place player spawn points.
+    Spawn,
+    /// Place pickups.
+    Pickup,
+    /// Draw gameplay zones (a box on the ground, like a brush).
+    Zone,
+    /// Place point lights.
+    Light,
 }
 
 /// A valid, empty map to start editing from.
@@ -71,8 +87,21 @@ pub struct Editor {
     /// Mesh chunks of the document; call [`Editor::rebuild_meshes`] each
     /// frame before drawing.
     pub meshes: MeshCache,
-    /// Prop bounds used for picking; replaced by the library in lot 5.3.
+    /// Prop bounds used for picking; the library's real bounds once one is
+    /// set with [`Editor::set_library`].
     pub bounds: Box<dyn PropBounds>,
+    /// The asset library (props with thumbnails).
+    pub library: Library,
+    /// Symmetry mode of the session. Decision: it is an editor setting, not
+    /// the file's `symmetry` field: every command also writes its mirror twin
+    /// into the document, so the saved file already holds both halves and
+    /// declares `Symmetry::None` (declaring it as well would mirror twice on
+    /// load).
+    pub symmetry: Symmetry,
+    /// Parameters of the placement tools.
+    pub place: PlaceSettings,
+    /// State of the egui panels (search text, drafts, textures).
+    pub panels: PanelState,
     drag: Option<Drag>,
 }
 
@@ -94,6 +123,10 @@ impl Editor {
             selection: None,
             meshes: MeshCache::new(),
             bounds: Box::new(UnitPropBounds),
+            library: Library::new(),
+            symmetry: Symmetry::None,
+            place: PlaceSettings::default(),
+            panels: PanelState::default(),
             drag: None,
         }
     }
@@ -102,6 +135,41 @@ impl Editor {
     #[must_use]
     pub fn blank(name: &str) -> Self {
         Self::new(new_map(name))
+    }
+
+    /// Plugs in the asset library: props are then picked and placed with
+    /// their real bounds.
+    pub fn set_library(&mut self, library: Library) {
+        self.bounds = Box::new(library.prop_bounds());
+        self.library = library;
+    }
+
+    /// Real bounds provider of the current library.
+    #[must_use]
+    pub fn library_bounds(&self) -> LibraryBounds {
+        self.library.prop_bounds()
+    }
+
+    /// The twin maker of the current symmetry mode.
+    #[must_use]
+    pub fn mirror(&self) -> Mirror {
+        Mirror(self.symmetry)
+    }
+
+    /// Executes `primary` and, when there is one, its mirror `twin`, as one
+    /// history step.
+    pub(crate) fn execute_pair(
+        &mut self,
+        primary: Box<dyn Command>,
+        twin: Option<Box<dyn Command>>,
+    ) {
+        match twin {
+            Some(twin) => {
+                let name = format!("{} (mirrored)", primary.name());
+                self.execute(Box::new(Batch::new(&name, vec![primary, twin])));
+            }
+            None => self.execute(primary),
+        }
     }
 
     /// The document in its canonical file form, exactly what gets saved.
@@ -154,29 +222,60 @@ impl Editor {
 
     /// Adds a brush through a command and selects it.
     pub fn add_brush(&mut self, brush: Brush) {
-        self.execute(Box::new(AddBrush::new(brush)));
-        self.selection = Some(Selection::Brush(self.map.brushes.len() - 1));
+        let twin = self.mirror().brush(&brush);
+        let count = 1 + usize::from(twin.is_some());
+        let twin = twin.map(|t| Box::new(AddBrush::new(t)) as Box<dyn Command>);
+        self.execute_pair(Box::new(AddBrush::new(brush)), twin);
+        self.selection = Some(Selection::Brush(self.map.brushes.len() - count));
     }
 
     /// Adds a prop through a command and selects it.
     pub fn add_prop(&mut self, prop: Prop) {
-        self.execute(Box::new(AddProp::new(prop)));
-        self.selection = Some(Selection::Prop(self.map.props.len() - 1));
+        let twin = self.mirror().prop(&prop);
+        let count = 1 + usize::from(twin.is_some());
+        let twin = twin.map(|t| Box::new(AddProp::new(t)) as Box<dyn Command>);
+        self.execute_pair(Box::new(AddProp::new(prop)), twin);
+        self.selection = Some(Selection::Prop(self.map.props.len() - count));
     }
 
     /// Deletes the selected element through a command.
     pub fn delete_selection(&mut self) {
         let Some(sel) = self.selection else { return };
-        match sel.get(&self.map) {
-            Some(Element::Brush(b)) => {
-                let Selection::Brush(i) = sel else { return };
-                self.execute(Box::new(RemoveBrush::new(i, b)));
+        let mirror = self.mirror();
+        match sel {
+            Selection::Brush(i) => {
+                let Some(b) = self.map.brushes.get(i).cloned() else {
+                    return;
+                };
+                let twin = mirror
+                    .brush(&b)
+                    .and_then(|t| find_twin(&self.map.brushes, i, &t));
+                let mut pairs = vec![(i, b)];
+                pairs.extend(twin.map(|j| (j, self.map.brushes[j].clone())));
+                // Highest index first so the lower one is still valid.
+                pairs.sort_by_key(|p| std::cmp::Reverse(p.0));
+                let cmds = pairs
+                    .into_iter()
+                    .map(|(i, b)| Box::new(RemoveBrush::new(i, b)) as Box<dyn Command>)
+                    .collect();
+                self.execute(Box::new(Batch::new("remove brush", cmds)));
             }
-            Some(Element::Prop(p)) => {
-                let Selection::Prop(i) = sel else { return };
-                self.execute(Box::new(RemoveProp::new(i, p)));
+            Selection::Prop(i) => {
+                let Some(p) = self.map.props.get(i).cloned() else {
+                    return;
+                };
+                let twin = mirror
+                    .prop(&p)
+                    .and_then(|t| find_twin(&self.map.props, i, &t));
+                let mut pairs = vec![(i, p)];
+                pairs.extend(twin.map(|j| (j, self.map.props[j].clone())));
+                pairs.sort_by_key(|p| std::cmp::Reverse(p.0));
+                let cmds = pairs
+                    .into_iter()
+                    .map(|(i, p)| Box::new(RemoveProp::new(i, p)) as Box<dyn Command>)
+                    .collect();
+                self.execute(Box::new(Batch::new("remove prop", cmds)));
             }
-            None => {}
         }
         self.selection = None;
     }
@@ -251,9 +350,17 @@ impl Editor {
     /// Primary button pressed under `ray`.
     pub fn pointer_press(&mut self, ray: &Ray) {
         match self.tool {
-            Tool::Create => {
+            Tool::Create | Tool::Zone => {
+                if self.tool == Tool::Zone {
+                    self.creation.settings.kind = crate::create::BrushKind::Box;
+                }
                 if let Some(brush) = self.creation.press(ray, &self.snap) {
-                    self.add_brush(brush);
+                    self.finish_volume(brush);
+                }
+            }
+            Tool::Prop | Tool::Spawn | Tool::Pickup | Tool::Light => {
+                if let Some(point) = self.ground_point(ray) {
+                    self.place_at(point);
                 }
             }
             Tool::Select => {
@@ -300,7 +407,7 @@ impl Editor {
                 self.write_preview(&drag, &before, after);
             }
             self.drag = Some(drag);
-        } else if self.tool == Tool::Create {
+        } else if matches!(self.tool, Tool::Create | Tool::Zone) {
             self.creation.drag(ray, &self.snap);
         }
     }
@@ -309,10 +416,10 @@ impl Editor {
     pub fn pointer_release(&mut self) {
         if let Some(drag) = self.drag.take() {
             self.finish_drag(&drag);
-        } else if self.tool == Tool::Create {
+        } else if matches!(self.tool, Tool::Create | Tool::Zone) {
             let top = self.camera.mode == CameraMode::TopOrtho;
             if let Some(brush) = self.creation.release(top) {
-                self.add_brush(brush);
+                self.finish_volume(brush);
             }
         }
     }
@@ -350,15 +457,35 @@ impl Editor {
         // that undo restores it exactly.
         let current = drag.current.clone();
         self.write_preview(drag, &current, drag.original.clone());
-        let command: Box<dyn Command> = match (drag.target, &drag.original, &drag.current) {
+        let mirror = self.mirror();
+        match (drag.target, &drag.original, &drag.current) {
             (Selection::Brush(i), Element::Brush(old), Element::Brush(new)) => {
-                Box::new(ReplaceBrush::new(i, old.clone(), new.clone()))
+                let twin = mirror.brush(old).and_then(|t_old| {
+                    let j = find_twin(&self.map.brushes, i, &t_old)?;
+                    let t_new = mirror.brush(new)?;
+                    Some(Box::new(ReplaceBrush::new(j, t_old, t_new)) as Box<dyn Command>)
+                });
+                let primary = Box::new(ReplaceBrush::new(i, old.clone(), new.clone()));
+                self.execute_pair(primary, twin);
             }
             (Selection::Prop(i), Element::Prop(old), Element::Prop(new)) => {
-                Box::new(ReplaceProp::new(i, old.clone(), new.clone()))
+                let twin = mirror.prop(old).and_then(|t_old| {
+                    let j = find_twin(&self.map.props, i, &t_old)?;
+                    let t_new = mirror.prop(new)?;
+                    Some(Box::new(ReplaceProp::new(j, t_old, t_new)) as Box<dyn Command>)
+                });
+                let primary = Box::new(ReplaceProp::new(i, old.clone(), new.clone()));
+                self.execute_pair(primary, twin);
             }
-            _ => return,
-        };
-        self.execute(command);
+            _ => {}
+        }
     }
+}
+
+/// Index of the element equal to `twin` other than the one at `own`.
+pub(crate) fn find_twin<T: PartialEq>(list: &[T], own: usize, twin: &T) -> Option<usize> {
+    list.iter()
+        .enumerate()
+        .find(|(j, e)| *j != own && *e == twin)
+        .map(|(j, _)| j)
 }
