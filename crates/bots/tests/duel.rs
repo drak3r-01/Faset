@@ -77,7 +77,6 @@ fn expert_beats_easy_20_matches() {
     );
 }
 
-#[test]
 fn matches_are_reproducible() {
     let a = play_for([Level::Hard, Level::Normal], 77, 25.0);
     let b = play_for([Level::Hard, Level::Normal], 77, 25.0);
@@ -88,7 +87,6 @@ fn matches_are_reproducible() {
     );
 }
 
-#[test]
 fn a_bot_patrols_without_standing_still() {
     let f = fixture();
     let mut arena = Arena::new(vec![Fighter::new(1, Level::Normal, 5, f.spawns[0])]);
@@ -103,7 +101,6 @@ fn a_bot_patrols_without_standing_still() {
     assert!(travelled > 40.0, "only {travelled} m in 20 s");
 }
 
-#[test]
 fn bots_engage_and_land_shots() {
     let f = fixture();
     let mut arena = Arena::new(vec![
@@ -119,7 +116,6 @@ fn bots_engage_and_land_shots() {
     assert!(hits > 0, "bots never hit ({hits} of {shots})");
 }
 
-#[test]
 fn harder_levels_win_more_often() {
     // Each stronger level beats the weaker one over 4 matches of 45 s (sides swapped).
     for (strong, weak) in [
@@ -141,7 +137,6 @@ fn harder_levels_win_more_often() {
     }
 }
 
-#[test]
 fn movement_flags_gate_slides_and_hops() {
     let f = fixture();
     let run = |level| {
@@ -164,4 +159,16 @@ fn movement_flags_gate_slides_and_hops() {
     );
     assert!(expert_crouch > 0, "Expert slides on straight lines");
     assert!(expert_jump > easy_jump, "Expert hops");
+}
+
+/// One test for the behaviour checks: `nextest` runs each test in its own
+/// process, and every process builds the navigation graph of the example map
+/// (all cores); one process instead of five keeps the workspace run light.
+#[test]
+fn bots_behave() {
+    matches_are_reproducible();
+    a_bot_patrols_without_standing_still();
+    bots_engage_and_land_shots();
+    harder_levels_win_more_often();
+    movement_flags_gate_slides_and_hops();
 }
