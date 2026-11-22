@@ -8,6 +8,8 @@
 //!   and server validation, and the [`RayCaster`]s that feed it
 //!   ([`SceneCaster`] as displayed, [`RewindCaster`] and [`ServerCaster`]
 //!   through the lag-compensation history of lot 1.7).
+//! * [`projectile`], [`explosion`] and [`melee`] - lot 4.5: projectile weapons,
+//!   area blasts with knockback (the explosive jump) and the melee arc.
 //! * [`damage`] - [`DamageEvent`], falloff and the [`Combatant`] chain.
 //! * [`respawn`] - [`choose_spawn`].
 //! * [`rules`] and [`mode`] - [`FpsRules`] (shots, kills, respawns) and
@@ -19,8 +21,11 @@
 #![forbid(unsafe_code)]
 
 pub mod damage;
+pub mod explosion;
+pub mod melee;
 pub mod message;
 pub mod mode;
+pub mod projectile;
 pub mod recoil;
 pub mod respawn;
 pub mod rules;
@@ -32,8 +37,17 @@ pub use damage::{
     falloff_multiplier, pellet_damage, Combatant, DamageContext, DamageEvent, DamageOutcome,
     DamageType, HitZone, Ignored, DEFAULT_HEALTH, RESPAWN_DELAY, SPAWN_PROTECTION,
 };
+pub use explosion::{
+    blast, explosion_centre, explosion_effect, BlastEffect, CENTRE_OFFSET, SELF_DAMAGE_FACTOR,
+};
+pub use melee::{melee_attack, rewound_hitboxes, MeleeReport};
+pub use message::ProjectileSpawn;
 pub use message::{FireMsg, ServerMsg, FLAG_FRESH_PRESS, FLAG_SIGHTED};
 pub use mode::{FpsMode, PlayerView, MODE_ID};
+pub use projectile::{
+    advance_projectile, catch_up_time, launch, step_projectile, Detonation, Launch, ProjectileEnv,
+    ProjectileEvent, ProjectileState, ProjectileStep, ProjectileSystem, GRAVITY, MAX_CATCH_UP,
+};
 pub use recoil::RecoilState;
 pub use respawn::{choose_spawn, visible_from, BEST_COUNT};
 pub use rules::{FireError, FpsHost, FpsRules, ShotContext, Slot};
@@ -43,6 +57,6 @@ pub use shot::{
 };
 pub use spread::{cone_sigma, decay_beta, spread_direction, state_multiplier, AimBasis, Stance};
 pub use weapon::{
-    DamageDef, FireMode, ProjectileDef, RecoilDef, SightDef, SpreadDef, WeaponDef, WeaponError,
-    WeaponKind,
+    DamageDef, ExplosionDef, FireMode, MeleeDef, ProjectileDef, RecoilDef, SightDef, SpreadDef,
+    WeaponDef, WeaponError, WeaponKind,
 };
