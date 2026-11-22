@@ -5,13 +5,13 @@ use faset_mapfmt::{Brush, MapFile, Meta, Prop, Symmetry, Theme};
 
 use crate::edit::Batch;
 use crate::files::FileService;
-use crate::test_session::TestSession;
-use crate::validation::ValidationPanel;
-use crate::workflow::WorkflowUi;
 use crate::gameplay::PlaceSettings;
 use crate::library::{Library, LibraryBounds};
 use crate::panels::PanelState;
 use crate::symmetry::Mirror;
+use crate::test_session::TestSession;
+use crate::validation::ValidationPanel;
+use crate::workflow::WorkflowUi;
 
 use crate::camera::{CameraMode, EditorCamera};
 use crate::command::{

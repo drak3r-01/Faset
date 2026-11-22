@@ -68,6 +68,7 @@ pub use element::{
     brush_aabb, brush_extent, brush_grid_bounds, element_centre, prop_rotation, ray_prop,
     resize_brush, rotate_brush, translate_brush, Element, PropBounds, Selection, UnitPropBounds,
 };
+pub use files::{FileError, FileService, Imported, AUTOSAVE_INTERVAL_S};
 pub use gameplay::{PlaceSettings, ThemePreview};
 pub use handles::{
     handle_length, pick_handle, Drag, HandleAxis, HandleMode, HANDLE_SCREEN_FRACTION,
@@ -81,9 +82,6 @@ pub use mesh::{Block, MeshCache};
 pub use panels::{LibraryTab, PanelState};
 pub use snap::SnapSettings;
 pub use symmetry::Mirror;
-pub use files::{FileError, FileService, Imported, AUTOSAVE_INTERVAL_S};
 pub use test_session::{TestError, TestSession};
-pub use validation::{
-    validate_bytes, Severity, ValidationIssue, ValidationPanel, DEBOUNCE_S,
-};
+pub use validation::{validate_bytes, Severity, ValidationIssue, ValidationPanel, DEBOUNCE_S};
 pub use workflow::WorkflowUi;

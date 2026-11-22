@@ -159,22 +159,24 @@ impl Editor {
                     stats.longest_line_of_sight_m,
                     stats.cover_density * 100.0
                 ));
-                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                    for (i, issue) in self.validation.issues().iter().enumerate() {
-                        let tag = match issue.severity {
-                            Severity::Error => "error",
-                            Severity::Warning => "warning",
-                        };
-                        let label = format!(
-                            "[rule {}] {} {}: {}",
-                            issue.rule, tag, issue.element, issue.message
-                        );
-                        let selected = self.validation.selected == Some(i);
-                        if ui.selectable_label(selected, label).clicked() {
-                            clicked = Some(i);
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        for (i, issue) in self.validation.issues().iter().enumerate() {
+                            let tag = match issue.severity {
+                                Severity::Error => "error",
+                                Severity::Warning => "warning",
+                            };
+                            let label = format!(
+                                "[rule {}] {} {}: {}",
+                                issue.rule, tag, issue.element, issue.message
+                            );
+                            let selected = self.validation.selected == Some(i);
+                            if ui.selectable_label(selected, label).clicked() {
+                                clicked = Some(i);
+                            }
                         }
-                    }
-                });
+                    });
             });
         if let Some(i) = clicked {
             self.click_issue(i);

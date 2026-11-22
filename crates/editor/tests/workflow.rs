@@ -251,7 +251,11 @@ fn autosave_fires_after_60_s_and_never_overwrites_the_saved_file() {
     editor.update_services(1.0);
     assert!(autosave.exists());
     assert_ne!(autosave, saved);
-    assert_eq!(std::fs::read(&saved).unwrap(), saved_bytes, "save untouched");
+    assert_eq!(
+        std::fs::read(&saved).unwrap(),
+        saved_bytes,
+        "save untouched"
+    );
     let restored = editor
         .files
         .as_ref()

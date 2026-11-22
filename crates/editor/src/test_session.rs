@@ -43,13 +43,14 @@ impl TestSession {
     #[must_use]
     pub fn server_config(map: &MapFile, spawn: Vec3) -> ServerConfig {
         let collision = MapCollision::build(&expand(map));
-        let mut config = ServerConfig::default();
-        config.map = MapConfig {
-            statics: collision.world().clone(),
-            fingerprint: map_fingerprint(faset_mapfmt::to_ron(map).as_bytes()),
-            spawn_points: vec![spawn],
-        };
-        config
+        ServerConfig {
+            map: MapConfig {
+                statics: collision.world().clone(),
+                fingerprint: map_fingerprint(faset_mapfmt::to_ron(map).as_bytes()),
+                spawn_points: vec![spawn],
+            },
+            ..ServerConfig::default()
+        }
     }
 
     /// Starts an integrated server on `map` (memory transport only, never
