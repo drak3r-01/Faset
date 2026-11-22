@@ -1690,9 +1690,11 @@ name = "map-tool"
 version = "0.0.1-rc.1"
 dependencies = [
  "anyhow",
+ "faset-bots",
  "faset-client",
  "faset-core",
  "faset-mapfmt",
+ "faset-protocol",
  "faset-render",
  "faset-sim",
  "image",

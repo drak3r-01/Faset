@@ -1,6 +1,8 @@
 //! `map-tool validate <map.ron> [--report out.json] [--image out.png]`
 //! `map-tool view <map.ron> [--top out.png] [--perspective out.png]`
 //!
+//! `map-tool trial <map.ron> --seed <n> --out <report.json> [--mode team|ffa]`
+//!
 //! `validate` prints every violation and exits with 1 if there is one; the
 //! JSON report and a top-view image are optional outputs. `view` only renders.
 //! Exit code 2 means the tool itself failed.
@@ -11,7 +13,8 @@ use std::process::ExitCode;
 use anyhow::{bail, Context, Result};
 use map_tool::view::{Viewer, VIEW_SIZE};
 
-const USAGE: &str = "usage: map-tool validate <map.ron> [--report out.json] [--image out.png]\n       map-tool view <map.ron> [--top out.png] [--perspective out.png]";
+const USAGE: &str = "usage: map-tool validate <map.ron> [--report out.json] [--image out.png]\n       map-tool view <map.ron> [--top out.png] [--perspective out.png]
+       map-tool trial <map.ron> --seed <n> --out <report.json> [--mode team|ffa]";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -61,8 +64,55 @@ fn run(args: Vec<String>) -> Result<bool> {
     match it.next().as_deref() {
         Some("validate") => validate(&parse(it, ["--report", "--image"])?),
         Some("view") => view(&parse(it, ["--top", "--perspective"])?),
+        Some("trial") => trial(it),
         _ => bail!(USAGE),
     }
+}
+
+fn trial(mut it: impl Iterator<Item = String>) -> Result<bool> {
+    use map_tool::trial::{run_trial, TrialConfig, TrialMode};
+    let (mut map, mut seed, mut out) = (None, None, None);
+    let mut mode = TrialMode::Team;
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--seed" => seed = Some(it.next().context(USAGE)?.parse::<u64>()?),
+            "--out" => out = Some(PathBuf::from(it.next().context(USAGE)?)),
+            "--mode" => {
+                mode = match it.next().context(USAGE)?.as_str() {
+                    "team" => TrialMode::Team,
+                    "ffa" => TrialMode::Ffa,
+                    _ => bail!(USAGE),
+                }
+            }
+            _ if map.is_none() && !a.starts_with("--") => map = Some(PathBuf::from(a)),
+            _ => bail!(USAGE),
+        }
+    }
+    let (map, seed, out) = (
+        map.context(USAGE)?,
+        seed.context(USAGE)?,
+        out.context(USAGE)?,
+    );
+    let bytes = std::fs::read(&map).with_context(|| format!("cannot read {}", map.display()))?;
+    let parsed = faset_mapfmt::parse(&bytes).with_context(|| format!("{}", map.display()))?;
+    let report = run_trial(
+        &parsed,
+        &TrialConfig {
+            mode,
+            ..TrialConfig::new(seed)
+        },
+    );
+    std::fs::write(&out, report.to_json())
+        .with_context(|| format!("cannot write {}", out.display()))?;
+    println!(
+        "{}: {} kills, {:.1} m mean engagement, {:.0} % deaths at spawn, {} unvisited cell(s)",
+        map.display(),
+        report.total_kills,
+        report.mean_engagement_distance_m,
+        report.spawn_deaths.rate * 100.0,
+        report.unvisited_zones.len()
+    );
+    Ok(true)
 }
 
 fn validate(args: &Args) -> Result<bool> {

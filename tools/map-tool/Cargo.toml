@@ -15,9 +15,11 @@ name = "map-tool"
 path = "src/main.rs"
 
 [dependencies]
+faset-bots = { path = "../../crates/bots", version = "0.0.1-rc.1" }
 faset-client = { path = "../../crates/client", version = "0.0.1-rc.1" }
 faset-core.workspace = true
 faset-mapfmt.workspace = true
+faset-protocol.workspace = true
 faset-render.workspace = true
 faset-sim.workspace = true
 anyhow = "1"
