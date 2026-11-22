@@ -63,6 +63,12 @@ impl SpawnPoints {
         Some(p)
     }
 
+    /// Asks the host to move `player` to `point` (capsule centre), a point
+    /// the mode chose itself (lot 4.11), for example away from enemies.
+    pub fn request(&mut self, player: NetId, point: Vec3) {
+        self.requests.push((player, point));
+    }
+
     /// Pending respawn requests, oldest first.
     pub fn take_requests(&mut self) -> Vec<(NetId, Vec3)> {
         std::mem::take(&mut self.requests)

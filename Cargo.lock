@@ -955,6 +955,7 @@ name = "faset-minigame-api"
 version = "0.0.1-rc.1"
 dependencies = [
  "faset-core",
+ "faset-protocol",
  "faset-sim",
  "thiserror 2.0.21",
  "tracing",
@@ -1034,6 +1035,7 @@ version = "0.0.1-rc.1"
 dependencies = [
  "blake3",
  "faset-core",
+ "faset-minigame-api",
  "faset-net",
  "faset-protocol",
  "faset-sim",

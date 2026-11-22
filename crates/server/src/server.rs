@@ -1,13 +1,16 @@
-//! The server: connections, handshake, command buffers, tick and snapshots.
+//! The server: connections, handshake, command buffers, tick, the hosted
+//! match and snapshots.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use faset_core::glam::Vec3;
 use faset_core::{NetId, Tick, DT, TICK_RATE};
+use faset_minigame_api::{HostEffect, HostFrame, Match, MatchState, ModeMessage, Vitals};
 use faset_net::{Channel, PeerId, ServerEvent};
 use faset_protocol::quant::{dequantize_pitch_command, dequantize_yaw};
-use faset_protocol::{InputCommand, Message, PROTOCOL_VERSION};
+use faset_protocol::{Event, InputCommand, Message, PROTOCOL_VERSION};
+use faset_sim::components::STANDING_HEIGHT;
 use faset_sim::world::Hooks;
 use faset_sim::World;
 
@@ -15,10 +18,11 @@ use crate::commands::CommandBuffer;
 use crate::config::{ConfigError, ServerConfig};
 use crate::lag_compensation::{FireCommand, Hitbox, LagCompensation, ShotOutcome};
 use crate::link::ServerTransport;
+use crate::services::ModeServices;
 use crate::snapshot::{EntityState, InputPacket, Snapshot, SnapshotEncoder};
 
-/// Health reported for every player until the sim exposes damage (lots 4.x).
-const STUB_HEALTH: u8 = 100;
+/// Health reported for a player when no hosted mode tracks health.
+const DEFAULT_HEALTH: u8 = 100;
 
 /// Why a connecting client was turned away.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,12 +56,46 @@ pub enum ServerNotice {
     Left(NetId),
 }
 
+/// What a bot sees when it chooses its command (lot 4.11).
+#[derive(Clone, Copy)]
+pub struct BotContext<'a> {
+    /// The simulation world.
+    pub world: &'a World,
+    /// The hosted match, if any: teams, scores, phase, vitals.
+    pub game: Option<&'a Match>,
+    /// The match state replicated this tick, as a client would get it.
+    pub match_state: Option<&'a MatchState>,
+}
+
 /// An internal virtual client. Its commands go through the same command
-/// buffer as a human's (section 7). Only the hook exists in this lot.
+/// buffer as a human's (section 7), its messages through the same mode
+/// message path.
 pub trait Bot: Send {
     /// The command of player `me` for tick `tick`, read at the start of that
-    /// tick.
-    fn command(&mut self, world: &World, me: NetId, tick: Tick) -> InputCommand;
+    /// tick. The default stands still.
+    fn command(&mut self, _world: &World, _me: NetId, tick: Tick) -> InputCommand {
+        InputCommand {
+            tick,
+            buttons: 0,
+            move_x: 0,
+            move_y: 0,
+            yaw: 0,
+            pitch: 0,
+            weapon_slot: 0,
+        }
+    }
+
+    /// [`command`](Self::command) with the match around the bot (lot 4.11);
+    /// the default ignores the match.
+    fn command_in(&mut self, ctx: &BotContext, me: NetId, tick: Tick) -> InputCommand {
+        self.command(ctx.world, me, tick)
+    }
+
+    /// Mode message bytes the bot sends this tick (class choice), as a
+    /// client sends `Event::Mode` (lot 4.11). None by default.
+    fn messages(&mut self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,24 +139,38 @@ pub struct Server {
     notices: VecDeque<ServerNotice>,
     next_player: u16,
     snapshot_acc: u32,
-    /// One second of hitbox history per player.
-    lag: LagCompensation,
+    /// One second of hitbox history per player, and the round trips.
+    services: ModeServices,
+    /// The hosted match (lot 4.11).
+    game: Option<Match>,
+    /// Bytes of the last match state sent to every client.
+    sent_state: Option<Vec<u8>>,
 }
 
-/// Sim system 9: records every active player's hitboxes, labelled with the
-/// world tick after the step (the label of the snapshot of that state).
+/// The hitboxes of a player as the sim holds it.
+fn hitbox_of(world: &World, id: NetId) -> Option<Hitbox> {
+    if let Some(s) = world.controller_state(id) {
+        return Some(Hitbox {
+            position: s.feet() + Vec3::Y * (STANDING_HEIGHT * 0.5),
+            sliding: s.crouched,
+        });
+    }
+    Some(Hitbox::standing(world.position(id)?))
+}
+
+/// Sim system 9: records the hitboxes of every living player, labelled with
+/// the world tick after the step (the label of the snapshot of that state).
 struct HistoryRecorder<'a> {
     lag: &'a mut LagCompensation,
-    players: &'a BTreeMap<NetId, Player>,
+    players: &'a [NetId],
 }
 
 impl Hooks for HistoryRecorder<'_> {
     fn record_collision_history(&mut self, world: &World) {
-        // The sim exposes no posture yet: every player stands (lots 4.x).
         let hitboxes = self
             .players
-            .keys()
-            .filter_map(|&id| Some((id, Hitbox::standing(world.position(id)?))));
+            .iter()
+            .filter_map(|&id| Some((id, hitbox_of(world, id)?)));
         self.lag.record(world.tick().next(), hitboxes);
     }
 }
@@ -131,6 +183,7 @@ impl std::fmt::Debug for Server {
             .field("clients", &self.clients.len())
             .field("players", &self.players.len())
             .field("bots", &self.bots.len())
+            .field("game", &self.game)
             .finish()
     }
 }
@@ -145,7 +198,9 @@ impl Server {
         transports: Vec<ServerTransport>,
     ) -> Result<Self, ConfigError> {
         config.validate()?;
-        let world = World::with_statics(config.seed, config.map.statics.clone());
+        let mut world =
+            World::with_controller(config.seed, config.map.statics.clone(), config.move_params);
+        world.set_zones(config.map.zones.clone());
         Ok(Self {
             config,
             links: transports,
@@ -156,8 +211,29 @@ impl Server {
             notices: VecDeque::new(),
             next_player: 1,
             snapshot_acc: 0,
-            lag: LagCompensation::new(),
+            services: ModeServices::default(),
+            game: None,
+            sent_state: None,
         })
+    }
+
+    /// Hosts `game` (lot 4.11): every present player joins it, and from now
+    /// on each tick runs it after the world step, applies its respawns and
+    /// effects, freezes movement outside `Warmup` and `Playing` (and for
+    /// dead players) and replicates its state, events and messages to every
+    /// client. Replaces a match already hosted.
+    pub fn host_match(&mut self, mut game: Match) {
+        for &id in self.players.keys() {
+            game.player_joined(&self.world, id);
+        }
+        self.game = Some(game);
+        self.sent_state = None;
+    }
+
+    /// The hosted match.
+    #[must_use]
+    pub fn game(&self) -> Option<&Match> {
+        self.game.as_ref()
     }
 
     /// The configuration.
@@ -175,6 +251,12 @@ impl Server {
     /// Ids of the in-game players (humans and bots), ascending.
     pub fn players(&self) -> impl Iterator<Item = NetId> + '_ {
         self.players.keys().copied()
+    }
+
+    /// Whether `player` is a bot.
+    #[must_use]
+    pub fn is_bot(&self, player: NetId) -> bool {
+        self.bots.contains_key(&player)
     }
 
     /// Connections still in the handshake.
@@ -213,14 +295,14 @@ impl Server {
             self.clients.remove(&conn);
             self.links[conn.0].listener.disconnect(conn.1);
         }
-        self.notices.push_back(ServerNotice::Left(player));
+        self.player_gone(player);
         true
     }
 
     /// The hitbox history of every player.
     #[must_use]
     pub fn lag_compensation(&self) -> &LagCompensation {
-        &self.lag
+        self.services.lag()
     }
 
     /// Smoothed round trip of a human player's connection in seconds; 0 for
@@ -239,7 +321,8 @@ impl Server {
     /// round trip. `None` for an unknown shooter or before the first tick.
     pub fn rewind_and_cast(&mut self, shooter: NetId, fire: &FireCommand) -> Option<ShotOutcome> {
         let rtt = self.player_rtt(shooter)? as f32;
-        self.lag
+        self.services
+            .lag_mut()
             .rewind_and_cast(self.world.statics(), shooter, fire, rtt)
     }
 
@@ -255,12 +338,24 @@ impl Server {
         }
     }
 
+    /// Whether `player` may not move this tick: the match phase freezes
+    /// everyone, or the mode says the player is dead.
+    fn frozen(&self, player: NetId) -> bool {
+        self.game.as_ref().is_some_and(|g| {
+            !g.movement_allowed() || g.vitals(player).is_some_and(|v| !v.alive)
+        })
+    }
+
     /// Advances exactly one tick:
-    /// 1. receive: connection changes, handshake messages, commands;
-    /// 2. read one command per player from its buffer (repeat if missing);
-    /// 3. step the world;
-    /// 4. send snapshots when due (deltas against each client's
-    ///    acknowledged snapshot, see [`crate::snapshot::delta`]), then flush.
+    /// 1. receive: connection changes, handshake messages, commands and
+    ///    mode messages;
+    /// 2. read one command per player from its buffer (repeat if missing),
+    ///    frozen for players who may not move;
+    /// 3. step the world (the character controller);
+    /// 4. run the hosted match and apply its respawns and effects;
+    /// 5. send its events and messages, then snapshots and the match state
+    ///    when due (deltas against each client's acknowledged snapshot, see
+    ///    [`crate::snapshot::delta`]), then flush.
     pub fn tick(&mut self) {
         let dt = Duration::from_secs_f32(DT);
         for link in 0..self.links.len() {
@@ -272,38 +367,47 @@ impl Server {
         self.expire_handshakes();
 
         let tick = self.world.tick();
-        for (&id, bot) in &mut self.bots {
-            let cmd = bot.command(&self.world, id, tick);
-            if let Some(p) = self.players.get_mut(&id) {
-                p.commands.push(cmd, tick);
-            }
-        }
+        self.run_bots(tick);
         let mut inputs = Vec::with_capacity(self.players.len());
-        for (&id, p) in &mut self.players {
+        let ids: Vec<NetId> = self.players.keys().copied().collect();
+        for id in ids {
+            let frozen = self.frozen(id);
+            let Some(p) = self.players.get_mut(&id) else {
+                continue;
+            };
             if let Some(cmd) = p.commands.take(tick) {
                 p.yaw = dequantize_yaw(cmd.yaw);
                 p.pitch = dequantize_pitch_command(cmd.pitch);
                 p.weapon = cmd.weapon_slot;
-                inputs.push((id, cmd));
+                inputs.push((id, if frozen { cmd.frozen() } else { cmd }));
             }
         }
+        let alive: Vec<NetId> = self
+            .players
+            .keys()
+            .copied()
+            .filter(|&id| {
+                self.game
+                    .as_ref()
+                    .and_then(|g| g.vitals(id))
+                    .is_none_or(|v| v.alive)
+            })
+            .collect();
         self.world.step_with(
             &inputs,
             &mut HistoryRecorder {
-                lag: &mut self.lag,
-                players: &self.players,
+                lag: self.services.lag_mut(),
+                players: &alive,
             },
         );
-        for (&id, p) in &mut self.players {
-            if let Some(pos) = self.world.position(id) {
-                p.velocity = (pos - p.last_position) / DT;
-                p.last_position = pos;
-            }
-        }
+        self.update_velocities();
+        let zone_events = self.world.drain_zone_events();
+        self.run_match(&inputs, &zone_events);
 
         self.snapshot_acc += u32::from(self.config.snapshot_rate);
         if self.snapshot_acc >= u32::from(TICK_RATE) {
             self.snapshot_acc -= u32::from(TICK_RATE);
+            self.broadcast_match_state();
             let conns: Vec<(usize, PeerId)> = self
                 .clients
                 .iter()
@@ -319,6 +423,136 @@ impl Server {
                 tracing::warn!(error = %e, "transport flush failed");
             }
         }
+    }
+
+    fn run_bots(&mut self, tick: Tick) {
+        if self.bots.is_empty() {
+            return;
+        }
+        let state = self.game.as_ref().map(Match::state);
+        let ctx = BotContext {
+            world: &self.world,
+            game: self.game.as_ref(),
+            match_state: state.as_ref(),
+        };
+        let mut messages = Vec::new();
+        for (&id, bot) in &mut self.bots {
+            let cmd = bot.command_in(&ctx, id, tick);
+            if let Some(p) = self.players.get_mut(&id) {
+                p.commands.push(cmd, tick);
+            }
+            for bytes in bot.messages() {
+                messages.push((id, bytes));
+            }
+        }
+        if let Some(game) = self.game.as_mut() {
+            let mode = game.mode_id();
+            for (id, bytes) in messages {
+                game.client_message(id, ModeMessage { mode, bytes });
+            }
+        }
+    }
+
+    fn update_velocities(&mut self) {
+        for (&id, p) in &mut self.players {
+            if let Some(pos) = self.world.position(id) {
+                p.velocity = self
+                    .world
+                    .controller_state(id)
+                    .map_or((pos - p.last_position) / DT, |s| s.vel);
+                p.last_position = pos;
+            }
+        }
+    }
+
+    /// Step 4 and the event part of step 5.
+    fn run_match(
+        &mut self,
+        inputs: &[(NetId, InputCommand)],
+        zone_events: &[(NetId, faset_sim::ZoneEvent)],
+    ) {
+        let Some(game) = self.game.as_mut() else {
+            return;
+        };
+        let rtt = self
+            .players
+            .iter()
+            .filter_map(|(&id, p)| {
+                let (link, peer) = p.conn?;
+                Some((id, self.links[link].listener.rtt(peer) as f32))
+            })
+            .collect();
+        self.services.set_rtt(rtt);
+        game.tick_with(
+            &self.world,
+            &mut HostFrame {
+                commands: inputs,
+                zone_events,
+                host: Some(&mut self.services),
+            },
+        );
+        for (id, at) in game.take_respawns() {
+            if self.world.teleport(id, at) {
+                if let Some(p) = self.players.get_mut(&id) {
+                    p.last_position = at;
+                    p.velocity = Vec3::ZERO;
+                }
+            }
+        }
+        for effect in game.take_effects() {
+            match effect {
+                HostEffect::Push { player, delta_v } => {
+                    self.world.add_velocity(player, delta_v);
+                }
+                HostEffect::MoveScale { player, run, jump } => {
+                    self.world
+                        .set_move_scale(player, faset_sim::MoveScale { run, jump });
+                }
+            }
+        }
+        let events = game.drain_events();
+        let messages = game.drain_messages();
+        for event in events {
+            self.broadcast_event(&event.to_protocol());
+        }
+        for message in messages {
+            self.broadcast_event(&Event::Mode(message.encode()));
+        }
+    }
+
+    /// Sends the match state to every in-game client if it changed since
+    /// the last time.
+    fn broadcast_match_state(&mut self) {
+        let Some(game) = self.game.as_ref() else {
+            return;
+        };
+        let bytes = game.state().encode();
+        if self.sent_state.as_ref() == Some(&bytes) {
+            return;
+        }
+        self.broadcast_event(&Event::MatchState(bytes.clone()));
+        self.sent_state = Some(bytes);
+    }
+
+    fn broadcast_event(&mut self, event: &Event) {
+        let msg = Message::Event(event.clone());
+        let conns: Vec<(usize, PeerId)> = self
+            .clients
+            .iter()
+            .filter(|(_, c)| c.phase == Phase::InGame)
+            .map(|(k, _)| *k)
+            .collect();
+        for conn in conns {
+            self.send(conn, Channel::Event, &msg);
+        }
+    }
+
+    /// A player left: the match is told.
+    fn player_gone(&mut self, player: NetId) {
+        if let Some(game) = self.game.as_mut() {
+            game.player_left(&self.world, player);
+        }
+        self.notices.push_back(ServerNotice::Left(player));
     }
 
     fn receive(&mut self, link: usize) {
@@ -339,7 +573,7 @@ impl Server {
                     if let Some(c) = self.clients.remove(&(link, peer)) {
                         if let (Phase::InGame, Some(id)) = (c.phase, c.player) {
                             self.players.remove(&id);
-                            self.notices.push_back(ServerNotice::Left(id));
+                            self.player_gone(id);
                         }
                     }
                 }
@@ -422,7 +656,7 @@ impl Server {
                     return self.reject(conn, RejectReason::ServerFull);
                 };
                 let hello = Message::ServerHello {
-                    mode: self.config.mode,
+                    mode: self.game.as_ref().map_or(self.config.mode, |g| g.mode_id().0),
                     player_id: id,
                     map_fingerprint: self.config.map.fingerprint,
                     tick_rate: self.config.tick_rate,
@@ -443,7 +677,19 @@ impl Server {
                 };
                 self.spawn(id, Some(conn));
                 self.notices.push_back(ServerNotice::Joined(id));
+                if let Some(game) = self.game.as_ref() {
+                    let state = Message::Event(Event::MatchState(game.state().encode()));
+                    self.send(conn, Channel::Event, &state);
+                }
                 self.send_snapshot(conn);
+            }
+            (Phase::InGame, Message::Event(Event::Mode(bytes))) => {
+                let player = self.clients.get(&conn).and_then(|c| c.player);
+                if let (Some(player), Some(game), Ok(m)) =
+                    (player, self.game.as_mut(), ModeMessage::decode(&bytes))
+                {
+                    game.client_message(player, m);
+                }
             }
             (Phase::InGame, Message::Event(_)) => {
                 // Chat and other client events are handled by later lots.
@@ -458,7 +704,7 @@ impl Server {
         if let Some(c) = self.clients.remove(&conn) {
             if let (Phase::InGame, Some(id)) = (c.phase, c.player) {
                 self.players.remove(&id);
-                self.notices.push_back(ServerNotice::Left(id));
+                self.player_gone(id);
             }
         }
         self.links[conn.0].listener.disconnect(conn.1);
@@ -503,6 +749,19 @@ impl Server {
                 weapon: 0,
             },
         );
+        if let Some(game) = self.game.as_mut() {
+            game.player_joined(&self.world, id);
+        }
+    }
+
+    /// Health and alive flag for the snapshot of a player.
+    fn vitals(&self, id: NetId) -> (u8, bool) {
+        match self.game.as_ref().and_then(|g| g.vitals(id)) {
+            Some(Vitals { health, alive, .. }) => {
+                (health.round().clamp(0.0, f32::from(u8::MAX)) as u8, alive)
+            }
+            None => (DEFAULT_HEALTH, true),
+        }
     }
 
     /// Builds the full snapshot for one client.
@@ -511,17 +770,19 @@ impl Server {
             .players
             .iter()
             .filter_map(|(&id, p)| {
+                let state = self.world.controller_state(id);
+                let (health, alive) = self.vitals(id);
                 Some(EntityState {
                     id,
                     position: self.world.position(id)?,
                     velocity: p.velocity,
                     yaw: p.yaw,
                     pitch: p.pitch,
-                    health: STUB_HEALTH,
+                    health,
                     weapon: p.weapon,
-                    on_ground: true,
-                    sliding: false,
-                    alive: true,
+                    on_ground: state.is_none_or(|s| s.on_ground),
+                    sliding: state.is_some_and(|s| s.slide_timer > 0.0),
+                    alive,
                 })
             })
             .collect();
@@ -587,12 +848,16 @@ mod tests {
             s.tick();
         }
         let end = s.world().position(id).unwrap();
-        // Yaw 0 faces -Z; 1 s at the 5 m/s stub speed.
-        assert!((start.z - end.z - 5.0).abs() < 0.05, "{start} -> {end}");
+        // Yaw 0 faces -Z; 1 s of the character controller at 7 m/s, the
+        // first ticks accelerating.
+        let run = s.config().move_params.run_speed;
+        let moved = start.z - end.z;
+        assert!(moved > run - 1.0 && moved < run, "{start} -> {end}");
         let snap = s.snapshot_for(None);
         let e = snap.entity(id).unwrap();
         assert_eq!(e.weapon, 2);
-        assert!((e.velocity.z + 5.0).abs() < 0.05);
+        assert!((e.velocity.z + run).abs() < 0.05, "{}", e.velocity);
+        assert!(e.on_ground && e.alive);
         assert_eq!(snap.tick, Tick(60));
     }
 
@@ -607,7 +872,7 @@ mod tests {
         assert_eq!(lag.now(), Some(s.world().tick()));
         assert_eq!(lag.history(id).count(), crate::HISTORY_TICKS);
         let hb = lag.authoritative(id).unwrap();
-        assert_eq!(hb.position, s.world().position(id).unwrap());
+        assert!((hb.position - s.world().position(id).unwrap()).length() < 1e-4);
         assert_eq!(s.player_rtt(id), Some(0.0));
         // A bot shooting straight up hits nothing and leaves no trace.
         let fire = FireCommand {

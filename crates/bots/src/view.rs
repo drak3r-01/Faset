@@ -10,13 +10,10 @@ use faset_core::{NetId, Tick};
 
 use crate::NavGraph;
 
-/// Button bit of the fire intent in `InputCommand::buttons`.
-///
-/// Decision: bits 0 and 1 are jump and crouch (`faset_sim::controller`);
-/// firing travels as a mode message in `mode-fps`, so no protocol bit exists
-/// yet. Bit 2 is reserved here for the integration lot to map to a fire
-/// message.
-pub const BUTTON_FIRE: u16 = 1 << 2;
+/// Button bit of the fire intent in `InputCommand::buttons`: the protocol's
+/// own fire bit (bit 2, defined by the integration lot 4.11), which the
+/// FPS modes read for humans and bots alike.
+pub use faset_protocol::BUTTON_FIRE;
 
 /// The bot's own state, always exact (a player knows where it stands).
 #[derive(Debug, Clone, Copy, PartialEq)]

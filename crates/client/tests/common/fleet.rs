@@ -45,18 +45,24 @@ impl Transport for Counting {
 }
 
 /// A bot that runs and turns on its own schedule, so every tick changes
-/// positions, velocities and yaw.
+/// positions, velocities and yaw. Past 30 m from the centre it heads back,
+/// so it never runs off the 50 m test arena floor and falls.
 pub struct Wanderer(pub u32);
 
 impl Bot for Wanderer {
-    fn command(&mut self, _: &World, _: NetId, tick: Tick) -> InputCommand {
+    fn command(&mut self, world: &World, me: NetId, tick: Tick) -> InputCommand {
         let leg = (tick.0 + self.0 * 37) / 90;
+        let mut yaw = leg as f32 * 2.1 + self.0 as f32;
+        if let Some(p) = world.position(me).filter(|p| p.x.hypot(p.z) > 30.0) {
+            // Yaw 0 faces -Z: face the origin.
+            yaw = p.x.atan2(p.z);
+        }
         InputCommand {
             tick,
             buttons: 0,
             move_x: if leg.is_multiple_of(3) { 64 } else { 0 },
             move_y: 127,
-            yaw: faset_protocol::quant::quantize_yaw(leg as f32 * 2.1 + self.0 as f32),
+            yaw: faset_protocol::quant::quantize_yaw(yaw),
             pitch: 0,
             weapon_slot: (leg % 4) as u8,
         }

@@ -9,5 +9,6 @@ publish.workspace = true
 [dependencies]
 faset-core.workspace = true
 faset-sim.workspace = true
+faset-protocol.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

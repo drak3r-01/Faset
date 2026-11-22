@@ -35,8 +35,8 @@
 //! - Utility constants live in [`UtilityConfig`] (heal `w` = 1.8, `k` = 12 m).
 //! - Lob: the plus root of the plan's formula is the lob, the minus root the
 //!   direct arc.
-//! - The fire intent is bit 2 of `buttons` ([`BUTTON_FIRE`]); the protocol
-//!   defines no fire bit.
+//! - The fire intent is bit 2 of `buttons` ([`BUTTON_FIRE`]), the
+//!   protocol's fire bit since lot 4.11.
 //! - Plans are refreshed every 0.5 s or on a goal change (at most every
 //!   0.25 s); the first plan of each bot waits a seed-derived 0 to 29 ticks
 //!   so that 16 bots do not run A* on the same tick.

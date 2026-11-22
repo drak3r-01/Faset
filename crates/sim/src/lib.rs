@@ -19,8 +19,8 @@ pub use collision::{RayHit, StaticWorld, SweepHit, Volume};
 pub use controller::{step_player, MoveCmd, MoveEvents, MoveParams};
 pub use map_collision::MapCollision;
 pub use trace::Trace;
-pub use world::World;
-pub use zones::{ZoneEvent, Zones};
+pub use world::{MoveScale, World};
+pub use zones::{ZoneEvent, ZoneTracker, Zones};
 
 /// Fixed-step accumulator: feeds variable frame times into 1/60 s steps.
 ///
