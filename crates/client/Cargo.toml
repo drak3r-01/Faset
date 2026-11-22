@@ -14,11 +14,15 @@ faset-net.workspace = true
 faset-server.workspace = true
 faset-mapfmt.workspace = true
 faset-render.workspace = true
+faset-ui.workspace = true
+faset-mode-fps.workspace = true
+serde = { version = "1", features = ["derive"] }
 if-addrs = "0.13"
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+toml = "0.8"
 proptest.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
