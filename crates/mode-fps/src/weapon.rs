@@ -148,6 +148,18 @@ pub struct MeleeDef {
     pub arc: f32,
 }
 
+/// Status effect a quirky gadget inflicts on a hit player (lot 4.6). Applying
+/// it is up to the mode; the data only names it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum EffectDef {
+    /// Forces the victim into a slide.
+    Slide { duration: f32 },
+    /// Blinds the victim.
+    Blind { duration: f32 },
+    /// Multiplies the victim's speed by `factor` in `0..=1`.
+    Slow { duration: f32, factor: f32 },
+}
+
 fn default_burst_count() -> u32 {
     3
 }
@@ -158,6 +170,7 @@ fn default_range() -> f32 {
 
 /// A weapon, as loaded from its RON file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WeaponDef {
     /// Unique key.
     pub id: String,
@@ -191,6 +204,9 @@ pub struct WeaponDef {
     /// Required for [`WeaponKind::Melee`]; the cooldown is `60 / rpm`.
     #[serde(default)]
     pub melee: Option<MeleeDef>,
+    /// Status effect inflicted on a hit player (decision: new optional block).
+    #[serde(default)]
+    pub effect: Option<EffectDef>,
 }
 
 /// A weapon file that cannot be used.
@@ -299,6 +315,15 @@ impl WeaponDef {
                 if !(ok(e.damage) && ok(e.knockback)) {
                     return bad("explosion damage and knockback must be non-negative");
                 }
+            }
+        }
+        if let Some(e) = &self.effect {
+            let (duration, factor) = match *e {
+                EffectDef::Slide { duration } | EffectDef::Blind { duration } => (duration, 1.0),
+                EffectDef::Slow { duration, factor } => (duration, factor),
+            };
+            if !(finite_pos(duration) && (0.0..=1.0).contains(&factor)) {
+                return bad("effect duration must be positive and slow factor in 0..=1");
             }
         }
         if let Some(m) = &self.melee {

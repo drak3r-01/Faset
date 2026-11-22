@@ -1,0 +1,42 @@
+// Quirky gadget: blinds whoever it hits with a burst of confetti.
+(
+    id: "confetti_cannon",
+    kind: Projectile,
+    fire_mode: Semi,
+    rpm: 90.0,
+    pellets: 1,
+    damage: (
+        base: 5.0,
+        head_multiplier: 1.0,
+        falloff_start: 0.0,
+        falloff_end: 0.0,
+        min_multiplier: 1.0,
+    ),
+    magazine: 4,
+    reserve: 12,
+    reload_time: 1.8,
+    draw_time: 0.5,
+    range: 300.0,
+    spread: (
+        sigma_base: 0.0,
+        sigma_max: 0.0,
+        delta_beta: 0.0,
+        tau: 0.3,
+        move_multiplier: 1.6,
+        air_multiplier: 2.2,
+    ),
+    recoil: (
+        pattern: [(0.0, 0.02)],
+        random_fraction: 0.2,
+        omega: 14.0,
+    ),
+    sight: (fov: 1.2, spread_multiplier: 1.0, speed_multiplier: 1.0),
+    effect: Some(Blind(duration: 3.0)),
+    projectile: Some((
+        speed: 30.0,
+        gravity: 0.3,
+        lifetime: 2.0,
+        radius: 0.2,
+        bounces: 0,
+    )),
+)

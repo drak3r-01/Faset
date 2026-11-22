@@ -1,0 +1,8 @@
+(
+    id: "boomer",
+    health: 110.0,
+    speed_factor: 0.95,
+    class_trait: ExplosiveJump,
+    main_weapon: "boomer_rocket_launcher",
+    secondaries: ["sidearm", "baguette"],
+)

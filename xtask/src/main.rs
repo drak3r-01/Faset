@@ -11,7 +11,7 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 
 const USAGE: &str =
-    "usage: cargo xtask <check|test|render-test|build --target <t>|package|check-tag <tag>|maps validate|deny|ci>";
+    "usage: cargo xtask <check|test|render-test|build --target <t>|package|check-tag <tag>|maps validate|balance [--format text|csv]|deny|ci>";
 
 /// Targets built in the dev image. macOS targets are built by CI runners (lot 0.4).
 const TARGETS: [&str; 4] = [
@@ -38,6 +38,8 @@ fn run(args: &[&str]) -> Result<()> {
         ["package"] => package(),
         ["check-tag", tag] => check_tag(tag),
         ["maps", "validate"] => maps_validate(),
+        ["balance"] => balance(&[]),
+        ["balance", "--format", f] => balance(&["--format", f]),
         ["deny"] => deny(),
         ["ci"] => ci(),
         _ => bail!("unknown command {args:?}\n{USAGE}"),
@@ -193,6 +195,26 @@ fn package() -> Result<()> {
     fs::write(dist.join("SHA256SUMS"), sums)?;
     println!("packaged {} archive(s)", archives.len());
     Ok(())
+}
+
+/// Prints the weapon x class time-to-kill table (lot 4.6).
+fn balance(extra: &[&str]) -> Result<()> {
+    if let [_, f] = extra {
+        if !["text", "csv"].contains(f) {
+            bail!("--format expects text or csv, got `{f}`");
+        }
+    }
+    let mut args = vec![
+        "run",
+        "-q",
+        "-p",
+        "faset-mode-fps",
+        "--bin",
+        "balance",
+        "--",
+    ];
+    args.extend(extra);
+    cargo(&args)
 }
 
 /// Validates every native map of `assets/maps` with `map-tool`.
