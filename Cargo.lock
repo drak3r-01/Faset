@@ -899,8 +899,13 @@ version = "0.0.1-rc.1"
 dependencies = [
  "faset-core",
  "faset-mapfmt",
+ "faset-protocol",
  "faset-sim",
+ "libm",
  "parry3d",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
