@@ -16,6 +16,7 @@ use faset_core::{NetId, Tick};
 use faset_protocol::InputCommand;
 
 use crate::collision::StaticWorld;
+use crate::controller::MoveParams;
 use crate::rng::Pcg32;
 use crate::world::World;
 
@@ -80,7 +81,18 @@ impl Trace {
     /// Replays the trace in a fresh world on the test arena.
     #[must_use]
     pub fn replay(&self) -> Outcome {
-        let mut w = World::with_statics(self.seed, StaticWorld::test_arena());
+        self.run(World::with_statics(self.seed, StaticWorld::test_arena()))
+    }
+
+    /// Replays the trace in a fresh world on `statics` with the character
+    /// controller (lot 4.2).
+    #[must_use]
+    pub fn replay_controller(&self, statics: &StaticWorld, params: MoveParams) -> Outcome {
+        let w = World::with_controller(self.seed, statics.clone(), params);
+        self.run(w)
+    }
+
+    fn run(&self, mut w: World) -> Outcome {
         for (id, p) in &self.players {
             w.spawn_player(*id, *p);
         }

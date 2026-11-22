@@ -1001,6 +1001,8 @@ dependencies = [
  "hecs",
  "parry3d",
  "proptest",
+ "ron",
+ "serde",
  "thiserror 2.0.21",
 ]
 
