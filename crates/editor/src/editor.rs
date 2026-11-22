@@ -4,10 +4,14 @@ use faset_core::glam::Vec3;
 use faset_mapfmt::{Brush, MapFile, Meta, Prop, Symmetry, Theme};
 
 use crate::edit::Batch;
+use crate::files::FileService;
 use crate::gameplay::PlaceSettings;
 use crate::library::{Library, LibraryBounds};
 use crate::panels::PanelState;
 use crate::symmetry::Mirror;
+use crate::test_session::TestSession;
+use crate::validation::ValidationPanel;
+use crate::workflow::WorkflowUi;
 
 use crate::camera::{CameraMode, EditorCamera};
 use crate::command::{
@@ -102,6 +106,14 @@ pub struct Editor {
     pub place: PlaceSettings,
     /// State of the egui panels (search text, drafts, textures).
     pub panels: PanelState,
+    /// Live validation results.
+    pub validation: ValidationPanel,
+    /// Save, export, import and autosave, once a data folder is set.
+    pub files: Option<FileService>,
+    /// The running immediate test, until the application takes it.
+    pub test: Option<TestSession>,
+    /// State of the validation and file panels.
+    pub workflow: WorkflowUi,
     drag: Option<Drag>,
 }
 
@@ -127,6 +139,10 @@ impl Editor {
             symmetry: Symmetry::None,
             place: PlaceSettings::default(),
             panels: PanelState::default(),
+            validation: ValidationPanel::new(),
+            files: None,
+            test: None,
+            workflow: WorkflowUi::default(),
             drag: None,
         }
     }

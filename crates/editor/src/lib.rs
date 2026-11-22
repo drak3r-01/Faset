@@ -25,7 +25,11 @@
 //! every placement, deletion and handle edit also applies to its mirror twin
 //! in the same history step (see [`Mirror`]).
 //!
-//! Validation, test launch and file I/O belong to lot 5.4.
+//! Lot 5.4 adds continuous validation ([`ValidationPanel`]: the `map-tool`
+//! rules re-run after each edit, a click on an issue frames it with the
+//! camera), the immediate test ([`TestSession`]: an integrated server on the
+//! document, the player at the camera) and files ([`FileService`]: save to
+//! `maps/`, export, import, autosave every 60 s to a separate folder).
 #![forbid(unsafe_code)]
 
 mod camera;
@@ -34,6 +38,7 @@ mod create;
 mod edit;
 mod editor;
 mod element;
+mod files;
 mod gameplay;
 mod handles;
 mod library;
@@ -42,9 +47,14 @@ mod mesh;
 mod panels;
 mod snap;
 mod symmetry;
+mod test_session;
 mod ui;
+mod validation;
+mod workflow;
 
-pub use camera::{orthographic_reverse_z, ray_from_ndc, CameraInput, CameraMode, EditorCamera};
+pub use camera::{
+    orthographic_reverse_z, ray_from_ndc, CameraInput, CameraMode, EditorCamera, FOCUS_DISTANCE,
+};
 pub use command::{
     AddBrush, AddProp, Command, History, RemoveBrush, RemoveProp, ReplaceBrush, ReplaceProp,
 };
@@ -58,6 +68,7 @@ pub use element::{
     brush_aabb, brush_extent, brush_grid_bounds, element_centre, prop_rotation, ray_prop,
     resize_brush, rotate_brush, translate_brush, Element, PropBounds, Selection, UnitPropBounds,
 };
+pub use files::{FileError, FileService, Imported, AUTOSAVE_INTERVAL_S};
 pub use gameplay::{PlaceSettings, ThemePreview};
 pub use handles::{
     handle_length, pick_handle, Drag, HandleAxis, HandleMode, HANDLE_SCREEN_FRACTION,
@@ -71,3 +82,6 @@ pub use mesh::{Block, MeshCache};
 pub use panels::{LibraryTab, PanelState};
 pub use snap::SnapSettings;
 pub use symmetry::Mirror;
+pub use test_session::{TestError, TestSession};
+pub use validation::{validate_bytes, Severity, ValidationIssue, ValidationPanel, DEBOUNCE_S};
+pub use workflow::WorkflowUi;

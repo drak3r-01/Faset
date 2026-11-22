@@ -8,12 +8,17 @@ publish.workspace = true
 
 [dependencies]
 faset-assets.workspace = true
+faset-client = { path = "../client", version = "0.0.1-rc.1" }
 faset-core.workspace = true
 faset-mapfmt.workspace = true
+faset-net.workspace = true
 faset-render.workspace = true
+faset-server.workspace = true
+faset-sim.workspace = true
 faset-ui.workspace = true
+map-tool = { path = "../../tools/map-tool", version = "0.0.1-rc.1" }
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-map-tool = { path = "../../tools/map-tool", version = "0.0.1-rc.1" }
+faset-protocol.workspace = true
