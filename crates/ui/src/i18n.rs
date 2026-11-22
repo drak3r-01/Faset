@@ -25,11 +25,13 @@ const EN: &[(&str, &str)] = &[
     ("host.title", "Play"),
     ("join.address", "Address"),
     ("join.connect", "Connect"),
+    ("join.favourite", "Favourite"),
     ("join.favourites", "Favourites"),
     ("join.history", "Recent servers"),
     ("join.lan", "Servers on the local network"),
     ("join.none", "None yet"),
     ("join.title", "Join"),
+    ("join.unfavourite", "Unfavourite"),
     ("loading.map", "Loading the map"),
     ("loading.title", "Loading"),
     (

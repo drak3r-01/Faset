@@ -30,6 +30,10 @@
 //!   prediction, interpolation over a memory or UDP link) and the [`App`] that
 //!   ties them to the menus; the `faset` executable (`src/bin/faset.rs`) puts a
 //!   window, the renderer and egui around it.
+//! * [`host_flow`], [`join`], [`favorites`] (lot 6.2): the play screen's request
+//!   becomes a [`HostConfig`] (match, rotation, bots), a [`JoinTarget`] is an
+//!   address or a LAN entry, and [`Favorites`] keeps favourites and history in
+//!   `favorites.ron`.
 //! * [`interpolation`]: shows remote entities a deliberate delay in the
 //!   past with Hermite interpolation between snapshots, extrapolating for at
 //!   most a quarter of a second, and gives the [`ViewTime`] a fire command
@@ -53,10 +57,13 @@ pub mod app;
 pub mod camera;
 pub mod clock;
 pub mod discovery;
+pub mod favorites;
 pub mod feel;
+pub mod host_flow;
 pub mod hosting;
 pub mod hud;
 pub mod interpolation;
+pub mod join;
 pub mod map_load;
 pub mod map_sync;
 pub mod prediction;
@@ -74,7 +81,12 @@ pub use discovery::{
     GAME_PORT, REFRESH_INTERVAL,
 };
 pub use feel::{cm_per_360, degrees_per_count, CriticalSpring, FeelParams, DEGREES_PER_COUNT};
-pub use hosting::{host_game, HostConfig, HostError, HostHandle, LanStatus};
+pub use favorites::{data_dir, Favorites, FavoritesError};
+pub use host_flow::host_config;
+pub use hosting::{
+    host_game, HostConfig, HostError, HostHandle, HostRotation, LanStatus, TickHook,
+};
+pub use join::JoinTarget;
 pub use hud::FpsHud;
 pub use interpolation::{
     hermite, interpolation_delay, lerp_angle, InterpolationBuffer, InterpolationConfig,

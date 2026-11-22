@@ -72,6 +72,8 @@ pub enum UiCommand {
     StartMatch(PlayRequest),
     /// Connect to the server at this address.
     Connect(String),
+    /// Add the address to the favourites, or remove it (lot 6.2).
+    ToggleFavourite(String),
     /// Leave the running match and return to the main menu.
     LeaveMatch,
 }
@@ -140,7 +142,7 @@ impl Default for PlayRequest {
             rotation: false,
             bots: 0,
             bot_level: 2,
-            max_players: 8,
+            max_players: 16,
             lan: false,
             password: String::new(),
             settings: Settings::new(),
@@ -157,6 +159,8 @@ pub struct ServerRow {
     pub address: String,
     /// Players present and capacity.
     pub players: (u16, u16),
+    /// Map in play.
+    pub map: String,
 }
 
 /// Data the screens read and edit.
@@ -221,7 +225,7 @@ impl MenuModel {
     }
 }
 
-fn panel(ctx: &egui::Context, theme: &Theme, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+pub(crate) fn panel(ctx: &egui::Context, theme: &Theme, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     egui::Window::new(title)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .collapsible(false)
@@ -247,7 +251,7 @@ fn wide_button(ui: &mut egui::Ui, key: &str) -> bool {
         .clicked()
 }
 
-fn back(ui: &mut egui::Ui, cmds: &mut Vec<UiCommand>) {
+pub(crate) fn back(ui: &mut egui::Ui, cmds: &mut Vec<UiCommand>) {
     ui.add_space(8.0);
     if wide_button(ui, "nav.back") {
         cmds.push(UiCommand::Pop);
@@ -278,51 +282,6 @@ pub fn main_menu(ctx: &egui::Context, theme: &Theme, cmds: &mut Vec<UiCommand>) 
             }
             ui.add_space(4.0);
         }
-    });
-}
-
-/// Join screen: LAN servers, connect by address, favourites and history.
-pub fn server_browser(
-    ctx: &egui::Context,
-    theme: &Theme,
-    model: &mut MenuModel,
-    cmds: &mut Vec<UiCommand>,
-) {
-    panel(ctx, theme, text("join.title"), |ui| {
-        ui.label(text("join.lan"));
-        if model.lan_servers.is_empty() {
-            ui.colored_label(theme.text_muted, text("join.none"));
-        }
-        for row in &model.lan_servers {
-            let label = format!("{}  {}/{}", row.name, row.players.0, row.players.1);
-            if ui.button(label).clicked() {
-                cmds.push(UiCommand::Connect(row.address.clone()));
-            }
-        }
-        ui.add_space(8.0);
-        ui.label(text("join.address"));
-        ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut model.address);
-            if ui.button(text("join.connect")).clicked() && !model.address.trim().is_empty() {
-                cmds.push(UiCommand::Connect(model.address.trim().to_owned()));
-            }
-        });
-        for (key, list) in [
-            ("join.favourites", &model.favourites),
-            ("join.history", &model.history),
-        ] {
-            ui.add_space(8.0);
-            ui.label(text(key));
-            if list.is_empty() {
-                ui.colored_label(theme.text_muted, text("join.none"));
-            }
-            for address in list {
-                if ui.button(address).clicked() {
-                    cmds.push(UiCommand::Connect(address.clone()));
-                }
-            }
-        }
-        back(ui, cmds);
     });
 }
 
@@ -535,7 +494,7 @@ pub fn show_state(
     match state {
         AppState::Boot => boot(ctx, theme, cmds),
         AppState::MainMenu => main_menu(ctx, theme, cmds),
-        AppState::ServerBrowser => server_browser(ctx, theme, model, cmds),
+        AppState::ServerBrowser => crate::browser::server_browser(ctx, theme, model, cmds),
         AppState::HostSetup => host_setup(ctx, theme, model, cmds),
         AppState::Loadout => loadout(ctx, theme, cmds),
         AppState::Settings => settings(ctx, theme, cmds),

@@ -21,7 +21,10 @@ use std::thread::JoinHandle;
 use faset_net::{
     Datagram, MemoryAddr, MemoryNetwork, MemoryTransport, Transport, TransportError, UdpTransport,
 };
-use faset_server::{Bot, ConfigError, Server, ServerConfig};
+use faset_minigame_api::Match;
+use faset_server::{
+    Bot, ConfigError, MapProvider, RotationConfig, Server, ServerConfig, TickClock,
+};
 
 use crate::discovery::{DiscoveryResponder, ServerInfo, DISCOVERY_PORT, GAME_PORT};
 
@@ -53,6 +56,33 @@ pub struct HostConfig {
     pub discovery_port: u16,
     /// Bots added when the server starts.
     pub bots: Vec<Box<dyn Bot>>,
+    /// Builds the mini-game match the server hosts (lot 6.2), if any. Runs
+    /// on the server thread: a [`Match`] cannot cross threads.
+    pub game: Option<GameFactory>,
+    /// The map rotation (lot 6.2), if any.
+    pub rotation: Option<HostRotation>,
+    /// Names of the rotation's maps, in the provider's order; the LAN
+    /// announcement follows the map in play.
+    pub map_names: Vec<String>,
+    /// Called on the server thread after every tick (bots get new brains
+    /// there when the map changes).
+    pub tick_hook: Option<TickHook>,
+}
+
+/// Builds the hosted match on the server thread.
+pub type GameFactory = Box<dyn FnOnce() -> Option<Match> + Send>;
+
+/// Called on the server thread after every tick.
+pub type TickHook = Box<dyn FnMut(&mut Server) + Send>;
+
+/// A map rotation for the integrated server.
+pub struct HostRotation {
+    /// Timing and order.
+    pub config: RotationConfig,
+    /// The maps.
+    pub provider: Arc<dyn MapProvider>,
+    /// Index of the map the server starts on.
+    pub current: usize,
 }
 
 impl HostConfig {
@@ -67,6 +97,10 @@ impl HostConfig {
             game_port: GAME_PORT,
             discovery_port: DISCOVERY_PORT,
             bots: Vec::new(),
+            game: None,
+            rotation: None,
+            map_names: Vec::new(),
+            tick_hook: None,
         }
     }
 }
@@ -179,8 +213,12 @@ fn run_server(
     let HostConfig {
         server: server_config,
         name,
-        map_name,
+        mut map_name,
         bots,
+        game,
+        rotation,
+        map_names,
+        mut tick_hook,
         ..
     } = config;
     let transports = vec![memory.into(), LanSlot(slot).into()];
@@ -191,30 +229,53 @@ fn run_server(
             return;
         }
     };
+    if let Some(game) = game.and_then(|build| build()) {
+        server.host_match(game);
+    }
+    if let Some(r) = rotation {
+        server.set_rotation(r.config, r.provider, r.current);
+    }
     for bot in bots {
         if server.add_bot(bot).is_none() {
             tracing::warn!("no room for a bot");
         }
     }
     let mut responder: Option<(DiscoveryResponder, u16)> = None;
-    server.run_until(|s| {
-        let count = s.players().count();
+    let mut clock = TickClock::new(server.config().tick_rate);
+    loop {
+        for _ in 0..clock.wait() {
+            server.tick();
+            if let Some(hook) = tick_hook.as_mut() {
+                hook(&mut server);
+            }
+        }
+        let count = server.players().count();
         players.store(count, Ordering::Relaxed);
+        if let Some(name) = server
+            .rotation_current()
+            .and_then(|i| map_names.get(i))
+            .filter(|n| **n != map_name)
+        {
+            map_name.clone_from(name);
+        }
         if let Ok(r) = from_handle.try_recv() {
             responder = Some(r);
         }
         if let Some((r, game_port)) = &responder {
             r.poll(&ServerInfo {
                 name: name.clone(),
-                mode: s.config().mode,
+                mode: server.config().mode,
                 map: map_name.clone(),
                 players: u16::try_from(count).unwrap_or(u16::MAX),
-                max_players: u16::try_from(s.config().limits.max_players).unwrap_or(u16::MAX),
+                max_players: u16::try_from(server.config().limits.max_players)
+                    .unwrap_or(u16::MAX),
                 game_port: *game_port,
             });
         }
-        stop.load(Ordering::Relaxed)
-    });
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+    }
 }
 
 impl HostHandle {

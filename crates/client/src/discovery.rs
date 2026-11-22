@@ -234,6 +234,12 @@ impl ServerBrowser {
         })
     }
 
+    /// How long ago `entry` last answered, on the browser's clock.
+    #[must_use]
+    pub fn age(&self, entry: &ServerEntry) -> Duration {
+        self.now.saturating_sub(entry.last_seen)
+    }
+
     /// The servers currently known, in order of first discovery.
     #[must_use]
     pub fn entries(&self) -> &[ServerEntry] {

@@ -139,13 +139,22 @@ impl Session {
         map_name: &str,
         open_to_lan: bool,
     ) -> Result<Self, SessionError> {
-        let (seed, statics, zones) = (
-            server.seed,
-            server.map.statics.clone(),
-            server.map.zones.clone(),
-        );
         let mut config = HostConfig::new(server);
         config.map_name = map_name.to_owned();
+        Self::hosted(config, open_to_lan)
+    }
+
+    /// Starts the integrated server described by `config` (match, rotation
+    /// and bots included, see [`crate::host_config`]) and joins it.
+    ///
+    /// # Errors
+    /// The server configuration is invalid or its thread cannot start.
+    pub fn hosted(config: HostConfig, open_to_lan: bool) -> Result<Self, SessionError> {
+        let (seed, statics, zones) = (
+            config.server.seed,
+            config.server.map.statics.clone(),
+            config.server.map.zones.clone(),
+        );
         let host = host_game(config, open_to_lan)?;
         let (transport, addr) = host.connect_local();
         let conn = Box::new(ClientEndpoint::new(transport, addr));

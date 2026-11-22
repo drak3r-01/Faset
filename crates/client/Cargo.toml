@@ -22,6 +22,10 @@ faset-ui.workspace = true
 faset-minigame-api.workspace = true
 faset-mode-fps.workspace = true
 faset-mode-race.workspace = true
+faset-bots.workspace = true
+# Bot brains and the match provider of the integrated server (lot 6.2).
+dedicated = { path = "../dedicated" }
+ron = "0.12"
 anyhow = "1"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
