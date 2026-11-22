@@ -1,0 +1,20 @@
+[package]
+name = "faset-mode-fps"
+description = "FPS core: hitscan weapons, spread, recoil, damage chain, respawn choice and the base FPS mode."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+faset-core.workspace = true
+faset-sim.workspace = true
+faset-server.workspace = true
+faset-minigame-api.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+libm = "0.2"
+parry3d = "0.31"
+

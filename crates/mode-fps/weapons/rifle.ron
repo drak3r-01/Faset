@@ -1,0 +1,34 @@
+// Assault rifle: automatic, 600 rpm (0.1 s between shots).
+(
+    id: "rifle",
+    kind: Hitscan,
+    fire_mode: Auto,
+    rpm: 600.0,
+    pellets: 1,
+    damage: (
+        base: 22.0,
+        head_multiplier: 2.0,
+        falloff_start: 25.0,
+        falloff_end: 70.0,
+        min_multiplier: 0.5,
+    ),
+    magazine: 30,
+    reserve: 120,
+    reload_time: 2.2,
+    draw_time: 0.5,
+    range: 300.0,
+    spread: (
+        sigma_base: 0.003,
+        sigma_max: 0.05,
+        delta_beta: 0.004,
+        tau: 0.25,
+        move_multiplier: 2.0,
+        air_multiplier: 3.0,
+    ),
+    recoil: (
+        pattern: [(0.0, 0.010), (0.002, 0.011), (-0.002, 0.012), (0.004, 0.012), (-0.004, 0.012), (0.003, 0.010)],
+        random_fraction: 0.2,
+        omega: 14.0,
+    ),
+    sight: (fov: 1.1, spread_multiplier: 0.6, speed_multiplier: 0.8),
+)
