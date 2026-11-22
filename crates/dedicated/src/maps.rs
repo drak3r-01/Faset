@@ -93,6 +93,17 @@ impl Catalog {
         self.maps.iter().map(|(n, _)| n.as_str())
     }
 
+    /// The file bytes of a map as clients load them (the transfer payload);
+    /// `None` for the embedded test arena, which has no file.
+    #[must_use]
+    pub fn file_bytes(&self, name: &str) -> Option<Vec<u8>> {
+        match self.maps.iter().find(|(n, _)| n == name)? {
+            (_, MapSource::Embedded) if name == TEST_ARENA => None,
+            (_, MapSource::Embedded) => Some(EXAMPLE_RON.as_bytes().to_vec()),
+            (_, MapSource::File(p)) => std::fs::read(p).ok(),
+        }
+    }
+
     /// Loads a map.
     ///
     /// # Errors

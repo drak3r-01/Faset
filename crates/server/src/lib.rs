@@ -45,10 +45,15 @@ mod commands;
 mod config;
 pub mod lag_compensation;
 mod link;
+pub mod rotation;
 mod server;
 mod services;
 pub mod snapshot;
+pub mod transfer;
 
+pub use rotation::{
+    MapOrder, MapProvider, PreparedMap, Rotation, RotationAction, RotationConfig, RotationOrder,
+};
 pub use services::{ModeServices, VIEW_DELAY};
 
 pub use clock::{TickClock, MAX_CATCH_UP};

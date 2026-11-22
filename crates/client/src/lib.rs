@@ -23,6 +23,8 @@
 //! * [`hud`]: draws the FPS HUD model with egui.
 //! * [`map_load`]: turns a map file into collisions and render meshes (steps 1
 //!   to 3 of the map load pipeline) and uploads the meshes.
+//! * [`map_sync`]: the map cache (by fingerprint) and the `MapChange` and map
+//!   download handler (lot 5.1).
 //! * [`interpolation`]: shows remote entities a deliberate delay in the
 //!   past with Hermite interpolation between snapshots, extrapolating for at
 //!   most a quarter of a second, and gives the [`ViewTime`] a fire command
@@ -50,6 +52,7 @@ pub mod hosting;
 pub mod hud;
 pub mod interpolation;
 pub mod map_load;
+pub mod map_sync;
 pub mod prediction;
 
 pub use camera::{CameraPose, FirstPersonCamera, Look};
@@ -70,6 +73,7 @@ pub use interpolation::{
     DEFAULT_SNAPSHOT_INTERVAL, MAX_EXTRAPOLATION,
 };
 pub use map_load::{load_map, LoadedMap, MapLoadError};
+pub use map_sync::{MapCache, MapEvent, MapSync, MapSyncError};
 pub use prediction::{
     AuthoritativeState, HistoryEntry, PredictedState, Prediction, PredictionError,
     PredictionHistory, ReconcileOutcome, Tolerance, VisualOffset, COMMANDS_PER_PACKET,

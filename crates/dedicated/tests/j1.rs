@@ -139,8 +139,11 @@ fn two_clients_move_under_packet_loss_then_server_stops() {
         assert_eq!(c.latest.as_ref().unwrap().entities.len(), 2);
     }
 
+    // `ServerEndpoint::disconnect` does not notify the peer: clients notice the
+    // shutdown through their own timeout (about 9.8 s), so allow twice that
+    // (lot 5.1: 10 s made this test fail under CI load).
     stop.store(true, Ordering::Relaxed);
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline && clients.iter().any(|c| c.endpoint.is_connected()) {
         for c in &mut clients {
             c.step(false);

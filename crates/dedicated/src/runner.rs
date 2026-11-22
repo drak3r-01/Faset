@@ -8,17 +8,20 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use faset_core::{NetId, Tick};
-use faset_minigame_api::{Match, MatchConfig, Registry, SettingValue, TIME_LIMIT_SETTING};
+use faset_minigame_api::Registry;
 use faset_mode_fps::{register_modes, FpsRules};
 use faset_net::UdpTransport;
 use faset_protocol::InputCommand;
-use faset_server::{Bot, Server, ServerConfig, ServerTransport, TickClock};
+use faset_server::{
+    Bot, RotationConfig, RotationOrder, Server, ServerConfig, ServerTransport, TickClock,
+};
 use faset_sim::World;
 
 use crate::console::{self, Command};
 use crate::fps_bot::{level_of, BotMap, FpsBot};
 use crate::maps::Catalog;
-use crate::settings::{Cli, Settings};
+use crate::provider::{build_match, CatalogMaps, SharedBotMap};
+use crate::settings::{self, Cli, Settings};
 
 /// Ticks run after the shutdown disconnects so the packets are flushed.
 const FLUSH_TICKS: u32 = 3;
@@ -51,6 +54,11 @@ pub struct Dedicated {
     catalog: Catalog,
     map: String,
     bots: Vec<NetId>,
+    /// The rules bots read their class from.
+    rules: FpsRules,
+    /// Bot map of the latest map switch, and the switches seen so far.
+    bot_map_slot: Option<SharedBotMap>,
+    generation: u32,
 }
 
 impl Dedicated {
@@ -92,21 +100,27 @@ impl Dedicated {
         config.limits.max_players = settings.max_players;
         let mut server = Server::new(config, transports).context("invalid server config")?;
         if let Some(entry) = &entry {
-            let mut match_settings = faset_minigame_api::Settings::new();
-            match_settings.set(
-                TIME_LIMIT_SETTING,
-                SettingValue::Int(i32::try_from(settings.rotation_seconds).unwrap_or(i32::MAX)),
-            );
-            let match_config = MatchConfig {
-                spawn_points: loaded.config.spawn_points.clone(),
-                objectives: loaded.objectives.clone(),
-                pickups: loaded.pickups.clone(),
-                rotation: settings.rotation.clone(),
-                settings: match_settings,
-                ..MatchConfig::default()
-            };
-            let game = Match::new(entry, match_config).context("invalid match settings")?;
+            let game = build_match(entry, &settings, &loaded).context("invalid match settings")?;
             server.host_match(game);
+        }
+        // Lot 5.1: more than one map, or a match to restart, means a rotation.
+        let mut bot_map_slot = None;
+        if settings.rotation.len() > 1 || entry.is_some() {
+            let provider = CatalogMaps::new(catalog.clone(), &settings, entry.clone());
+            bot_map_slot = Some(provider.bot_map_slot());
+            server.set_rotation(
+                RotationConfig {
+                    rotation_seconds: settings.rotation_seconds,
+                    order: match settings.rotation_order {
+                        settings::RotationOrder::Sequential => RotationOrder::Sequential,
+                        settings::RotationOrder::Random => RotationOrder::RandomNoRepeat,
+                    },
+                    seed: settings.seed,
+                    ..RotationConfig::default()
+                },
+                std::sync::Arc::new(provider),
+                0,
+            );
         }
         let bot_map = match (&entry, &loaded.file) {
             (Some(_), Some(file)) if settings.bots > 0 => {
@@ -140,6 +154,9 @@ impl Dedicated {
             catalog,
             map,
             bots,
+            rules,
+            bot_map_slot,
+            generation: 0,
         })
     }
 
@@ -152,6 +169,40 @@ impl Dedicated {
     /// Advances the server by one tick (tests drive it on a virtual clock).
     pub fn tick(&mut self) {
         self.server.tick();
+        self.refresh_after_map_change();
+    }
+
+    /// After a map switch the bots get brains on the new navigation graph
+    /// and the map name follows the rotation.
+    fn refresh_after_map_change(&mut self) {
+        let generation = self.server.map_generation();
+        if generation == self.generation {
+            return;
+        }
+        self.generation = generation;
+        if let Some(name) = self
+            .server
+            .rotation_current()
+            .and_then(|i| self.settings.rotation.get(i))
+        {
+            self.map.clone_from(name);
+        }
+        let map = self
+            .bot_map_slot
+            .as_ref()
+            .and_then(|s| s.lock().ok().and_then(|m| m.clone()));
+        if let Some(map) = map {
+            for (i, &id) in self.bots.iter().enumerate() {
+                let brain = FpsBot::new(
+                    level_of(self.settings.bot_level),
+                    self.settings.seed ^ (i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                    Arc::clone(&map),
+                    &self.rules,
+                    i,
+                );
+                self.server.set_bot_brain(id, Box::new(brain));
+            }
+        }
     }
 
     /// Ids of the bots.
@@ -207,7 +258,10 @@ impl Dedicated {
                 out.push(match self.catalog.load(&name) {
                     Err(e) => e,
                     Ok(_) if name == self.map => format!("already on {name}"),
-                    Ok(_) => "map change at runtime needs a server API (rotation lot 5.x)".into(),
+                    Ok(_) => {
+                        "changing the map by hand is not supported yet: the rotation switches maps"
+                            .into()
+                    }
                 });
             }
         }
@@ -244,7 +298,7 @@ impl Dedicated {
                 break;
             }
             for _ in 0..clock.wait() {
-                self.server.tick();
+                self.tick();
             }
         }
         self.shutdown();
@@ -331,6 +385,36 @@ mod tests {
         assert!(d.execute(Command::Map("nope".into())).0[0].contains("unknown"));
         assert!(d.execute(Command::Map("test-arena".into())).0[0].contains("already"));
         assert!(d.execute(Command::Quit).1);
+    }
+
+    #[test]
+    fn the_rotation_switches_maps_and_keeps_the_bots() {
+        let settings = Settings {
+            bots: 2,
+            game_mode: "fps.ffa".into(),
+            rotation: vec!["example".into(), "test-arena".into(), "example".into()],
+            rotation_seconds: 60,
+            rotation_order: settings::RotationOrder::Sequential,
+            ..Settings::default()
+        };
+        let mut d = Dedicated::new(settings, Catalog::default(), Vec::new()).unwrap();
+        let example = d.server.config().map.fingerprint;
+        // 60 s of play (the shortest time limit), 8 s of scoreboard, then the switch.
+        for _ in 0..(68 * 60 + 5) {
+            d.tick();
+        }
+        assert_eq!(d.server.map_generation(), 1);
+        assert_eq!(d.map, "test-arena");
+        assert_ne!(d.server.config().map.fingerprint, example);
+        assert_eq!(d.server.players().count(), 2, "bots stay");
+        assert!(d.server.game().is_some(), "warm-up of the new map");
+        // And on to the third map.
+        for _ in 0..(68 * 60 + 5) {
+            d.tick();
+        }
+        assert_eq!(d.server.map_generation(), 2);
+        assert_eq!(d.map, "example");
+        assert_eq!(d.server.config().map.fingerprint, example);
     }
 
     #[test]

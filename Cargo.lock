@@ -920,6 +920,7 @@ version = "0.0.1-rc.1"
 dependencies = [
  "faset-core",
  "faset-mapfmt",
+ "faset-minigame-api",
  "faset-mode-fps",
  "faset-net",
  "faset-protocol",
@@ -1065,6 +1066,7 @@ dependencies = [
  "faset-net",
  "faset-protocol",
  "faset-sim",
+ "miniz_oxide 0.8.9",
  "parry3d",
  "proptest",
  "thiserror 2.0.21",
