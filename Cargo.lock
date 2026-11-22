@@ -940,6 +940,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "faset-editor"
+version = "0.0.1-rc.1"
+dependencies = [
+ "faset-core",
+ "faset-mapfmt",
+ "faset-render",
+ "faset-ui",
+ "tracing",
+]
+
+[[package]]
 name = "faset-mapfmt"
 version = "0.0.1-rc.1"
 dependencies = [
