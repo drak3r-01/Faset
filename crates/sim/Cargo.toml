@@ -13,6 +13,8 @@ faset-mapfmt.workspace = true
 thiserror.workspace = true
 hecs = "0.10"
 parry3d = "0.31"
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
 
 [dev-dependencies]
 proptest.workspace = true

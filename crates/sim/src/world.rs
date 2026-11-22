@@ -12,6 +12,7 @@ use crate::collision::StaticWorld;
 use crate::components::{
     Health, Inventory, PlayerState, Team, Transform, Velocity, WeaponState, STANDING_HEIGHT,
 };
+use crate::controller::{self, MoveCmd, MoveParams};
 
 /// Stub walk speed in m/s (real movement equations arrive with lots 4.x).
 const STUB_SPEED: f32 = 5.0;
@@ -41,6 +42,8 @@ pub struct World {
     seed: u64,
     /// Ascending `NetId` order; never a hash table.
     players: BTreeMap<NetId, Entity>,
+    /// Character controller parameters; `None` keeps the stub movement.
+    controller: Option<MoveParams>,
 }
 
 impl World {
@@ -58,7 +61,56 @@ impl World {
             tick: Tick(0),
             seed,
             players: BTreeMap::new(),
+            controller: None,
         }
+    }
+
+    /// World whose players move with the character controller (lot 4.2)
+    /// instead of the stub walk.
+    ///
+    /// Decision: opt-in, so the server and the client prediction keep the
+    /// stub until a lot that owns them switches (their tests assume the
+    /// 5 m/s stub, and prediction must restore the whole
+    /// [`controller::PlayerState`] on a correction, see
+    /// [`Self::set_controller_state`]).
+    #[must_use]
+    pub fn with_controller(seed: u64, statics: StaticWorld, params: MoveParams) -> Self {
+        Self {
+            controller: Some(params),
+            ..Self::with_statics(seed, statics)
+        }
+    }
+
+    /// Controller parameters, if the controller is on.
+    #[must_use]
+    pub fn move_params(&self) -> Option<&MoveParams> {
+        self.controller.as_ref()
+    }
+
+    /// Controller state of a player (controller worlds only).
+    #[must_use]
+    pub fn controller_state(&self, id: NetId) -> Option<controller::PlayerState> {
+        let e = *self.players.get(&id)?;
+        self.ecs.get::<&controller::PlayerState>(e).ok().map(|s| *s)
+    }
+
+    /// Replaces the controller state of a player (controller worlds only),
+    /// e.g. to restore a server state before replaying commands. Returns
+    /// `false` when the player or its controller state is missing.
+    pub fn set_controller_state(&mut self, id: NetId, state: controller::PlayerState) -> bool {
+        let Some(&e) = self.players.get(&id) else {
+            return false;
+        };
+        let Ok((t, v, s)) = self
+            .ecs
+            .query_one_mut::<(&mut Transform, &mut Velocity, &mut controller::PlayerState)>(e)
+        else {
+            return false;
+        };
+        *s = state;
+        t.position = state.pos;
+        v.0 = state.vel;
+        true
     }
 
     #[must_use]
@@ -91,6 +143,10 @@ impl World {
             WeaponState::default(),
             Team::default(),
         ));
+        if self.controller.is_some() {
+            let state = controller::PlayerState::spawn(position);
+            self.ecs.insert_one(e, state).ok();
+        }
         self.players.insert(id, e);
     }
 
@@ -130,6 +186,10 @@ impl World {
     }
 
     fn system_movement(&mut self, cmds: &[(NetId, InputCommand)]) {
+        if let Some(params) = self.controller {
+            self.system_controller(cmds, &params);
+            return;
+        }
         for (id, cmd) in cmds {
             let Some(&e) = self.players.get(id) else {
                 continue;
@@ -153,6 +213,27 @@ impl World {
         }
     }
 
+    fn system_controller(&mut self, cmds: &[(NetId, InputCommand)], params: &MoveParams) {
+        for (id, cmd) in cmds {
+            let Some(&e) = self.players.get(id) else {
+                continue;
+            };
+            let Ok((t, v, s)) =
+                self.ecs
+                    .query_one_mut::<(&mut Transform, &mut Velocity, &mut controller::PlayerState)>(
+                        e,
+                    )
+            else {
+                continue;
+            };
+            controller::step_player_in(s, MoveCmd::from(*cmd), &self.statics, params, DT);
+            t.position = s.pos;
+            t.yaw = dequantize_yaw(cmd.yaw);
+            t.pitch = dequantize_pitch_command(cmd.pitch);
+            v.0 = s.vel;
+        }
+    }
+
     /// FNV-1a hash of the full simulation state, iterating by ascending `NetId`.
     #[must_use]
     pub fn state_hash(&self) -> u64 {
@@ -172,6 +253,11 @@ impl World {
             }
             if let Ok(hp) = self.ecs.get::<&Health>(e) {
                 h.write(&hp.0.to_le_bytes());
+            }
+            if let Ok(s) = self.ecs.get::<&controller::PlayerState>(e) {
+                for b in s.bits() {
+                    h.write(&b.to_le_bytes());
+                }
             }
         }
         h.0
@@ -245,5 +331,47 @@ mod tests {
         }
         let p = w.position(NetId(1)).unwrap();
         assert!(p.x > 9.0 && p.x <= 9.66, "{p}");
+    }
+
+    #[test]
+    fn controller_world_lands_runs_and_stops_at_wall() {
+        let params = MoveParams::default();
+        let mut w = World::with_controller(1, StaticWorld::test_arena(), params);
+        assert!(w.move_params().is_some());
+        w.spawn_player(NetId(1), Vec3::new(0.0, 2.0, 0.0));
+        let yaw = faset_protocol::quant::quantize_yaw(3.0 * std::f32::consts::FRAC_PI_2);
+        let cmd = InputCommand {
+            tick: Tick(0),
+            buttons: 0,
+            move_x: 0,
+            move_y: 127,
+            yaw,
+            pitch: 0,
+            weapon_slot: 0,
+        };
+        for _ in 0..120 {
+            w.step(&[(NetId(1), cmd)]);
+        }
+        let s = w.controller_state(NetId(1)).unwrap();
+        assert!(s.on_ground);
+        assert!(s.feet().y.abs() <= 2.0 * controller::SKIN, "{}", s.feet());
+        assert!(s.pos.x > 9.0 && s.pos.x < 10.0 - 0.35, "{}", s.pos);
+        assert_eq!(w.position(NetId(1)), Some(s.pos));
+
+        // Restoring a state makes the next steps identical.
+        let mut other = World::with_controller(1, StaticWorld::test_arena(), params);
+        other.spawn_player(NetId(1), Vec3::ZERO);
+        assert!(other.set_controller_state(NetId(1), s));
+        w.step(&[(NetId(1), cmd)]);
+        other.step(&[(NetId(1), cmd)]);
+        assert_eq!(
+            w.controller_state(NetId(1)),
+            other.controller_state(NetId(1))
+        );
+        // A stub world has no controller state.
+        let mut stub = World::new(1);
+        stub.spawn_player(NetId(1), Vec3::ZERO);
+        assert!(stub.controller_state(NetId(1)).is_none());
+        assert!(!stub.set_controller_state(NetId(1), s));
     }
 }

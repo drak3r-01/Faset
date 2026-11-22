@@ -7,12 +7,14 @@
 
 pub mod collision;
 pub mod components;
+pub mod controller;
 pub mod map_collision;
 pub mod rng;
 pub mod trace;
 pub mod world;
 
 pub use collision::{RayHit, StaticWorld, SweepHit, Volume};
+pub use controller::{step_player, MoveCmd, MoveEvents, MoveParams};
 pub use map_collision::MapCollision;
 pub use trace::Trace;
 pub use world::World;

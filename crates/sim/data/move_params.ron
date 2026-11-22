@@ -1,0 +1,26 @@
+// Character controller parameters (lot 4.2, plan section 15).
+// Units: metre, second. Missing fields take their default value.
+(
+    run_speed: 7.0,
+    ground_accel: 10.0,
+    friction: 6.0,
+    stop_speed: 2.0,
+    air_accel: 10.0,
+    air_wish_cap: 0.8,
+    gravity: 20.0,
+    jump_speed: 6.5,
+    slide_friction: 0.8,
+    slide_impulse: 2.5,
+    max_step: 0.45,
+    max_slope_deg: 45.0,
+    max_speed: 30.0,
+    jump_buffer: 0.1,
+    coyote_time: 0.08,
+    auto_hop: true,
+    soft_brake_speed: 15.0,
+    soft_brake_fraction: 0.25,
+    ground_probe: 0.05,
+    snap_down: 0.3,
+    crouch_speed_scale: 0.5,
+    eye_speed: 8.0,
+)
