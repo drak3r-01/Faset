@@ -4,7 +4,7 @@ use std::fmt;
 
 use faset_core::glam::Vec3;
 use faset_core::TICK_RATE;
-use faset_sim::StaticWorld;
+use faset_sim::{MoveParams, StaticWorld, Zones};
 
 use crate::snapshot::MAX_SNAPSHOT_ENTITIES;
 
@@ -66,6 +66,9 @@ pub struct MapConfig {
     pub fingerprint: u64,
     /// Capsule-centre spawn positions, used round-robin by player id.
     pub spawn_points: Vec<Vec3>,
+    /// Gameplay zones (jump pads, teleporters, kill volumes, objectives),
+    /// applied by the character controller (lot 4.11).
+    pub zones: Zones,
 }
 
 impl fmt::Debug for MapConfig {
@@ -74,6 +77,7 @@ impl fmt::Debug for MapConfig {
             .field("volumes", &self.statics.volumes().len())
             .field("fingerprint", &format_args!("{:016x}", self.fingerprint))
             .field("spawn_points", &self.spawn_points)
+            .field("zones", &self.zones.volumes().len())
             .finish()
     }
 }
@@ -88,6 +92,7 @@ impl Default for MapConfig {
             spawn_points: (0..8u8)
                 .map(|i| Vec3::new(0.0, 0.91, 2.0 * f32::from(i)))
                 .collect(),
+            zones: Zones::default(),
         }
     }
 }
@@ -109,6 +114,9 @@ pub struct ServerConfig {
     pub map: MapConfig,
     /// Capacity and timeout limits.
     pub limits: Limits,
+    /// Character controller parameters of every player (lot 4.11: the
+    /// server and the client prediction run `faset_sim::controller`).
+    pub move_params: MoveParams,
 }
 
 impl Default for ServerConfig {
@@ -121,6 +129,7 @@ impl Default for ServerConfig {
             seed: 0,
             map: MapConfig::default(),
             limits: Limits::default(),
+            move_params: MoveParams::default(),
         }
     }
 }

@@ -1,14 +1,17 @@
 //! What a mode sees and can do: [`ModeCtx`] (server) and [`HudCtx`] (client).
 
+use std::any::Any;
+
 use faset_core::glam::Vec3;
-use faset_core::{NetId, Tick};
-use faset_sim::World;
+use faset_core::{NetId, Tick, DT};
+use faset_protocol::InputCommand;
+use faset_sim::{World, ZoneEvent};
 
 use crate::descriptor::Settings;
 use crate::event::GameEvent;
 use crate::message::{ModeId, ModeMessage};
 use crate::phase::Phase;
-use crate::services::{BotControl, ScoreTable, Services, SpawnPoints, Teams, Timers};
+use crate::services::{BotControl, ScoreTable, Services, SpawnPoints, TeamId, Teams, Timers};
 
 /// A mode objective of the map: an axis-aligned box with an id (the map
 /// format's `Objective { id }` zones, decision: boxes only).
@@ -27,6 +30,40 @@ impl ObjectiveZone {
     }
 }
 
+/// A pickup placed in the map file (lot 4.11): what it is, by name, and
+/// where it stands. Names are the map format's (`health`, `armor`, `ammo`,
+/// `weapon:<id>`); the mode decides what each gives.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapPickup {
+    pub kind: String,
+    /// Centre of the trigger, metres.
+    pub position: Vec3,
+}
+
+/// Something a mode asks the host to do to the world (lot 4.11), drained
+/// with [`Match::take_effects`](crate::Match::take_effects).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HostEffect {
+    /// Add `delta_v` (m/s) to the player's velocity: knockback, explosive
+    /// jump.
+    Push { player: NetId, delta_v: Vec3 },
+    /// Multiply the controller's run and jump speeds for the player (class
+    /// speed, timed bonuses); stays until changed.
+    MoveScale { player: NetId, run: f32, jump: f32 },
+}
+
+/// What the host gives a match for one tick besides the world (lot 4.11).
+#[derive(Default)]
+pub struct HostFrame<'a> {
+    /// The command each player simulated this tick, ascending id.
+    pub commands: &'a [(NetId, InputCommand)],
+    /// Zone events of this tick, from `World::drain_zone_events`.
+    pub zone_events: &'a [(NetId, ZoneEvent)],
+    /// Host-specific services a mode may know about (the server passes its
+    /// lag compensation this way), read with [`ModeCtx::host`].
+    pub host: Option<&'a mut dyn Any>,
+}
+
 /// What a mode call produces besides its own state.
 #[derive(Debug, Default)]
 pub(crate) struct Outbox {
@@ -36,22 +73,29 @@ pub(crate) struct Outbox {
     pub log: Vec<GameEvent>,
     /// Mode messages to send to every client.
     pub messages: Vec<ModeMessage>,
+    /// Requests to the host, in order.
+    pub effects: Vec<HostEffect>,
 }
 
 /// The server-side context of one mode call.
 pub struct ModeCtx<'a> {
     pub(crate) tick: Tick,
     pub(crate) phase: Phase,
+    pub(crate) phase_end: Option<Tick>,
     pub(crate) mode: ModeId,
     pub(crate) world: &'a World,
     pub(crate) players: &'a [NetId],
     pub(crate) objectives: &'a [ObjectiveZone],
+    pub(crate) pickups: &'a [MapPickup],
     pub(crate) settings: &'a Settings,
     pub(crate) services: &'a mut Services,
     pub(crate) out: &'a mut Outbox,
+    pub(crate) commands: &'a [(NetId, InputCommand)],
+    pub(crate) zone_events: &'a [(NetId, ZoneEvent)],
+    pub(crate) host: Option<&'a mut dyn Any>,
 }
 
-impl ModeCtx<'_> {
+impl<'a> ModeCtx<'a> {
     /// Current simulation tick (after the world step).
     #[must_use]
     pub fn tick(&self) -> Tick {
@@ -64,9 +108,24 @@ impl ModeCtx<'_> {
         self.phase
     }
 
-    /// The simulation world, read only.
+    /// End tick of the current phase, if timed.
     #[must_use]
-    pub fn world(&self) -> &World {
+    pub fn phase_end(&self) -> Option<Tick> {
+        self.phase_end
+    }
+
+    /// Seconds left in the current timed phase (the match timer while
+    /// `Playing`).
+    #[must_use]
+    pub fn time_left(&self) -> Option<f64> {
+        self.phase_end
+            .map(|end| f64::from(end.0.saturating_sub(self.tick.0)) * f64::from(DT))
+    }
+
+    /// The simulation world, read only (borrowed for the whole call, not
+    /// just from the context).
+    #[must_use]
+    pub fn world(&self) -> &'a World {
         self.world
     }
 
@@ -82,6 +141,33 @@ impl ModeCtx<'_> {
         self.world.position(player)
     }
 
+    /// The command `player` simulated this tick, if the host gave one.
+    #[must_use]
+    pub fn command(&self, player: NetId) -> Option<&InputCommand> {
+        self.commands
+            .iter()
+            .find(|(id, _)| *id == player)
+            .map(|(_, c)| c)
+    }
+
+    /// Every command of this tick, ascending id.
+    #[must_use]
+    pub fn commands(&self) -> &'a [(NetId, InputCommand)] {
+        self.commands
+    }
+
+    /// Zone events of this tick (kill volumes, pads, objectives).
+    #[must_use]
+    pub fn zone_events(&self) -> &'a [(NetId, ZoneEvent)] {
+        self.zone_events
+    }
+
+    /// Host services of type `T`, if the host passed them (see
+    /// [`HostFrame::host`]).
+    pub fn host<T: 'static>(&mut self) -> Option<&mut T> {
+        self.host.as_mut()?.downcast_mut::<T>()
+    }
+
     /// Every objective zone of the map.
     #[must_use]
     pub fn objectives(&self) -> &[ObjectiveZone] {
@@ -92,6 +178,12 @@ impl ModeCtx<'_> {
     #[must_use]
     pub fn objective(&self, id: &str) -> Option<&ObjectiveZone> {
         self.objectives.iter().find(|z| z.id == id)
+    }
+
+    /// Pickups placed in the map file.
+    #[must_use]
+    pub fn pickups(&self) -> &[MapPickup] {
+        self.pickups
     }
 
     /// Match settings, resolved against the mode's schema.
@@ -149,6 +241,12 @@ impl ModeCtx<'_> {
         self.out.log.push(event);
     }
 
+    /// Replicates an event to the clients without giving it back to the
+    /// mode (projectiles, explosions, hit cues).
+    pub fn broadcast(&mut self, event: GameEvent) {
+        self.out.log.push(event);
+    }
+
     /// Sends mode-defined bytes to every client, as a [`ModeMessage`].
     pub fn send(&mut self, bytes: Vec<u8>) {
         self.out.messages.push(ModeMessage {
@@ -156,13 +254,42 @@ impl ModeCtx<'_> {
             bytes,
         });
     }
+
+    /// Asks the host to add `delta_v` to the player's velocity.
+    pub fn push_player(&mut self, player: NetId, delta_v: Vec3) {
+        self.out.effects.push(HostEffect::Push { player, delta_v });
+    }
+
+    /// Asks the host to scale the player's run and jump speeds.
+    pub fn set_move_scale(&mut self, player: NetId, run: f32, jump: f32) {
+        self.out
+            .effects
+            .push(HostEffect::MoveScale { player, run, jump });
+    }
 }
 
-/// The client-side HUD context. Stub: the `ui` lot replaces the text lines
-/// with real drawing.
+/// One row of the client's score table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HudScore {
+    pub player: NetId,
+    pub score: i32,
+    pub team: Option<TeamId>,
+}
+
+/// The client-side HUD context: what the framework knows about the match
+/// (lot 4.11: phase, match timer, scores, local player) and the text lines
+/// the mode draws. The `ui` lot replaces the lines with real drawing.
 #[derive(Debug, Clone, Default)]
 pub struct HudCtx {
     lines: Vec<String>,
+    /// The local player.
+    pub player: Option<NetId>,
+    /// Current phase, once the server told.
+    pub phase: Option<Phase>,
+    /// Seconds left in the current timed phase.
+    pub time_left: Option<f32>,
+    /// Scores, best first (ties by ascending id).
+    pub scores: Vec<HudScore>,
 }
 
 impl HudCtx {

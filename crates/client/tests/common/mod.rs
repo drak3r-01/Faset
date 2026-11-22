@@ -33,8 +33,10 @@ pub type Link = ConditionedTransport<MemoryTransport>;
 /// Client frame length: four frames per server tick (240 Hz).
 pub const FRAME: Duration = Duration::from_nanos(4_166_667);
 
-/// Fastest stub movement per tick, metres.
-pub const MAX_STEP: f32 = 5.0 * DT;
+/// Fastest walk per tick, metres: the controller runs at 7 m/s and briefly
+/// overshoots to about 7.3 m/s when the walk turns (ground acceleration
+/// along the new direction before friction catches up).
+pub const MAX_STEP: f32 = 7.5 * DT;
 
 /// Movement of one tick: `(move_x, move_y, yaw)`.
 pub type Movement = (i8, i8, u16);
@@ -142,6 +144,7 @@ impl PredictedClient {
                 yaw: e.yaw,
                 pitch: e.pitch,
                 weapon: e.weapon,
+                on_ground: e.on_ground,
             },
         };
         if self.clock.on_snapshot(snap.tick) {

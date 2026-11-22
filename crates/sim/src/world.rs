@@ -37,6 +37,41 @@ pub trait Hooks {
 pub struct NoHooks;
 impl Hooks for NoHooks {}
 
+/// Per-player multipliers of the controller's speeds (lot 4.11): a mode
+/// sets them from the player's class and timed bonuses. Not part of
+/// [`World::state_hash`]: they are inputs, like the commands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MoveScale {
+    /// Multiplies [`MoveParams::run_speed`].
+    pub run: f32,
+    /// Multiplies [`MoveParams::jump_speed`].
+    pub jump: f32,
+}
+
+impl MoveScale {
+    /// No change.
+    pub const ONE: Self = Self {
+        run: 1.0,
+        jump: 1.0,
+    };
+
+    /// `params` with the run and jump speeds scaled.
+    #[must_use]
+    pub fn apply(&self, params: &MoveParams) -> MoveParams {
+        MoveParams {
+            run_speed: params.run_speed * self.run,
+            jump_speed: params.jump_speed * self.jump,
+            ..*params
+        }
+    }
+}
+
+impl Default for MoveScale {
+    fn default() -> Self {
+        Self::ONE
+    }
+}
+
 pub struct World {
     ecs: hecs::World,
     statics: StaticWorld,
@@ -114,6 +149,93 @@ impl World {
     pub fn controller_state(&self, id: NetId) -> Option<controller::PlayerState> {
         let e = *self.players.get(&id)?;
         self.ecs.get::<&controller::PlayerState>(e).ok().map(|s| *s)
+    }
+
+    /// Zones the player was in at the end of its last controller tick
+    /// (controller worlds only).
+    #[must_use]
+    pub fn zone_tracker(&self, id: NetId) -> Option<ZoneTracker> {
+        let e = *self.players.get(&id)?;
+        self.ecs.get::<&ZoneTracker>(e).ok().map(|z| (*z).clone())
+    }
+
+    /// Replaces the zone membership of a player (controller worlds only),
+    /// with [`Self::set_controller_state`] the whole movement state a
+    /// prediction restores before replaying commands. Returns `false` when
+    /// the player or its tracker is missing.
+    pub fn set_zone_tracker(&mut self, id: NetId, tracker: ZoneTracker) -> bool {
+        let Some(&e) = self.players.get(&id) else {
+            return false;
+        };
+        let Ok(z) = self.ecs.query_one_mut::<&mut ZoneTracker>(e) else {
+            return false;
+        };
+        *z = tracker;
+        true
+    }
+
+    /// Per-player multipliers of the controller's run and jump speeds
+    /// (1, 1 by default): class speed and timed bonuses of a mode (lot
+    /// 4.11). Returns `false` for an unknown player.
+    pub fn set_move_scale(&mut self, id: NetId, scale: MoveScale) -> bool {
+        let Some(&e) = self.players.get(&id) else {
+            return false;
+        };
+        self.ecs.insert_one(e, scale).is_ok()
+    }
+
+    /// The multipliers of [`Self::set_move_scale`].
+    #[must_use]
+    pub fn move_scale(&self, id: NetId) -> Option<MoveScale> {
+        let e = *self.players.get(&id)?;
+        Some(self.ecs.get::<&MoveScale>(e).map_or(MoveScale::ONE, |s| *s))
+    }
+
+    /// Adds `dv` to a player's velocity (knockback, explosive jump). A push
+    /// with an upward part lifts the player off the ground. Returns `false`
+    /// for an unknown player.
+    pub fn add_velocity(&mut self, id: NetId, dv: Vec3) -> bool {
+        let Some(&e) = self.players.get(&id) else {
+            return false;
+        };
+        if let Ok(s) = self.ecs.query_one_mut::<&mut controller::PlayerState>(e) {
+            s.vel += dv;
+            if dv.y > 0.0 {
+                s.on_ground = false;
+            }
+        }
+        if let Ok(v) = self.ecs.query_one_mut::<&mut Velocity>(e) {
+            v.0 += dv;
+            return true;
+        }
+        false
+    }
+
+    /// Moves a player to `position` (capsule centre) as a fresh spawn: still,
+    /// in the air, out of every zone, health back to 100. Returns `false`
+    /// for an unknown player.
+    pub fn teleport(&mut self, id: NetId, position: Vec3) -> bool {
+        let Some(&e) = self.players.get(&id) else {
+            return false;
+        };
+        if let Ok((t, v, hp)) = self
+            .ecs
+            .query_one_mut::<(&mut Transform, &mut Velocity, &mut Health)>(e)
+        {
+            t.position = position;
+            v.0 = Vec3::ZERO;
+            hp.0 = 100;
+        } else {
+            return false;
+        }
+        if let Ok((s, z)) = self
+            .ecs
+            .query_one_mut::<(&mut controller::PlayerState, &mut ZoneTracker)>(e)
+        {
+            *s = controller::PlayerState::spawn(position);
+            *z = ZoneTracker::default();
+        }
+        true
     }
 
     /// Replaces the controller state of a player (controller worlds only),
@@ -247,18 +369,27 @@ impl World {
             let Some(&e) = self.players.get(id) else {
                 continue;
             };
-            let Ok((t, v, s, zt, hp)) = self.ecs.query_one_mut::<(
+            let Ok((t, v, s, zt, hp, scale)) = self.ecs.query_one_mut::<(
                 &mut Transform,
                 &mut Velocity,
                 &mut controller::PlayerState,
                 &mut ZoneTracker,
                 &mut Health,
+                Option<&MoveScale>,
             )>(e) else {
                 continue;
             };
-            controller::step_player_in(s, MoveCmd::from(*cmd), &self.statics, params, DT);
+            let scaled;
+            let p = match scale {
+                Some(k) if *k != MoveScale::ONE => {
+                    scaled = k.apply(params);
+                    &scaled
+                }
+                _ => params,
+            };
+            controller::step_player_in(s, MoveCmd::from(*cmd), &self.statics, p, DT);
             let mut events = Vec::new();
-            self.zones.apply(s, zt, params, &mut events);
+            self.zones.apply(s, zt, p, &mut events);
             for ev in events {
                 if ev == ZoneEvent::Triggered(ZoneKind::KillVolume) {
                     hp.0 = 0;

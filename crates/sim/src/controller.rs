@@ -73,10 +73,10 @@ use crate::collision::StaticWorld;
 use crate::map_collision::{MapCollision, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS};
 use crate::slide;
 
-/// Button bit: jump.
-pub const BUTTON_JUMP: u16 = 1 << 0;
-/// Button bit: crouch.
-pub const BUTTON_CROUCH: u16 = 1 << 1;
+/// Button bit: jump (the protocol's [`faset_protocol::BUTTON_JUMP`]).
+pub const BUTTON_JUMP: u16 = faset_protocol::BUTTON_JUMP;
+/// Button bit: crouch (the protocol's [`faset_protocol::BUTTON_CROUCH`]).
+pub const BUTTON_CROUCH: u16 = faset_protocol::BUTTON_CROUCH;
 
 /// Standing eye height above the feet, metres.
 pub const EYE_HEIGHT: f32 = 1.6;

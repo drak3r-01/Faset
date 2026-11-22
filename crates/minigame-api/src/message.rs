@@ -23,6 +23,9 @@ pub enum DecodeError {
     /// Bytes after the end of the layout.
     #[error("trailing data")]
     TrailingData,
+    /// An unknown tag or code, bad UTF-8 or a non-finite float.
+    #[error("invalid value")]
+    Invalid,
 }
 
 /// A mode-defined message: `ModeMessage(mode_id, bytes)`.

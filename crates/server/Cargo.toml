@@ -11,6 +11,7 @@ faset-core.workspace = true
 faset-protocol.workspace = true
 faset-sim.workspace = true
 faset-net.workspace = true
+faset-minigame-api.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 blake3 = "1"

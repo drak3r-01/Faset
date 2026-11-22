@@ -37,7 +37,14 @@
 //! | created                        | 1    |
 //! | if created: every field        | as in the full layout (163 bits) |
 //! | else: changed field mask       | 11 ([`ENTITY_FIELDS`]), non-zero |
-//! | else: each changed field       | as in the full layout, in mask order |
+//! | else: each changed field       | as in the full layout, in mask order, except position and velocity (below) |
+//!
+//! A changed position or velocity axis (lot 4.11) is a flag bit, then
+//! either (flag set) its difference to the baseline, signed, in 12 bits for
+//! a position axis (±4 m) and 8 bits for a velocity axis (±8 m/s), or (flag
+//! clear) the full field. The character controller changes the velocity of
+//! a turning player over many ticks, so this keeps 16 moving players below
+//! 100 kbit/s.
 //!
 //! Field mask bits, from bit 0: position x, y, z; velocity x, y, z; yaw;
 //! pitch; health; weapon; the three flags (on ground, sliding, alive) as one
@@ -65,6 +72,76 @@ pub const REFERENCE_SNAPSHOTS: usize = 64;
 /// Number of fields in the delta change mask.
 pub const ENTITY_FIELDS: usize = 11;
 
+/// Bits of a small position difference (±4 m at 1/512 m).
+const POS_DIFF_BITS: u32 = 12;
+/// Bits of a small velocity difference (±8 m/s at 1/16 m/s).
+const VEL_DIFF_BITS: u32 = 8;
+
+fn fits(diff: i64, bits: u32) -> bool {
+    let half = 1i64 << (bits - 1);
+    (-half..half).contains(&diff)
+}
+
+fn write_signed_bits(w: &mut BitWriter, v: i64, bits: u32) {
+    w.write_bits(v as u64 & ((1u64 << bits) - 1), bits);
+}
+
+fn read_signed_bits(r: &mut BitReader, bits: u32) -> Result<i64, DecodeError> {
+    let raw = r.read_bits(bits)?;
+    let shift = 64 - bits;
+    Ok(((raw << shift) as i64) >> shift)
+}
+
+/// The difference of a position or velocity axis, if `index` is one.
+fn axis(e: &QuantizedEntity, index: usize) -> Option<(i64, u32)> {
+    match index {
+        0..=2 => Some((i64::from(e.position[index]), POS_DIFF_BITS)),
+        3..=5 => Some((i64::from(e.velocity[index - 3]), VEL_DIFF_BITS)),
+        _ => None,
+    }
+}
+
+/// Writes a changed field of `new` against `old` (see the module docs).
+fn write_changed_field(w: &mut BitWriter, old: &QuantizedEntity, new: &QuantizedEntity, f: usize) {
+    if let (Some((a, bits)), Some((b, _))) = (axis(old, f), axis(new, f)) {
+        let diff = b - a;
+        if fits(diff, bits) {
+            w.write_bool(true);
+            write_signed_bits(w, diff, bits);
+            return;
+        }
+        w.write_bool(false);
+    }
+    write_field(w, new, f);
+}
+
+/// Reads a changed field into `e`, which holds the baseline values.
+fn read_changed_field(
+    r: &mut BitReader,
+    e: &mut QuantizedEntity,
+    f: usize,
+) -> Result<(), DecodeError> {
+    let Some((old, bits)) = axis(e, f) else {
+        return read_field(r, e, f);
+    };
+    if !r.read_bool()? {
+        return read_field(r, e, f);
+    }
+    let value = old + read_signed_bits(r, bits)?;
+    match f {
+        0..=2 => {
+            if !fits(value, faset_protocol::quant::POS_BITS) {
+                return Err(DecodeError::OutOfRange);
+            }
+            e.position[f] = value as i32;
+        }
+        _ => {
+            e.velocity[f - 3] = i16::try_from(value).map_err(|_| DecodeError::OutOfRange)?;
+        }
+    }
+    Ok(())
+}
+
 /// Encodes `current` as a delta against `baseline`.
 ///
 /// # Errors
@@ -78,7 +155,7 @@ pub fn encode_delta(
         return Err(SnapshotError::TooManyEntities(current.entities.len()));
     }
     let mut removed = Vec::new();
-    let mut records: Vec<(&QuantizedEntity, Option<u16>)> = Vec::new();
+    let mut records: Vec<(&QuantizedEntity, Option<(u16, &QuantizedEntity)>)> = Vec::new();
     let (mut b, mut c) = (
         baseline.entities.iter().peekable(),
         current.entities.iter().peekable(),
@@ -90,7 +167,7 @@ pub fn encode_delta(
                     .filter(|&f| field_differs(old, new, f))
                     .fold(0u16, |m, f| m | (1 << f));
                 if mask != 0 {
-                    records.push((new, Some(mask)));
+                    records.push((new, Some((mask, old))));
                 }
                 b.next();
                 c.next();
@@ -131,11 +208,11 @@ pub fn encode_delta(
                     write_field(&mut w, e, f);
                 }
             }
-            Some(mask) => {
+            Some((mask, old)) => {
                 w.write_bool(false);
                 w.write_bits(u64::from(mask), ENTITY_FIELDS as u32);
                 for f in (0..ENTITY_FIELDS).filter(|f| mask & (1 << f) != 0) {
-                    write_field(&mut w, e, f);
+                    write_changed_field(&mut w, old, e, f);
                 }
             }
         }
@@ -215,7 +292,7 @@ pub fn decode_delta(
                 return Err(DecodeError::OutOfRange.into());
             }
             for f in (0..ENTITY_FIELDS).filter(|f| mask & (1 << f) != 0) {
-                read_field(&mut r, &mut entities[at], f)?;
+                read_changed_field(&mut r, &mut entities[at], f)?;
             }
         }
         if entities.len() > MAX_SNAPSHOT_ENTITIES {
@@ -480,8 +557,18 @@ mod tests {
             panic!("expected a delta, got {m:?}");
         };
         assert_eq!(*baseline, Tick(2));
-        // 16 entities, each with x changed only: 16 + 1 + 11 + 24 bits.
-        assert_eq!(data.len(), (1 + 32 + 8 + 8 + 16 * 52usize).div_ceil(8));
+        // 16 entities, each with x changed only by 0.2 m: 16 + 1 + 11 bits,
+        // then a small difference (1 + 12 bits).
+        assert_eq!(data.len(), (1 + 32 + 8 + 8 + 16 * 41usize).div_ceil(8));
+        // A long move sends the full axis (1 + 24 bits).
+        let far = snap(
+            4,
+            (1..=16).map(|i| entity(i, 100.0 + f32::from(i))).collect(),
+        );
+        let Message::SnapshotDelta { data, .. } = enc.encode(&far).unwrap() else {
+            panic!("expected a delta");
+        };
+        assert_eq!(data.len(), (1 + 32 + 8 + 8 + 16 * 53usize).div_ceil(8));
         assert_eq!(
             dec.decode(&m).unwrap(),
             QuantizedSnapshot::from_snapshot(&s).to_snapshot()

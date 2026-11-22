@@ -4,13 +4,32 @@
 //! to a whole byte. Decoding is strict: unknown tags, out-of-range values,
 //! trailing bytes and non-zero padding are errors.
 
+use faset_core::glam::Vec3;
 use faset_core::{NetId, Tick};
 use thiserror::Error;
 
 use crate::bits::{BitReader, BitWriter};
 
 /// Wire protocol version; a mismatch is rejected at handshake.
-pub const PROTOCOL_VERSION: u16 = 1;
+///
+/// Version 2 (lot 4.11): match, game, mode, projectile and explosion events.
+pub const PROTOCOL_VERSION: u16 = 2;
+/// Maximum length of the opaque payload of a match, game or mode event
+/// (decision: fits one packet with the event header).
+pub const MAX_EVENT_BYTES: usize = 1100;
+
+/// Button bit of [`InputCommand::buttons`]: jump.
+pub const BUTTON_JUMP: u16 = 1 << 0;
+/// Button bit: crouch (slide when running).
+pub const BUTTON_CROUCH: u16 = 1 << 1;
+/// Button bit: the trigger is held. Humans and bots fire through this bit
+/// alone; the mode detects fresh presses by comparing with the previous
+/// command (decision, lot 4.11).
+pub const BUTTON_FIRE: u16 = 1 << 2;
+/// Button bit: looking down the sights.
+pub const BUTTON_SIGHT: u16 = 1 << 3;
+/// Button bit: reload.
+pub const BUTTON_RELOAD: u16 = 1 << 4;
 /// Maximum size of one packet payload in bytes.
 pub const MAX_PACKET_BYTES: usize = 1200;
 /// Maximum chat text length in bytes (decision).
@@ -69,6 +88,19 @@ impl InputCommand {
     /// Exact encoded size in bytes.
     pub const SIZE: usize = 13;
 
+    /// The same command with no movement and no button: what a frozen
+    /// player (countdown, end of round, dead) simulates. The view and the
+    /// weapon slot are kept.
+    #[must_use]
+    pub fn frozen(&self) -> Self {
+        Self {
+            buttons: 0,
+            move_x: 0,
+            move_y: 0,
+            ..*self
+        }
+    }
+
     #[must_use]
     pub fn encode(&self) -> [u8; Self::SIZE] {
         let mut w = BitWriter::new();
@@ -105,8 +137,26 @@ impl InputCommand {
     }
 }
 
+/// Creation of a projectile (lot 4.11, the 1.5 gap): the only thing
+/// replicated about it; every client simulates it from here. Floats travel
+/// as their exact bit patterns and must be finite.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectileSpawn {
+    pub shooter: NetId,
+    /// Index of the weapon in the match's weapon list.
+    pub weapon: u8,
+    /// Tick of the shot.
+    pub tick: Tick,
+    /// Per-projectile seed.
+    pub seed: u32,
+    pub origin: Vec3,
+    pub velocity: Vec3,
+}
+
 /// Reliable event messages (channel 2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `Eq` since lot 4.11: projectile and explosion events carry floats.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Death {
         victim: NetId,
@@ -128,10 +178,30 @@ pub enum Event {
         sender: NetId,
         text: String,
     },
+    /// Server to client: the replicated match state, opaque
+    /// (`minigame-api`'s `MatchState` layout).
+    MatchState(Vec<u8>),
+    /// Server to client: one game event, opaque (`minigame-api`'s
+    /// `GameEvent` layout).
+    Game(Vec<u8>),
+    /// Both directions: a mode message, opaque (`minigame-api`'s
+    /// `ModeMessage` layout: mode id, then the mode's bytes).
+    Mode(Vec<u8>),
+    /// Server to client: a projectile was created.
+    ProjectileSpawn(ProjectileSpawn),
+    /// Server to client: a blast went off at `centre` (visual and audio cue).
+    Explosion {
+        owner: NetId,
+        /// Index of the weapon in the match's weapon list.
+        weapon: u8,
+        centre: Vec3,
+    },
 }
 
 /// Every message that crosses the wire.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `Eq` since lot 4.11 (see [`Event`]).
+#[derive(Debug, Clone, PartialEq)]
 pub enum Message {
     ClientHello {
         protocol_version: u16,
@@ -178,6 +248,28 @@ const E_SCORE: u8 = 1;
 const E_PHASE: u8 = 2;
 const E_MAP_CHANGE: u8 = 3;
 const E_CHAT: u8 = 4;
+const E_MATCH_STATE: u8 = 5;
+const E_GAME: u8 = 6;
+const E_MODE: u8 = 7;
+const E_PROJECTILE: u8 = 8;
+const E_EXPLOSION: u8 = 9;
+
+fn write_vec3(w: &mut BitWriter, v: Vec3) {
+    for c in v.to_array() {
+        w.write_bits(u64::from(c.to_bits()), 32);
+    }
+}
+
+fn read_vec3(r: &mut BitReader) -> Result<Vec3, DecodeError> {
+    let mut c = [0.0f32; 3];
+    for x in &mut c {
+        *x = f32::from_bits(r.read_bits(32)? as u32);
+        if !x.is_finite() {
+            return Err(DecodeError::OutOfRange);
+        }
+    }
+    Ok(Vec3::from_array(c))
+}
 
 fn write_bytes(w: &mut BitWriter, data: &[u8], max: usize) -> Result<(), EncodeError> {
     if data.len() > max {
@@ -240,6 +332,37 @@ impl Event {
                 w.write_bits(u64::from(sender.0), 16);
                 write_bytes(w, text.as_bytes(), MAX_CHAT_BYTES)?;
             }
+            Self::MatchState(data) => {
+                w.write_bits(u64::from(E_MATCH_STATE), 8);
+                write_bytes(w, data, MAX_EVENT_BYTES)?;
+            }
+            Self::Game(data) => {
+                w.write_bits(u64::from(E_GAME), 8);
+                write_bytes(w, data, MAX_EVENT_BYTES)?;
+            }
+            Self::Mode(data) => {
+                w.write_bits(u64::from(E_MODE), 8);
+                write_bytes(w, data, MAX_EVENT_BYTES)?;
+            }
+            Self::ProjectileSpawn(p) => {
+                w.write_bits(u64::from(E_PROJECTILE), 8);
+                w.write_bits(u64::from(p.shooter.0), 16);
+                w.write_bits(u64::from(p.weapon), 8);
+                w.write_bits(u64::from(p.tick.0), 32);
+                w.write_bits(u64::from(p.seed), 32);
+                write_vec3(w, p.origin);
+                write_vec3(w, p.velocity);
+            }
+            Self::Explosion {
+                owner,
+                weapon,
+                centre,
+            } => {
+                w.write_bits(u64::from(E_EXPLOSION), 8);
+                w.write_bits(u64::from(owner.0), 16);
+                w.write_bits(u64::from(*weapon), 8);
+                write_vec3(w, *centre);
+            }
         }
         Ok(())
     }
@@ -269,6 +392,22 @@ impl Event {
                 let text = String::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8)?;
                 Self::Chat { sender, text }
             }
+            E_MATCH_STATE => Self::MatchState(read_bytes(r, MAX_EVENT_BYTES)?),
+            E_GAME => Self::Game(read_bytes(r, MAX_EVENT_BYTES)?),
+            E_MODE => Self::Mode(read_bytes(r, MAX_EVENT_BYTES)?),
+            E_PROJECTILE => Self::ProjectileSpawn(ProjectileSpawn {
+                shooter: NetId(r.read_bits(16)? as u16),
+                weapon: r.read_bits(8)? as u8,
+                tick: Tick(r.read_bits(32)? as u32),
+                seed: r.read_bits(32)? as u32,
+                origin: read_vec3(r)?,
+                velocity: read_vec3(r)?,
+            }),
+            E_EXPLOSION => Self::Explosion {
+                owner: NetId(r.read_bits(16)? as u16),
+                weapon: r.read_bits(8)? as u8,
+                centre: read_vec3(r)?,
+            },
             other => return Err(DecodeError::UnknownEvent(other)),
         })
     }
@@ -428,7 +567,69 @@ mod tests {
                 sender: NetId(s),
                 text
             }),
+            proptest::collection::vec(any::<u8>(), 0..=MAX_EVENT_BYTES).prop_map(Event::MatchState),
+            proptest::collection::vec(any::<u8>(), 0..64).prop_map(Event::Game),
+            proptest::collection::vec(any::<u8>(), 0..64).prop_map(Event::Mode),
+            (
+                any::<u16>(),
+                any::<u8>(),
+                any::<u32>(),
+                any::<u32>(),
+                arb_vec3(),
+                arb_vec3()
+            )
+                .prop_map(|(s, weapon, t, seed, origin, velocity)| {
+                    Event::ProjectileSpawn(ProjectileSpawn {
+                        shooter: NetId(s),
+                        weapon,
+                        tick: Tick(t),
+                        seed,
+                        origin,
+                        velocity,
+                    })
+                }),
+            (any::<u16>(), any::<u8>(), arb_vec3()).prop_map(|(o, weapon, centre)| {
+                Event::Explosion {
+                    owner: NetId(o),
+                    weapon,
+                    centre,
+                }
+            }),
         ]
+    }
+
+    fn arb_vec3() -> impl Strategy<Value = Vec3> {
+        (-1e6f32..1e6, -1e6f32..1e6, -1e6f32..1e6).prop_map(|(x, y, z)| Vec3::new(x, y, z))
+    }
+
+    #[test]
+    fn frozen_commands_keep_only_the_view_and_the_weapon() {
+        let c = InputCommand {
+            tick: Tick(4),
+            buttons: BUTTON_FIRE | BUTTON_JUMP,
+            move_x: 5,
+            move_y: -9,
+            yaw: 77,
+            pitch: -3,
+            weapon_slot: 1,
+        };
+        let f = c.frozen();
+        assert_eq!((f.buttons, f.move_x, f.move_y), (0, 0, 0));
+        assert_eq!((f.tick, f.yaw, f.pitch, f.weapon_slot), (c.tick, 77, -3, 1));
+    }
+
+    #[test]
+    fn non_finite_projectile_floats_are_rejected() {
+        let mut bytes = Message::Event(Event::Explosion {
+            owner: NetId(1),
+            weapon: 0,
+            centre: Vec3::ZERO,
+        })
+        .encode()
+        .unwrap();
+        // Tag, event tag, owner (2), weapon (1), then x: make it NaN.
+        bytes[5..9].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        assert_eq!(Message::decode(&bytes), Err(DecodeError::OutOfRange));
     }
 
     fn arb_message() -> impl Strategy<Value = Message> {

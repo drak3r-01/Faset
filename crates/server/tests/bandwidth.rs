@@ -92,7 +92,9 @@ fn downlink_at_sixteen_players_is_below_100_kbit_per_second() {
     }
     assert_eq!(server.players().count(), 16);
     // Settle for one second, then measure ten.
-    let walk = Some((0, 127, quantize_yaw(1.0)));
+    // Half speed: 11 s at the controller's 7 m/s would walk off the 50 m
+    // test arena floor and fall.
+    let walk = Some((0, 64, quantize_yaw(1.0)));
     for _ in 0..TICK_RATE {
         c.step(walk);
         server.tick();

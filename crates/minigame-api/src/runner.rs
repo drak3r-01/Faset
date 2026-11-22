@@ -4,14 +4,14 @@ use faset_core::glam::Vec3;
 use faset_core::{NetId, Tick, TICK_RATE};
 use faset_sim::World;
 
-use crate::ctx::{ModeCtx, ObjectiveZone, Outbox};
+use crate::ctx::{HostEffect, HostFrame, MapPickup, ModeCtx, ObjectiveZone, Outbox};
 use crate::descriptor::{ModeDescriptor, Settings, SettingsError, TIME_LIMIT_SETTING};
 use crate::event::{EndReason, GameEvent, MatchResult};
 use crate::message::{MatchState, ModeId, ModeMessage};
 use crate::phase::Phase;
 use crate::registry::ModeEntry;
 use crate::services::{Services, SpawnPoints};
-use crate::GameMode;
+use crate::{GameMode, Vitals};
 
 /// Players needed to leave `Warmup` (decision).
 pub const DEFAULT_MIN_PLAYERS: usize = 2;
@@ -31,6 +31,8 @@ pub struct MatchConfig {
     pub spawn_points: Vec<Vec3>,
     /// Objective zones of the map.
     pub objectives: Vec<ObjectiveZone>,
+    /// Pickups placed in the map file (lot 4.11).
+    pub pickups: Vec<MapPickup>,
     /// Map rotation; `MapChange` moves to the next entry, wrapping.
     pub rotation: Vec<String>,
     /// Setting values; missing keys take the schema defaults.
@@ -44,6 +46,7 @@ impl Default for MatchConfig {
             time_limit_ticks: DEFAULT_TIME_LIMIT_TICKS,
             spawn_points: Vec::new(),
             objectives: Vec::new(),
+            pickups: Vec::new(),
             rotation: Vec::new(),
             settings: Settings::new(),
         }
@@ -70,6 +73,8 @@ pub struct Match {
     out: Outbox,
     result: Option<MatchResult>,
     map: usize,
+    /// Client messages waiting for the next tick, in arrival order.
+    inbox: Vec<(NetId, Vec<u8>)>,
 }
 
 impl std::fmt::Debug for Match {
@@ -114,6 +119,7 @@ impl Match {
             out: Outbox::default(),
             result: None,
             map: 0,
+            inbox: Vec::new(),
         })
     }
 
@@ -208,6 +214,31 @@ impl Match {
         self.services.spawns.take_requests()
     }
 
+    /// Requests to the host (pushes, speed scales) since the last call, in
+    /// order (lot 4.11).
+    pub fn take_effects(&mut self) -> Vec<HostEffect> {
+        std::mem::take(&mut self.out.effects)
+    }
+
+    /// What the mode says of a player's health (lot 4.11).
+    #[must_use]
+    pub fn vitals(&self, player: NetId) -> Option<Vitals> {
+        self.mode.vitals(player)
+    }
+
+    /// A client sent `message` (lot 4.11). Messages for another mode or
+    /// from a player outside the match are dropped; the others reach
+    /// [`GameMode::on_client_message`] at the start of the next
+    /// [`tick`](Self::tick), in arrival order. Returns whether the message
+    /// was kept.
+    pub fn client_message(&mut self, player: NetId, message: ModeMessage) -> bool {
+        if message.mode != self.entry.id || !self.players.contains(&player) {
+            return false;
+        }
+        self.inbox.push((player, message.bytes));
+        true
+    }
+
     /// A player entered the match. Ignored if already in it.
     pub fn player_joined(&mut self, world: &World, player: NetId) {
         if self.players.contains(&player) {
@@ -237,9 +268,25 @@ impl Match {
     /// are in (back to `Warmup` if they drop below during the countdown);
     /// the mode's [`on_tick`](GameMode::on_tick) runs during `Playing` only.
     pub fn tick(&mut self, world: &World) {
+        self.tick_with(world, &mut HostFrame::default());
+    }
+
+    /// [`tick`](Self::tick) with what the host knows of this tick (lot
+    /// 4.11): the commands the players simulated, the zone events and the
+    /// host's own services, all visible to the mode through [`ModeCtx`].
+    /// Client messages queued by [`client_message`](Self::client_message)
+    /// are delivered first.
+    pub fn tick_with(&mut self, world: &World, frame: &mut HostFrame) {
         let now = world.tick();
+        for (player, bytes) in std::mem::take(&mut self.inbox) {
+            if self.players.contains(&player) {
+                self.call_with(world, frame, |m, c| {
+                    m.on_client_message(c, player, &bytes);
+                });
+            }
+        }
         for event in std::mem::take(&mut self.out.emitted) {
-            self.call(world, |m, c| m.on_event(c, &event));
+            self.call_with(world, frame, |m, c| m.on_event(c, &event));
         }
         let due = self.phase_end.is_some_and(|end| now >= end);
         let enough = self.players.len() >= self.config.min_players;
@@ -248,7 +295,7 @@ impl Match {
             Phase::Countdown if !enough => self.enter(world, Phase::Warmup),
             Phase::Countdown if due => self.enter(world, Phase::Playing),
             Phase::Playing => {
-                self.call(world, |m, c| m.on_tick(c));
+                self.call_with(world, frame, |m, c| m.on_tick(c));
                 if let Some(result) = self.mode.result() {
                     self.end(world, result);
                 } else if due {
@@ -329,16 +376,30 @@ impl Match {
     }
 
     fn call(&mut self, world: &World, f: impl FnOnce(&mut dyn GameMode, &mut ModeCtx)) {
+        self.call_with(world, &mut HostFrame::default(), f);
+    }
+
+    fn call_with(
+        &mut self,
+        world: &World,
+        frame: &mut HostFrame,
+        f: impl FnOnce(&mut dyn GameMode, &mut ModeCtx),
+    ) {
         let mut ctx = ModeCtx {
             tick: world.tick(),
             phase: self.phase,
+            phase_end: self.phase_end,
             mode: self.entry.id,
             world,
             players: &self.players,
             objectives: &self.config.objectives,
+            pickups: &self.config.pickups,
             settings: &self.settings,
             services: &mut self.services,
             out: &mut self.out,
+            commands: frame.commands,
+            zone_events: frame.zone_events,
+            host: frame.host.as_deref_mut(),
         };
         f(self.mode.as_mut(), &mut ctx);
     }

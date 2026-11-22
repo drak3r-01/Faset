@@ -23,6 +23,21 @@
 //! Every tick also records each player's hitboxes in a one-second history
 //! ([`lag_compensation`]); [`Server::rewind_and_cast`] casts a hitscan shot
 //! against the other players as the shooter saw them.
+//!
+//! Lot 4.11 (integration):
+//! * players move with the character controller of `faset-sim`
+//!   ([`ServerConfig::move_params`], map zones in [`MapConfig::zones`]);
+//!   snapshot velocities are the controller's;
+//! * [`Server::host_match`] hosts a `minigame-api` [`Match`](faset_minigame_api::Match):
+//!   it runs after the world step with the tick's commands, zone events
+//!   and [`ModeServices`] (lag compensation), its respawns and effects are
+//!   applied to the world, movement is frozen outside `Warmup` and
+//!   `Playing` and for dead players, and its state (`Event::MatchState`,
+//!   when it changed, at the snapshot rate), events (`Event::Game`,
+//!   `Event::ProjectileSpawn`, `Event::Explosion`) and messages
+//!   (`Event::Mode`) go to every client on the event channel; clients'
+//!   `Event::Mode` messages reach the mode;
+//! * bots get a [`BotContext`] with the match and may send mode messages.
 #![forbid(unsafe_code)]
 
 mod clock;
@@ -31,7 +46,10 @@ mod config;
 pub mod lag_compensation;
 mod link;
 mod server;
+mod services;
 pub mod snapshot;
+
+pub use services::{ModeServices, VIEW_DELAY};
 
 pub use clock::{TickClock, MAX_CATCH_UP};
 pub use commands::CommandBuffer;
@@ -44,7 +62,7 @@ pub use lag_compensation::{
     EYE_HEIGHT, HEAD_RADIUS, HISTORY_TICKS, MAX_REWIND,
 };
 pub use link::ServerTransport;
-pub use server::{Bot, RejectReason, Server, ServerNotice};
+pub use server::{Bot, BotContext, RejectReason, Server, ServerNotice};
 pub use snapshot::{
     EntityState, InputPacket, QuantizedEntity, QuantizedSnapshot, Snapshot, SnapshotDecoder,
     SnapshotEncoder, SnapshotError, MAX_SNAPSHOT_ENTITIES, REFERENCE_SNAPSHOTS,

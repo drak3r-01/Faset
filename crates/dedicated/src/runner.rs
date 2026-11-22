@@ -8,12 +8,15 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use faset_core::{NetId, Tick};
+use faset_minigame_api::{Match, MatchConfig, Registry, SettingValue, TIME_LIMIT_SETTING};
+use faset_mode_fps::{register_modes, FpsRules};
 use faset_net::UdpTransport;
 use faset_protocol::InputCommand;
 use faset_server::{Bot, Server, ServerConfig, ServerTransport, TickClock};
 use faset_sim::World;
 
 use crate::console::{self, Command};
+use crate::fps_bot::{level_of, BotMap, FpsBot};
 use crate::maps::Catalog;
 use crate::settings::{Cli, Settings};
 
@@ -55,25 +58,78 @@ impl Dedicated {
     ///
     /// # Errors
     /// Unknown first rotation map, or an invalid server configuration.
+    ///
+    /// Lot 4.11: with a `game_mode` (`fps.ffa` or `fps.team`) the server hosts
+    /// that match on the map (spawns, objectives, pickups, the rotation and
+    /// `rotation_seconds` as the match length); bots are [`FpsBot`] brains
+    /// on a map file, cycling through the classes, and the placeholder
+    /// [`WanderBot`] otherwise.
     pub fn new(
         settings: Settings,
         catalog: Catalog,
         transports: Vec<ServerTransport>,
     ) -> Result<Self> {
         let map = settings.rotation[0].clone();
+        let loaded = catalog.load(&map).map_err(anyhow::Error::msg)?;
+        let mut registry = Registry::new();
+        register_modes(&mut registry).context("mode registration")?;
+        let entry = if settings.game_mode.is_empty() {
+            None
+        } else {
+            Some(
+                registry
+                    .find(&settings.game_mode)
+                    .with_context(|| format!("unknown game mode `{}`", settings.game_mode))?
+                    .clone(),
+            )
+        };
         let mut config = ServerConfig {
-            mode: settings.mode,
-            map: catalog.load(&map).map_err(anyhow::Error::msg)?,
+            mode: entry.as_ref().map_or(settings.mode, |e| e.id.0),
+            map: loaded.config.clone(),
+            seed: settings.seed,
             ..ServerConfig::default()
         };
         config.limits.max_players = settings.max_players;
         let mut server = Server::new(config, transports).context("invalid server config")?;
-        let mut bots = Vec::new();
-        for _ in 0..settings.bots {
-            let bot = WanderBot {
-                level: settings.bot_level,
+        if let Some(entry) = &entry {
+            let mut match_settings = faset_minigame_api::Settings::new();
+            match_settings.set(
+                TIME_LIMIT_SETTING,
+                SettingValue::Int(i32::try_from(settings.rotation_seconds).unwrap_or(i32::MAX)),
+            );
+            let match_config = MatchConfig {
+                spawn_points: loaded.config.spawn_points.clone(),
+                objectives: loaded.objectives.clone(),
+                pickups: loaded.pickups.clone(),
+                rotation: settings.rotation.clone(),
+                settings: match_settings,
+                ..MatchConfig::default()
             };
-            match server.add_bot(Box::new(bot)) {
+            let game = Match::new(entry, match_config).context("invalid match settings")?;
+            server.host_match(game);
+        }
+        let bot_map = match (&entry, &loaded.file) {
+            (Some(_), Some(file)) if settings.bots > 0 => {
+                Some(Arc::new(BotMap::build(file, &loaded.pickups)))
+            }
+            _ => None,
+        };
+        let rules = FpsRules::from_catalog(&faset_mode_fps::class::Catalog::builtin());
+        let mut bots = Vec::new();
+        for i in 0..settings.bots {
+            let bot: Box<dyn Bot> = match &bot_map {
+                Some(m) => Box::new(FpsBot::new(
+                    level_of(settings.bot_level),
+                    settings.seed ^ (i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                    Arc::clone(m),
+                    &rules,
+                    i,
+                )),
+                None => Box::new(WanderBot {
+                    level: settings.bot_level,
+                }),
+            };
+            match server.add_bot(bot) {
                 Some(id) => bots.push(id),
                 None => break,
             }
@@ -91,6 +147,17 @@ impl Dedicated {
     #[must_use]
     pub fn server(&self) -> &Server {
         &self.server
+    }
+
+    /// Advances the server by one tick (tests drive it on a virtual clock).
+    pub fn tick(&mut self) {
+        self.server.tick();
+    }
+
+    /// Ids of the bots.
+    #[must_use]
+    pub fn bots(&self) -> &[NetId] {
+        &self.bots
     }
 
     /// Runs one console command; returns the output lines and whether to quit.

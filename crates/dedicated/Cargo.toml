@@ -16,6 +16,10 @@ faset-protocol.workspace = true
 faset-sim.workspace = true
 faset-net.workspace = true
 faset-server.workspace = true
+faset-mapfmt.workspace = true
+faset-minigame-api.workspace = true
+faset-mode-fps.workspace = true
+faset-bots.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 anyhow = "1"
@@ -24,3 +28,7 @@ toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 ctrlc = { version = "3", features = ["termination"] }
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[dev-dependencies]
+# The end-to-end match test drives real predicting clients (lot 4.11).
+faset-client.workspace = true

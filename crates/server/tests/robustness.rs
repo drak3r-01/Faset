@@ -321,12 +321,15 @@ fn flooding_inputs_does_not_starve_another_client_or_speed_the_flooder_up() {
         honest.snapshots.len() >= before + 30,
         "honest client starved"
     );
-    // One command is applied per tick whatever the flood: at most 5 m/s for
-    // the stub movement over the ~12 s elapsed.
+    // One command is applied per tick whatever the flood: at most the
+    // controller's run speed over the ~12 s elapsed (horizontally: the
+    // flooder runs off the 50 m floor and falls).
     let id = server
         .players()
         .find(|p| Some(*p) != honest.player)
         .unwrap();
-    let dist = server.world().position(id).unwrap().length();
-    assert!(dist < 5.0 * 12.5 + 2.0, "flooder travelled {dist} m");
+    let p = server.world().position(id).unwrap();
+    let dist = p.x.hypot(p.z);
+    let run = server.config().move_params.run_speed;
+    assert!(dist < run * 12.5 + 2.0, "flooder travelled {dist} m");
 }
