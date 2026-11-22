@@ -145,6 +145,13 @@ impl Editor {
                     ui.toggle_value(&mut self.panels.show_gameplay, "Gameplay");
                 });
                 ui.horizontal(|ui| {
+                    ui.toggle_value(&mut self.workflow.show_validation, "Validation");
+                    ui.toggle_value(&mut self.workflow.show_files, "Files");
+                    if ui.button("Test").clicked() {
+                        self.start_test();
+                    }
+                });
+                ui.horizontal(|ui| {
                     ui.toggle_value(&mut self.panels.show_meta, "Info");
                     ui.toggle_value(&mut self.panels.show_theme, "Theme");
                     ui.toggle_value(&mut self.panels.show_physics, "Physics");
@@ -214,6 +221,9 @@ impl Screen for Editor {
     fn show(&mut self, ctx: &egui::Context, _theme: &Theme) {
         self.toolbar(ctx);
         self.panels(ctx);
+        self.workflow_panels(ctx);
+        let dt = ctx.input(|i| i.stable_dt.min(0.1));
+        self.update_services(dt);
         self.handle_input(ctx);
     }
 }

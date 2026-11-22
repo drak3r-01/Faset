@@ -56,6 +56,9 @@ pub struct EditorCamera {
 const TOP_EYE_Y: f32 = 500.0;
 const TOP_FAR: f32 = 1000.0;
 const NEAR: f32 = 0.1;
+/// How far in front of the free-fly camera [`EditorCamera::focus`] puts the
+/// framed point, in metres (decision).
+pub const FOCUS_DISTANCE: f32 = 10.0;
 
 impl Default for EditorCamera {
     /// A free-fly camera 8 m above the origin looking along -Z and down.
@@ -96,6 +99,28 @@ impl EditorCamera {
                 self.mode = CameraMode::TopOrtho;
             }
             CameraMode::TopOrtho => self.mode = CameraMode::FreeFly,
+        }
+    }
+
+    /// Frames `p`: the top view centres on it, the free-fly view backs off
+    /// [`FOCUS_DISTANCE`] metres along its current direction so that `p`
+    /// sits at the centre of the screen.
+    pub fn focus(&mut self, p: Vec3) {
+        match self.mode {
+            CameraMode::TopOrtho => self.top_centre = Vec2::new(p.x, p.z),
+            CameraMode::FreeFly => {
+                self.eye = p - self.orientation() * Vec3::NEG_Z * FOCUS_DISTANCE;
+            }
+        }
+    }
+
+    /// The point at the centre of the screen: [`FOCUS_DISTANCE`] metres
+    /// ahead in free fly, the ground point under the centre in the top view.
+    #[must_use]
+    pub fn target(&self) -> Vec3 {
+        match self.mode {
+            CameraMode::TopOrtho => Vec3::new(self.top_centre.x, 0.0, self.top_centre.y),
+            CameraMode::FreeFly => self.eye + self.orientation() * Vec3::NEG_Z * FOCUS_DISTANCE,
         }
     }
 
