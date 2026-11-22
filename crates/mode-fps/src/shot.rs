@@ -321,6 +321,10 @@ pub struct ShotInput {
 pub enum ShotReject {
     /// The weapon is not hitscan.
     NotHitscan,
+    /// The weapon is not a projectile weapon.
+    NotProjectile,
+    /// The weapon is not a melee weapon.
+    NotMelee,
     /// Still reloading.
     Reloading,
     /// The trigger must be pressed again.
@@ -354,19 +358,15 @@ pub struct ShotReport {
     pub recoil_kick: (f32, f32),
 }
 
-/// Fires `weapon` once if the rules allow it.
-///
-/// # Errors
-/// [`ShotReject`] when the weapon cannot fire at `input.now`.
-pub fn fire(
+/// Checks the trigger rules and commits cadence, ammo and burst for one
+/// shot of any weapon kind; returns the shot counter and the generator
+/// seeded with it. `ammo` is false for melee, which never runs dry.
+pub(crate) fn begin_shot(
     def: &WeaponDef,
     weapon: &mut WeaponState,
     input: &ShotInput,
-    caster: &mut dyn RayCaster,
-) -> Result<ShotReport, ShotReject> {
-    if def.kind != WeaponKind::Hitscan {
-        return Err(ShotReject::NotHitscan);
-    }
+    ammo: bool,
+) -> Result<(u32, Pcg32), ShotReject> {
     let now = input.now;
     weapon.settle(def, now);
     if weapon.reloading() {
@@ -380,7 +380,7 @@ pub fn fire(
     if needs_press && !input.fresh_press {
         return Err(ShotReject::NeedsFreshPress);
     }
-    if weapon.ammo == 0 {
+    if ammo && weapon.ammo == 0 {
         return Err(ShotReject::Empty);
     }
     if now + CADENCE_TOLERANCE < weapon.next_fire {
@@ -396,7 +396,9 @@ pub fn fire(
         weapon.next_fire
     };
     weapon.next_fire = base + def.interval();
-    weapon.ammo -= 1;
+    if ammo {
+        weapon.ammo -= 1;
+    }
     weapon.burst_left = match def.fire_mode {
         FireMode::Burst if weapon.burst_left == 0 => def.burst_count - 1,
         FireMode::Burst => weapon.burst_left - 1,
@@ -407,8 +409,44 @@ pub fn fire(
     }
     let shot_index = weapon.shot_counter;
     weapon.shot_counter = weapon.shot_counter.wrapping_add(1);
+    Ok((
+        shot_index,
+        Pcg32::for_shot(input.seed, input.shooter, shot_index),
+    ))
+}
 
-    let mut rng = Pcg32::for_shot(input.seed, input.shooter, shot_index);
+/// Bloom, recoil kick and spray bookkeeping after a committed shot.
+pub(crate) fn end_shot(
+    def: &WeaponDef,
+    weapon: &mut WeaponState,
+    now: f64,
+    u_yaw: f32,
+    u_pitch: f32,
+) -> (f32, f32) {
+    weapon.beta = (weapon.beta + def.spread.delta_beta).min(def.spread.sigma_max);
+    let kick = weapon
+        .recoil
+        .kick(&def.recoil, weapon.spray_index, u_yaw, u_pitch);
+    weapon.spray_index += 1;
+    weapon.last_shot = now;
+    kick
+}
+
+/// Fires `weapon` once if the rules allow it.
+///
+/// # Errors
+/// [`ShotReject`] when the weapon cannot fire at `input.now`.
+pub fn fire(
+    def: &WeaponDef,
+    weapon: &mut WeaponState,
+    input: &ShotInput,
+    caster: &mut dyn RayCaster,
+) -> Result<ShotReport, ShotReject> {
+    if def.kind != WeaponKind::Hitscan {
+        return Err(ShotReject::NotHitscan);
+    }
+    let now = input.now;
+    let (shot_index, mut rng) = begin_shot(def, weapon, input, true)?;
     let (u_yaw, u_pitch) = draw_pair(&mut rng);
     let sigma = weapon.sigma(def, input.stance);
     let mut pellets = Vec::with_capacity(def.pellets as usize);
@@ -439,12 +477,7 @@ pub fn fire(
         pellets.push(PelletReport { direction, contact });
     }
 
-    weapon.beta = (weapon.beta + def.spread.delta_beta).min(def.spread.sigma_max);
-    let recoil_kick = weapon
-        .recoil
-        .kick(&def.recoil, weapon.spray_index, u_yaw, u_pitch);
-    weapon.spray_index += 1;
-    weapon.last_shot = now;
+    let recoil_kick = end_shot(def, weapon, now, u_yaw, u_pitch);
 
     Ok(ShotReport {
         shot_index,

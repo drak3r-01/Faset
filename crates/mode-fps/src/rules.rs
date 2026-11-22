@@ -328,6 +328,13 @@ impl FpsRules {
         }
     }
 
+    /// Queues damage that did not come from [`fire`](Self::fire) (blasts,
+    /// melee, projectile contacts) for the next [`step`](Self::step), where
+    /// it goes through the same chain.
+    pub fn queue_damage(&mut self, events: impl IntoIterator<Item = DamageEvent>) {
+        self.pending.extend(events);
+    }
+
     /// Respawns the host must apply to the world (position of the new
     /// life), oldest first.
     pub fn take_respawns(&mut self) -> Vec<(NetId, Vec3)> {
