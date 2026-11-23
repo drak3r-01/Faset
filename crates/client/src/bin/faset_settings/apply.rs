@@ -7,7 +7,7 @@ use std::time::Duration;
 use faset_audio::Engine;
 use faset_core::settings::{
     AccessibilitySettings, AntiAliasing, Category, ControlSettings, GameSettings, NetworkSettings,
-    SettingMeta, Settings, SettingsSink, UpscaleLevel, UpscalerChoice, WindowMode,
+    SettingMeta, Settings, SettingsSink, ShadowQuality, UpscaleLevel, UpscalerChoice, WindowMode,
 };
 use faset_render::{PostSettings, Renderer};
 use faset_upscale::{effective_quality, Fsr1, Quality, Registry, UpscaleBridge, UpscalerKind};
@@ -246,6 +246,16 @@ fn post_of(s: &Settings) -> PostSettings {
     }
 }
 
+/// How far the sun casts shadows for a shadow quality, metres.
+fn shadow_distance(quality: ShadowQuality) -> f32 {
+    match quality {
+        ShadowQuality::Off => 0.0,
+        ShadowQuality::Low => faset_render::SHADOW_DISTANCE * 0.5,
+        ShadowQuality::Medium => faset_render::SHADOW_DISTANCE,
+        ShadowQuality::High => faset_render::SHADOW_DISTANCE * 1.5,
+    }
+}
+
 /// Window mode, resolution and monitor.
 pub fn apply_window(window: &Window, settings: &Settings) {
     let d = &settings.display;
@@ -290,6 +300,15 @@ impl SettingsSink for RenderSink<'_> {
             }
             "fps_cap" | "fov" | "brightness" | "weather_density" => {
                 self.live.tuning = tuning_of(settings);
+                true
+            }
+            "vsync" => {
+                self.renderer.set_vsync(settings.display.vsync);
+                true
+            }
+            "shadows" => {
+                self.renderer
+                    .set_shadow_distance(shadow_distance(settings.quality.shadows));
                 true
             }
             "bloom" | "outlines" | "screen_effects" => self.apply_post(settings),

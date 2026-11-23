@@ -27,6 +27,7 @@
 
 pub mod balance;
 pub mod class;
+pub mod client_view;
 pub mod damage;
 mod drive;
 pub mod explosion;
@@ -48,6 +49,7 @@ pub mod weapon;
 #[cfg(test)]
 mod harness;
 
+pub use client_view::{fps_client, ClientPickup, ClientPlayer, FpsClient};
 pub use damage::{
     falloff_multiplier, pellet_damage, Combatant, DamageContext, DamageEvent, DamageOutcome,
     DamageType, HitZone, Ignored, DEFAULT_HEALTH, RESPAWN_DELAY, SPAWN_PROTECTION,

@@ -319,6 +319,8 @@ pub struct Renderer {
     lighting: LightingBindings,
     /// Fits the cascades to this camera instead of the view camera.
     shadow_camera: Option<Camera>,
+    /// Distance of the sun shadows, metres; 0 means no shadows.
+    shadow_distance: f32,
     /// Per-cascade shadow caster draws; their instances follow the view's
     /// instances in the frame's instance buffer.
     shadow_draws: [Vec<DrawBatch>; CASCADE_COUNT],
@@ -460,6 +462,7 @@ impl Renderer {
                 shadow,
                 lighting,
                 shadow_camera: None,
+                shadow_distance: SHADOW_DISTANCE,
                 shadow_draws: Default::default(),
                 shadow_scratch: (Vec::new(), Vec::new()),
                 light_overflow_warned: false,
@@ -759,11 +762,12 @@ impl Renderer {
             }
         }
         let sun_dir = glam::Vec3::from_array(ambience.sun.direction).normalize_or(glam::Vec3::Y);
-        let cascades = (ambience.sun.intensity > 0.0).then(|| {
+        let shadow_distance = self.shadow_distance;
+        let cascades = (ambience.sun.intensity > 0.0 && shadow_distance > 0.0).then(|| {
             let fit_camera = self.shadow_camera.as_ref().unwrap_or(camera);
             let near = fit_camera.proj.w_axis.z;
             let near = if near > 0.0 { near } else { 0.1 };
-            fit_cascades(fit_camera, sun_dir, near, SHADOW_DISTANCE)
+            fit_cascades(fit_camera, sun_dir, near, shadow_distance)
         });
         for draws in &mut self.shadow_draws {
             draws.clear();
@@ -1847,6 +1851,29 @@ impl Renderer {
     /// do not shimmer.
     pub fn set_shadow_camera(&mut self, camera: Option<Camera>) {
         self.shadow_camera = camera;
+    }
+
+    /// Sets how far from the camera the sun casts shadows, metres:
+    /// [`SHADOW_DISTANCE`] at creation, `0` turns the shadow pass off (lot
+    /// 6.6, the shadow quality setting). Takes effect on the next frame.
+    pub fn set_shadow_distance(&mut self, metres: f32) {
+        self.shadow_distance = if metres.is_finite() {
+            metres.max(0.0)
+        } else {
+            SHADOW_DISTANCE
+        };
+    }
+
+    /// Turns vertical synchronisation on or off for a window target: the
+    /// swapchain is rebuilt on the next frame (lot 6.6). No effect on a
+    /// headless renderer.
+    pub fn set_vsync(&mut self, vsync: bool) {
+        if let Target::Windowed(w) = &mut self.target {
+            if w.vsync != vsync {
+                w.vsync = vsync;
+                w.needs_rebuild = true;
+            }
+        }
     }
 
     /// Loads the roofs that shelter the map from weather particles (an empty

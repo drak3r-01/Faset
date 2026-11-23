@@ -111,4 +111,10 @@ pub trait GameModeClient {
     fn move_scale(&self, _player: PlayerId) -> (f32, f32) {
         (1.0, 1.0)
     }
+    /// The mode's client as `Any`, so the application can reach what only
+    /// the mode's crate knows (the HUD model, the pickups; lot 6.6).
+    /// `None` by default.
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
 }

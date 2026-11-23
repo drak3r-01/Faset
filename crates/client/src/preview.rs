@@ -20,8 +20,9 @@ pub const TURN_SECONDS: f32 = 12.0;
 const FOV_Y_DEG: f32 = 38.0;
 
 /// Index of the neutral colours after the palette in the mesh list.
-const METAL: usize = PALETTE.len();
-const SKIN: usize = PALETTE.len() + 1;
+pub const METAL: usize = PALETTE.len();
+/// Colour index of skin.
+pub const SKIN: usize = PALETTE.len() + 1;
 const GROUND: usize = PALETTE.len() + 2;
 
 /// Linear colour of an sRGB byte triple (the vertex colour is linear).
@@ -37,7 +38,7 @@ pub struct CharacterPreview {
 }
 
 /// Box size of a weapon held in the hand or carried (width, height, length).
-fn weapon_size(id: &str) -> Vec3 {
+pub fn weapon_size(id: &str) -> Vec3 {
     match id {
         "assault_rifle" => Vec3::new(0.07, 0.12, 0.85),
         "smg" => Vec3::new(0.07, 0.11, 0.55),
@@ -53,7 +54,7 @@ fn weapon_size(id: &str) -> Vec3 {
 }
 
 /// Width factor of a class's torso: the sturdy classes are broader.
-fn bulk(class: &str) -> f32 {
+pub fn bulk(class: &str) -> f32 {
     match class {
         "bruiser" => 1.25,
         "boomer" => 1.1,
@@ -81,26 +82,37 @@ impl CharacterPreview {
         Ok(Self { cubes })
     }
 
-    fn part(&self, colour: usize, centre: Vec3, size: Vec3, yaw: Mat4) -> Instance {
+    /// A box of `size` centred on `centre`, moved by `transform`, in palette
+    /// colour `colour` (or [`METAL`], [`SKIN`]).
+    #[must_use]
+    pub fn part(&self, colour: usize, centre: Vec3, size: Vec3, yaw: Mat4) -> Instance {
         let world = yaw * Mat4::from_translation(centre) * Mat4::from_scale(size);
         Instance::new(self.cubes[colour], 0, world)
     }
 
-    /// The instances of the character turned by `yaw` radians.
+    /// The instances of the character turned by `yaw` radians, on its floor.
     #[must_use]
     pub fn instances(&self, selection: &LoadoutSelection, yaw: f32) -> Vec<Instance> {
-        let turn = Mat4::from_rotation_y(yaw);
+        let mut out = vec![self.part(
+            GROUND,
+            Vec3::new(0.0, -0.025, 0.0),
+            Vec3::new(2.4, 0.05, 2.4),
+            Mat4::IDENTITY,
+        )];
+        out.extend(self.character(selection, Mat4::from_rotation_y(yaw)));
+        out
+    }
+
+    /// The boxes of a character standing at the origin (feet on y = 0,
+    /// facing -Z), moved by `turn`: a rotation and a translation (lot 6.6
+    /// draws the other players of a match with it).
+    #[must_use]
+    pub fn character(&self, selection: &LoadoutSelection, turn: Mat4) -> Vec<Instance> {
         let last = PALETTE.len() - 1;
         let body = usize::from(selection.body_colour).min(last);
         let accent = usize::from(selection.accent_colour).min(last);
         let b = bulk(&selection.class);
         let mut out = vec![
-            self.part(
-                GROUND,
-                Vec3::new(0.0, -0.025, 0.0),
-                Vec3::new(2.4, 0.05, 2.4),
-                Mat4::IDENTITY,
-            ),
             // Legs, torso, head, arms.
             self.part(
                 accent,

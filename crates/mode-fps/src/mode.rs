@@ -233,6 +233,10 @@ impl GameMode for FpsMode {
 }
 
 impl GameModeClient for FpsMode {
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn apply_state(&mut self, bytes: &[u8]) {
         if let Some(view) = Self::decode(bytes) {
             self.view = view;
@@ -252,6 +256,53 @@ impl GameModeClient for FpsMode {
         for line in self.hud_model().text_lines() {
             ui.text(line);
         }
+    }
+}
+
+impl crate::client_view::FpsClient for FpsMode {
+    fn set_hud_input(&mut self, input: HudInput) {
+        FpsMode::set_hud_input(self, input);
+    }
+
+    fn advance_hud(&mut self, dt: f32) {
+        FpsMode::advance_hud(self, dt);
+    }
+
+    fn hud_model(&self) -> HudModel {
+        FpsMode::hud_model(self)
+    }
+
+    fn players(&self) -> Vec<(NetId, crate::client_view::ClientPlayer)> {
+        self.view
+            .iter()
+            .map(|(&id, v)| {
+                (
+                    id,
+                    crate::client_view::ClientPlayer {
+                        alive: v.alive,
+                        health: v.health,
+                        armour: v.armour,
+                        team: None,
+                        class: None,
+                        weapon: None,
+                        ammo: 0,
+                        reserve: 0,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn pickups(&self) -> Vec<crate::client_view::ClientPickup> {
+        Vec::new()
+    }
+
+    fn weapons(&self) -> &[crate::weapon::WeaponDef] {
+        self.rules.weapons()
+    }
+
+    fn classes(&self) -> &[crate::class::ClassDef] {
+        self.rules.classes()
     }
 }
 
