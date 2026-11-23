@@ -458,11 +458,7 @@ fn main() -> Result<()> {
         app.use_favorites_file(dir.join(faset_client::favorites::FILE_NAME));
     }
     let mut client = Client {
-<<<<<<< HEAD
         app,
-        vsync: !args.iter().any(|a| a == "--no-vsync"),
-=======
-        app: App::new(registry(), MapCatalogue::scan(&maps_dir)),
         vsync: settings.display.vsync && !args.iter().any(|a| a == "--no-vsync"),
         applied: settings.clone(),
         settings,
@@ -470,7 +466,6 @@ fn main() -> Result<()> {
         settings_tab: 0,
         confirm: None,
         live: None,
->>>>>>> origin/main
         limit: (seconds > 0).then(|| Duration::from_secs(seconds)),
         start: Instant::now(),
         last_frame: Instant::now(),
