@@ -2,7 +2,7 @@
 
 Rules for authors of Faset maps, human or session. Units are metres, seconds
 and radians; the world is right-handed, Y up, -Z forward. Maps are RON files
-(see `assets/maps/example.ron`).
+(see `assets/testdata/example.ron`; the shipped maps in `assets/maps` are authored with `tools/map-scripts`).
 
 ## Dimensions to respect
 
@@ -43,3 +43,15 @@ that fights are not decided at the spawn.
    - `unvisited_zones`: dead space nobody walks into, remove or connect it;
    - `team_balance`: kills and living time per team, they should be close.
 8. **Human validation** by Gabriel, then the map joins the catalogue.
+
+## Setting and borders
+
+A map has a theme (ambience, sky, weather, palette) that the client really
+uses, and its edge must be part of the scene, not a bare wall: water (a
+`KillVolume` under the sea level plus a `Water` zone whose top is the sea
+level), cliffs or mountains in rock materials, buildings, breakwater rocks.
+Prefer the pixel materials of `mapfmt::geometry::MATERIAL_NAMES` (`brick`,
+`wood`, `grass`, `sandstone`, `basalt`, `ice`, `lagoon`, `lamp_warm`...) and
+name every light of a night map in `lights`. Level changes need stairs or ramps
+(a rise of at most 0.45 m per step or per 0.5 m of run); a step of 0.5 m or more
+is only reachable by jumping and counts as unreachable for the validator.

@@ -1,2 +1,3 @@
 # Map files are compared byte for byte with their canonical form (LF).
 assets/maps/*.ron text eol=lf
+assets/testdata/*.ron text eol=lf

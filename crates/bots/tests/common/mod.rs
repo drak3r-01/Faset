@@ -53,7 +53,7 @@ pub struct Fixture {
 pub fn fixture() -> &'static Fixture {
     static F: OnceLock<Fixture> = OnceLock::new();
     F.get_or_init(|| {
-        let text = include_str!("../../../../assets/maps/example.ron");
+        let text = include_str!("../../../../assets/testdata/example.ron");
         let parsed = faset_mapfmt::parse(text.as_bytes()).unwrap();
         let map = faset_mapfmt::expand(&parsed);
         let params = MoveParams::default();

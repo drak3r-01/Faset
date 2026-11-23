@@ -12,6 +12,8 @@ Internal lot outside the plan: 6.6, the playable client (controls, HUD, scene, m
 
 Internal lot outside the plan: 6.7, the art direction (pixel materials, weapon models, light; [6.7-art-direction.md](6.7-art-direction.md)).
 
+Internal lot outside the plan: 6.8, the map redesign (four themed maps with natural borders, the map's look in the client; [6.8-map-redesign.md](6.8-map-redesign.md)).
+
 Items the plan leaves unspecified are marked as decisions inside each file: record the chosen value in your report.
 
 Synthèse de tous les lots (numéro, titre, résumé, modèle, statut) : [OVERVIEW.md](OVERVIEW.md)

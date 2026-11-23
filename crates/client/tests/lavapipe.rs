@@ -15,11 +15,13 @@ use tracing_subscriber::Layer;
 mod hud_captures;
 #[path = "lavapipe/loadout_preview.rs"]
 mod loadout_preview;
+#[path = "lavapipe/map_looks.rs"]
+mod map_looks;
 #[path = "lavapipe/match_scene.rs"]
 mod match_scene;
 
 const REFERENCE: &str = "tests/refs/example_map.png";
-const EXAMPLE: &str = include_str!("../../../assets/maps/example.ron");
+const EXAMPLE: &str = include_str!("../../../assets/testdata/example.ron");
 const SIZE: (u32, u32) = (640, 360);
 
 /// Counts events logged by the renderer's Vulkan debug callback.

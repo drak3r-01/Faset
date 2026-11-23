@@ -20,7 +20,7 @@ use faset_server::{
 };
 use faset_sim::{MapCollision, Zones};
 
-const MAP_A: &str = include_str!("../../../assets/maps/example.ron");
+const MAP_A: &str = include_str!("../../../assets/testdata/example.ron");
 
 /// A second, small map.
 const MAP_B: &str = r#"Map(
