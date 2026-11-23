@@ -5,7 +5,9 @@
 
 pub use glam;
 
+pub mod bindings;
 pub mod settings;
+pub mod translations;
 
 /// Fixed simulation step in seconds (60 Hz).
 pub const DT: f32 = 1.0 / 60.0;

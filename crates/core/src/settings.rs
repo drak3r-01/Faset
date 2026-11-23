@@ -1,15 +1,17 @@
-//! User settings: one [`Settings`] struct described by metadata ([`META`]),
+﻿//! User settings: one [`Settings`] struct described by metadata ([`META`]),
 //! stored as TOML with a version number.
 //!
 //! The metadata is the single source of truth: the menu of `faset-ui` is
 //! generated from it, defaults and ranges come from it, and
 //! [`apply_settings`] walks it to tell a [`SettingsSink`] what changed.
-//! This lot covers the display and quality categories; the other categories
-//! (controls, audio, network, game, accessibility) are lot 6.5.
+//! Categories: display and quality (lot 6.4), controls, audio, network,
+//! game and accessibility (lot 6.5).
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::bindings::Bindings;
 
 /// Version written to `settings.toml`. Older files are migrated on load.
 pub const CURRENT_VERSION: u32 = 1;
@@ -41,17 +43,40 @@ pub enum Category {
     Display,
     /// Render scale, upscaling and visual effects.
     Quality,
+    /// Mouse, key behaviour and gamepad (key bindings have their own view).
+    Controls,
+    /// Volumes, output device, key sound.
+    Audio,
+    /// Pseudonym, snapshot rate, interpolation, port, discovery.
+    Network,
+    /// Reticle, HUD, weapon position, language.
+    Game,
+    /// Colour-blind filters, reduced motion, UI scale.
+    Accessibility,
 }
 
 impl Category {
     /// Every category, in menu order.
-    pub const ALL: [Self; 2] = [Self::Display, Self::Quality];
+    pub const ALL: [Self; 7] = [
+        Self::Display,
+        Self::Quality,
+        Self::Controls,
+        Self::Audio,
+        Self::Network,
+        Self::Game,
+        Self::Accessibility,
+    ];
 
     /// Translation key of the category title.
     pub fn label_key(self) -> &'static str {
         match self {
             Self::Display => "settings.category.display",
             Self::Quality => "settings.category.quality",
+            Self::Controls => "settings.category.controls",
+            Self::Audio => "settings.category.audio",
+            Self::Network => "settings.category.network",
+            Self::Game => "settings.category.game",
+            Self::Accessibility => "settings.category.accessibility",
         }
     }
 }
@@ -178,6 +203,22 @@ choice_enum! {
     /// Shadow quality.
     ShadowQuality { Off = "off", Low = "low", Medium = "medium", High = "high" }
 }
+choice_enum! {
+    /// Shape of the reticle.
+    ReticleStyle { Cross = "cross", Dot = "dot", Circle = "circle", CrossDot = "cross_dot" }
+}
+choice_enum! {
+    /// Where the weapon is drawn in the view.
+    WeaponPosition { Right = "right", Left = "left", Center = "center" }
+}
+choice_enum! {
+    /// Interface language.
+    Language { English = "english", French = "french" }
+}
+choice_enum! {
+    /// Colour-blind filter.
+    ColourBlind { Off = "off", Protanopia = "protanopia", Deuteranopia = "deuteranopia", Tritanopia = "tritanopia" }
+}
 
 impl Resolution {
     /// Width and height in pixels.
@@ -288,7 +329,194 @@ impl Default for QualitySettings {
     }
 }
 
-/// Every user setting of this lot.
+/// Controls category (key bindings are in [`Settings::bindings`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ControlSettings {
+    /// In-game sensitivity (`sens` of [`cm_per_360`]).
+    pub sensitivity: f32,
+    /// Multiplier of the sensitivity while aiming.
+    pub aim_sensitivity: f32,
+    /// Mouse resolution in dots per inch (`dpi` of [`cm_per_360`]).
+    pub mouse_dpi: u32,
+    /// Invert the vertical axis.
+    pub invert_y: bool,
+    /// Crouch toggles instead of being held.
+    pub crouch_toggle: bool,
+    /// Aim toggles instead of being held.
+    pub aim_toggle: bool,
+    /// Holding jump keeps jumping.
+    pub hold_jump: bool,
+    /// Gamepad input.
+    pub gamepad: bool,
+}
+
+impl Default for ControlSettings {
+    fn default() -> Self {
+        Self {
+            sensitivity: 2.0,
+            aim_sensitivity: 1.0,
+            mouse_dpi: 800,
+            invert_y: false,
+            crouch_toggle: false,
+            aim_toggle: false,
+            hold_jump: true,
+            gamepad: true,
+        }
+    }
+}
+
+/// Audio category. There is no music volume: there is no music.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AudioSettings {
+    /// Master volume, 0 to 1.
+    pub master: f32,
+    /// Effects volume, 0 to 1.
+    pub effects: f32,
+    /// Interface volume, 0 to 1.
+    pub ui: f32,
+    /// Output device number (decision: 0 is the system default; the audio
+    /// crate has no device enumeration yet, so the host maps the number).
+    pub output_device: u32,
+    /// Typing sound on keys.
+    pub key_sound: bool,
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        Self {
+            master: 1.0,
+            effects: 1.0,
+            ui: 1.0,
+            output_device: 0,
+            key_sound: true,
+        }
+    }
+}
+
+/// Longest pseudonym, in characters.
+pub const MAX_PSEUDONYM_CHARS: usize = 24;
+
+/// Network category.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NetworkSettings {
+    /// Player name shown to others (text, outside [`META`]).
+    pub pseudonym: String,
+    /// Snapshot frequency asked of the server, 20 to 60 Hz.
+    pub snapshot_hz: u32,
+    /// Interpolation delay computed from the jitter.
+    pub interpolation_auto: bool,
+    /// Manual interpolation delay in milliseconds.
+    pub interpolation_delay_ms: u32,
+    /// UDP port.
+    pub port: u16,
+    /// Discover servers on the local network.
+    pub lan_discovery: bool,
+    /// Show the network graph.
+    pub net_graph: bool,
+}
+
+impl Default for NetworkSettings {
+    fn default() -> Self {
+        Self {
+            pseudonym: "Player".to_owned(),
+            snapshot_hz: 30,
+            interpolation_auto: true,
+            interpolation_delay_ms: 100,
+            port: 7777,
+            lan_discovery: true,
+            net_graph: false,
+        }
+    }
+}
+
+/// Game category.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GameSettings {
+    /// Reticle shape.
+    pub reticle_style: ReticleStyle,
+    /// Reticle size in pixels.
+    pub reticle_size: u32,
+    /// Reticle line thickness in pixels.
+    pub reticle_thickness: u32,
+    /// Gap at the reticle centre in pixels.
+    pub reticle_gap: u32,
+    /// Reticle opacity, 0 to 1.
+    pub reticle_opacity: f32,
+    /// HUD scale factor.
+    pub hud_scale: f32,
+    /// Show the speed indicator.
+    pub speed_indicator: bool,
+    /// Show damage numbers.
+    pub damage_numbers: bool,
+    /// Weapon position in the view.
+    pub weapon_position: WeaponPosition,
+    /// Interface language.
+    pub language: Language,
+}
+
+impl Default for GameSettings {
+    fn default() -> Self {
+        Self {
+            reticle_style: ReticleStyle::Cross,
+            reticle_size: 16,
+            reticle_thickness: 2,
+            reticle_gap: 4,
+            reticle_opacity: 1.0,
+            hud_scale: 1.0,
+            speed_indicator: false,
+            damage_numbers: true,
+            weapon_position: WeaponPosition::Right,
+            language: Language::English,
+        }
+    }
+}
+
+/// Accessibility category.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AccessibilitySettings {
+    /// Colour-blind filter.
+    pub colour_blind: ColourBlind,
+    /// Reduce camera shake.
+    pub reduce_shake: bool,
+    /// Reduce flashes.
+    pub reduce_flashes: bool,
+    /// Interface scale factor.
+    pub ui_scale: f32,
+}
+
+impl Default for AccessibilitySettings {
+    fn default() -> Self {
+        Self {
+            colour_blind: ColourBlind::Off,
+            reduce_shake: false,
+            reduce_flashes: false,
+            ui_scale: 1.0,
+        }
+    }
+}
+
+/// Centimetres of mouse travel for a full turn (plan section 19, constant
+/// 0.022 as written there): `360 * 2.54 / (0.022 * sens * dpi)`.
+pub fn cm_per_360(sens: f32, dpi: u32) -> f32 {
+    let denom = 0.022 * sens * dpi as f32;
+    if denom <= 0.0 {
+        return f32::INFINITY;
+    }
+    360.0 * 2.54 / denom
+}
+
+/// Automatic interpolation delay `d = max(2I, I + 2j)` in seconds, `I` being
+/// the snapshot interval and `j` the smoothed jitter (plan section 6).
+pub fn auto_interpolation_delay(interval: f64, jitter: f64) -> f64 {
+    (2.0 * interval).max(interval + 2.0 * jitter)
+}
+
+/// Every user setting.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -298,6 +526,18 @@ pub struct Settings {
     pub display: DisplaySettings,
     /// Quality category.
     pub quality: QualitySettings,
+    /// Controls category.
+    pub controls: ControlSettings,
+    /// Audio category.
+    pub audio: AudioSettings,
+    /// Network category.
+    pub network: NetworkSettings,
+    /// Game category.
+    pub game: GameSettings,
+    /// Accessibility category.
+    pub accessibility: AccessibilitySettings,
+    /// Key bindings.
+    pub bindings: Bindings,
 }
 
 impl Default for Settings {
@@ -306,6 +546,12 @@ impl Default for Settings {
             version: CURRENT_VERSION,
             display: DisplaySettings::default(),
             quality: QualitySettings::default(),
+            controls: ControlSettings::default(),
+            audio: AudioSettings::default(),
+            network: NetworkSettings::default(),
+            game: GameSettings::default(),
+            accessibility: AccessibilitySettings::default(),
+            bindings: Bindings::default(),
         }
     }
 }
@@ -329,6 +575,11 @@ const fn meta(
 
 const D: Category = Category::Display;
 const Q: Category = Category::Quality;
+const C: Category = Category::Controls;
+const A: Category = Category::Audio;
+const N: Category = Category::Network;
+const G: Category = Category::Game;
+const X: Category = Category::Accessibility;
 
 /// Metadata of every setting, in menu order.
 #[rustfmt::skip]
@@ -352,6 +603,39 @@ pub const META: &[SettingMeta] = &[
     meta("weather_density", Q, "settings.weather_density", SettingType::Float { min: 0.0, max: 1.0 }, Value::Float(1.0)),
     meta("screen_effects", Q, "settings.screen_effects", SettingType::Bool, Value::Bool(true)),
     meta("draw_distance", Q, "settings.draw_distance", SettingType::Int { min: 100, max: 2000 }, Value::Int(1000)),
+    meta("sensitivity", C, "settings.sensitivity", SettingType::Float { min: 0.1, max: 20.0 }, Value::Float(2.0)),
+    meta("aim_sensitivity", C, "settings.aim_sensitivity", SettingType::Float { min: 0.1, max: 2.0 }, Value::Float(1.0)),
+    meta("mouse_dpi", C, "settings.mouse_dpi", SettingType::Int { min: 100, max: 32000 }, Value::Int(800)),
+    meta("invert_y", C, "settings.invert_y", SettingType::Bool, Value::Bool(false)),
+    meta("crouch_toggle", C, "settings.crouch_toggle", SettingType::Bool, Value::Bool(false)),
+    meta("aim_toggle", C, "settings.aim_toggle", SettingType::Bool, Value::Bool(false)),
+    meta("hold_jump", C, "settings.hold_jump", SettingType::Bool, Value::Bool(true)),
+    meta("gamepad", C, "settings.gamepad", SettingType::Bool, Value::Bool(true)),
+    meta("master_volume", A, "settings.master_volume", SettingType::Float { min: 0.0, max: 1.0 }, Value::Float(1.0)),
+    meta("effects_volume", A, "settings.effects_volume", SettingType::Float { min: 0.0, max: 1.0 }, Value::Float(1.0)),
+    meta("ui_volume", A, "settings.ui_volume", SettingType::Float { min: 0.0, max: 1.0 }, Value::Float(1.0)),
+    meta("output_device", A, "settings.output_device", SettingType::Int { min: 0, max: 15 }, Value::Int(0)),
+    meta("key_sound", A, "settings.key_sound", SettingType::Bool, Value::Bool(true)),
+    meta("snapshot_hz", N, "settings.snapshot_hz", SettingType::Int { min: 20, max: 60 }, Value::Int(30)),
+    meta("interpolation_auto", N, "settings.interpolation_auto", SettingType::Bool, Value::Bool(true)),
+    meta("interpolation_delay_ms", N, "settings.interpolation_delay_ms", SettingType::Int { min: 20, max: 500 }, Value::Int(100)),
+    meta("port", N, "settings.port", SettingType::Int { min: 1024, max: 65535 }, Value::Int(7777)),
+    meta("lan_discovery", N, "settings.lan_discovery", SettingType::Bool, Value::Bool(true)),
+    meta("net_graph", N, "settings.net_graph", SettingType::Bool, Value::Bool(false)),
+    meta("reticle_style", G, "settings.reticle_style", SettingType::Choice(ReticleStyle::OPTIONS), Value::Choice(0)),
+    meta("reticle_size", G, "settings.reticle_size", SettingType::Int { min: 4, max: 64 }, Value::Int(16)),
+    meta("reticle_thickness", G, "settings.reticle_thickness", SettingType::Int { min: 1, max: 8 }, Value::Int(2)),
+    meta("reticle_gap", G, "settings.reticle_gap", SettingType::Int { min: 0, max: 20 }, Value::Int(4)),
+    meta("reticle_opacity", G, "settings.reticle_opacity", SettingType::Float { min: 0.1, max: 1.0 }, Value::Float(1.0)),
+    meta("hud_scale", G, "settings.hud_scale", SettingType::Float { min: 0.5, max: 2.0 }, Value::Float(1.0)),
+    meta("speed_indicator", G, "settings.speed_indicator", SettingType::Bool, Value::Bool(false)),
+    meta("damage_numbers", G, "settings.damage_numbers", SettingType::Bool, Value::Bool(true)),
+    meta("weapon_position", G, "settings.weapon_position", SettingType::Choice(WeaponPosition::OPTIONS), Value::Choice(0)),
+    meta("language", G, "settings.language", SettingType::Choice(Language::OPTIONS), Value::Choice(0)),
+    meta("colour_blind", X, "settings.colour_blind", SettingType::Choice(ColourBlind::OPTIONS), Value::Choice(0)),
+    meta("reduce_shake", X, "settings.reduce_shake", SettingType::Bool, Value::Bool(false)),
+    meta("reduce_flashes", X, "settings.reduce_flashes", SettingType::Bool, Value::Bool(false)),
+    meta("ui_scale", X, "settings.ui_scale", SettingType::Float { min: 0.75, max: 1.5 }, Value::Float(1.0)),
 ];
 
 /// The metadata of setting `id`.
@@ -406,6 +690,39 @@ impl Settings {
             "weather_density" => Value::Float(q.weather_density),
             "screen_effects" => Value::Bool(q.screen_effects),
             "draw_distance" => Value::Int(i64::from(q.draw_distance)),
+            "sensitivity" => Value::Float(self.controls.sensitivity),
+            "aim_sensitivity" => Value::Float(self.controls.aim_sensitivity),
+            "mouse_dpi" => Value::Int(i64::from(self.controls.mouse_dpi)),
+            "invert_y" => Value::Bool(self.controls.invert_y),
+            "crouch_toggle" => Value::Bool(self.controls.crouch_toggle),
+            "aim_toggle" => Value::Bool(self.controls.aim_toggle),
+            "hold_jump" => Value::Bool(self.controls.hold_jump),
+            "gamepad" => Value::Bool(self.controls.gamepad),
+            "master_volume" => Value::Float(self.audio.master),
+            "effects_volume" => Value::Float(self.audio.effects),
+            "ui_volume" => Value::Float(self.audio.ui),
+            "output_device" => Value::Int(i64::from(self.audio.output_device)),
+            "key_sound" => Value::Bool(self.audio.key_sound),
+            "snapshot_hz" => Value::Int(i64::from(self.network.snapshot_hz)),
+            "interpolation_auto" => Value::Bool(self.network.interpolation_auto),
+            "interpolation_delay_ms" => Value::Int(i64::from(self.network.interpolation_delay_ms)),
+            "port" => Value::Int(i64::from(self.network.port)),
+            "lan_discovery" => Value::Bool(self.network.lan_discovery),
+            "net_graph" => Value::Bool(self.network.net_graph),
+            "reticle_style" => Value::Choice(self.game.reticle_style.index()),
+            "reticle_size" => Value::Int(i64::from(self.game.reticle_size)),
+            "reticle_thickness" => Value::Int(i64::from(self.game.reticle_thickness)),
+            "reticle_gap" => Value::Int(i64::from(self.game.reticle_gap)),
+            "reticle_opacity" => Value::Float(self.game.reticle_opacity),
+            "hud_scale" => Value::Float(self.game.hud_scale),
+            "speed_indicator" => Value::Bool(self.game.speed_indicator),
+            "damage_numbers" => Value::Bool(self.game.damage_numbers),
+            "weapon_position" => Value::Choice(self.game.weapon_position.index()),
+            "language" => Value::Choice(self.game.language.index()),
+            "colour_blind" => Value::Choice(self.accessibility.colour_blind.index()),
+            "reduce_shake" => Value::Bool(self.accessibility.reduce_shake),
+            "reduce_flashes" => Value::Bool(self.accessibility.reduce_flashes),
+            "ui_scale" => Value::Float(self.accessibility.ui_scale),
             _ => return None,
         })
     }
@@ -448,6 +765,49 @@ impl Settings {
             ("weather_density", Value::Float(v)) => q.weather_density = v,
             ("screen_effects", Value::Bool(v)) => q.screen_effects = v,
             ("draw_distance", Value::Int(v)) => q.draw_distance = v as u32,
+            ("sensitivity", Value::Float(v)) => self.controls.sensitivity = v,
+            ("aim_sensitivity", Value::Float(v)) => self.controls.aim_sensitivity = v,
+            ("mouse_dpi", Value::Int(v)) => self.controls.mouse_dpi = v as u32,
+            ("invert_y", Value::Bool(v)) => self.controls.invert_y = v,
+            ("crouch_toggle", Value::Bool(v)) => self.controls.crouch_toggle = v,
+            ("aim_toggle", Value::Bool(v)) => self.controls.aim_toggle = v,
+            ("hold_jump", Value::Bool(v)) => self.controls.hold_jump = v,
+            ("gamepad", Value::Bool(v)) => self.controls.gamepad = v,
+            ("master_volume", Value::Float(v)) => self.audio.master = v,
+            ("effects_volume", Value::Float(v)) => self.audio.effects = v,
+            ("ui_volume", Value::Float(v)) => self.audio.ui = v,
+            ("output_device", Value::Int(v)) => self.audio.output_device = v as u32,
+            ("key_sound", Value::Bool(v)) => self.audio.key_sound = v,
+            ("snapshot_hz", Value::Int(v)) => self.network.snapshot_hz = v as u32,
+            ("interpolation_auto", Value::Bool(v)) => self.network.interpolation_auto = v,
+            ("interpolation_delay_ms", Value::Int(v)) => {
+                self.network.interpolation_delay_ms = v as u32
+            }
+            ("port", Value::Int(v)) => self.network.port = v as u16,
+            ("lan_discovery", Value::Bool(v)) => self.network.lan_discovery = v,
+            ("net_graph", Value::Bool(v)) => self.network.net_graph = v,
+            ("reticle_style", Value::Choice(i)) => {
+                self.game.reticle_style = ReticleStyle::from_index(i).ok_or_else(wrong)?
+            }
+            ("reticle_size", Value::Int(v)) => self.game.reticle_size = v as u32,
+            ("reticle_thickness", Value::Int(v)) => self.game.reticle_thickness = v as u32,
+            ("reticle_gap", Value::Int(v)) => self.game.reticle_gap = v as u32,
+            ("reticle_opacity", Value::Float(v)) => self.game.reticle_opacity = v,
+            ("hud_scale", Value::Float(v)) => self.game.hud_scale = v,
+            ("speed_indicator", Value::Bool(v)) => self.game.speed_indicator = v,
+            ("damage_numbers", Value::Bool(v)) => self.game.damage_numbers = v,
+            ("weapon_position", Value::Choice(i)) => {
+                self.game.weapon_position = WeaponPosition::from_index(i).ok_or_else(wrong)?
+            }
+            ("language", Value::Choice(i)) => {
+                self.game.language = Language::from_index(i).ok_or_else(wrong)?
+            }
+            ("colour_blind", Value::Choice(i)) => {
+                self.accessibility.colour_blind = ColourBlind::from_index(i).ok_or_else(wrong)?
+            }
+            ("reduce_shake", Value::Bool(v)) => self.accessibility.reduce_shake = v,
+            ("reduce_flashes", Value::Bool(v)) => self.accessibility.reduce_flashes = v,
+            ("ui_scale", Value::Float(v)) => self.accessibility.ui_scale = v,
             _ => return Err(wrong()),
         }
         Ok(())
@@ -455,6 +815,7 @@ impl Settings {
 
     /// Brings every field into its range (after loading a hand-edited file).
     pub fn clamp(&mut self) {
+        self.clean_pseudonym();
         for m in META {
             if let Some(v) = self.get(m.id).and_then(|v| m.ty.clamp(v)) {
                 let _ = self.set(m.id, v);
@@ -465,6 +826,44 @@ impl Settings {
     /// Resets the display category to its defaults (`--safe`).
     pub fn reset_display(&mut self) {
         self.display = DisplaySettings::default();
+    }
+
+    /// Centimetres per full turn at the current sensitivity and dpi.
+    pub fn cm_per_360(&self) -> f32 {
+        cm_per_360(self.controls.sensitivity, self.controls.mouse_dpi)
+    }
+
+    /// Interval between snapshots in seconds.
+    pub fn snapshot_interval(&self) -> f64 {
+        1.0 / f64::from(self.network.snapshot_hz.clamp(20, 60))
+    }
+
+    /// Interpolation delay in seconds for the smoothed `jitter` (seconds):
+    /// the formula when automatic, the manual value otherwise.
+    pub fn interpolation_delay(&self, jitter: f64) -> f64 {
+        if self.network.interpolation_auto {
+            auto_interpolation_delay(self.snapshot_interval(), jitter)
+        } else {
+            f64::from(self.network.interpolation_delay_ms) / 1000.0
+        }
+    }
+
+    /// Keeps the pseudonym printable and at most [`MAX_PSEUDONYM_CHARS`]
+    /// long; an empty one becomes the default.
+    pub fn clean_pseudonym(&mut self) {
+        let cleaned: String = self
+            .network
+            .pseudonym
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(MAX_PSEUDONYM_CHARS)
+            .collect();
+        let cleaned = cleaned.trim().to_owned();
+        self.network.pseudonym = if cleaned.is_empty() {
+            NetworkSettings::default().pseudonym
+        } else {
+            cleaned
+        };
     }
 
     /// Ids of the settings whose value differs from `other`'s, in menu order.
@@ -692,7 +1091,7 @@ mod tests {
     #[test]
     fn every_field_has_metadata_matching_its_default() {
         let defaults = Settings::default();
-        assert_eq!(META.len(), 19);
+        assert_eq!(META.len(), 19 + 33);
         for m in META {
             assert_eq!(defaults.get(m.id), Some(m.default), "{}", m.id);
             assert_eq!(m.ty.clamp(m.default), Some(m.default), "{}", m.id);
@@ -770,6 +1169,52 @@ mod tests {
         assert!(matches!(c.poll(114.9), ConfirmState::Waiting(_)));
         assert_eq!(c.poll(115.0), ConfirmState::Expired);
         assert_eq!(c.previous, Resolution::R1920x1080);
+    }
+
+    #[test]
+    fn sensitivity_in_centimetres_per_turn() {
+        // 360 * 2.54 / (0.022 * 2 * 800) = 25.98 cm.
+        assert!((cm_per_360(2.0, 800) - 25.977).abs() < 0.01);
+        assert!(cm_per_360(0.0, 800).is_infinite());
+        assert!((Settings::default().cm_per_360() - 25.977).abs() < 0.01);
+    }
+
+    #[test]
+    fn interpolation_delay_is_automatic_or_manual() {
+        let i = 1.0 / 30.0;
+        assert!((auto_interpolation_delay(i, 0.0) - 2.0 * i).abs() < 1e-12);
+        assert!((auto_interpolation_delay(i, 0.05) - (i + 0.1)).abs() < 1e-12);
+        let mut s = Settings::default();
+        assert!((s.interpolation_delay(0.0) - 2.0 / 30.0).abs() < 1e-9);
+        s.set("interpolation_auto", Value::Bool(false)).unwrap();
+        s.set("interpolation_delay_ms", Value::Int(150)).unwrap();
+        assert!((s.interpolation_delay(0.5) - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pseudonym_is_cleaned_and_new_categories_round_trip() {
+        let mut s = Settings::default();
+        s.network.pseudonym = "  a\u{7}bc".repeat(20);
+        s.clean_pseudonym();
+        assert!(s.network.pseudonym.chars().count() <= MAX_PSEUDONYM_CHARS);
+        assert!(!s.network.pseudonym.chars().any(char::is_control));
+        s.network.pseudonym = "   ".into();
+        s.clean_pseudonym();
+        assert_eq!(s.network.pseudonym, "Player");
+        s.network.pseudonym = "Gab".into();
+        s.set("snapshot_hz", Value::Int(100)).unwrap();
+        assert_eq!(s.network.snapshot_hz, 60);
+        s.set("language", Value::Choice(1)).unwrap();
+        s.set("master_volume", Value::Float(0.3)).unwrap();
+        s.bindings.swap(
+            crate::bindings::Action::Jump,
+            "KeyW".parse().unwrap(),
+            crate::bindings::Action::Forward,
+        );
+        let path = temp("categories");
+        save_settings(&path, &s).unwrap();
+        assert_eq!(load_settings(&path), s);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

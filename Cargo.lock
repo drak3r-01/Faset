@@ -920,6 +920,7 @@ version = "0.0.1-rc.1"
 dependencies = [
  "anyhow",
  "dedicated",
+ "faset-audio",
  "faset-bots",
  "faset-core",
  "faset-mapfmt",
@@ -935,6 +936,7 @@ dependencies = [
  "faset-upscale",
  "if-addrs",
  "image",
+ "kira",
  "proptest",
  "ron",
  "serde",

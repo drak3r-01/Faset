@@ -3,13 +3,15 @@
 //! [`build_settings_menu`] turns a [`Settings`] into a [`Menu`] (categories of
 //! entries, one per metadata row); [`SettingsScreen`] draws it with egui and
 //! reports what the player changed as [`SettingsEvent`]s. Labels are
-//! translation keys: until lot 6.5 moves them to the shared table, the English
-//! texts live in [`label`].
+//! translation keys of the shared table (`faset_core::translations`).
 
 use faset_core::settings::{
-    Category, ConfirmState, SettingMeta, SettingType, Settings, UpscalerChoice, Value, META,
+    Category, ConfirmState, GameSettings, ReticleStyle, SettingMeta, SettingType, Settings,
+    UpscalerChoice, Value, MAX_PSEUDONYM_CHARS, META,
 };
 
+use crate::i18n::{fill, set_language, text, try_text};
+use crate::rebinding::RebindView;
 use crate::{Screen, Theme};
 
 /// One row of the menu: a setting and its current value.
@@ -78,42 +80,26 @@ pub fn build_settings_menu(settings: &Settings) -> Menu {
     Menu { categories }
 }
 
-/// English text of a label key (a missing key shows the key).
+/// Text of a label key in the current language (a missing key shows the
+/// key).
 pub fn label(key: &str) -> &str {
-    const EN: &[(&str, &str)] = &[
-        ("settings.anti_aliasing", "Anti-aliasing"),
-        ("settings.bloom", "Bloom"),
-        ("settings.brightness", "Brightness"),
-        ("settings.category.display", "Display"),
-        ("settings.category.quality", "Quality"),
-        ("settings.draw_distance", "Draw distance (m)"),
-        ("settings.fov", "Field of view"),
-        ("settings.fps_cap", "FPS cap (0 = unlimited)"),
-        ("settings.monitor", "Monitor"),
-        ("settings.occlusion", "Ambient occlusion"),
-        ("settings.outlines", "Outlines"),
-        ("settings.render_scale", "Render scale (%)"),
-        ("settings.resolution", "Resolution"),
-        ("settings.screen_effects", "Screen effects"),
-        ("settings.shadows", "Shadows"),
-        ("settings.sharpness", "Sharpness"),
-        ("settings.upscale_level", "Upscale level"),
-        ("settings.upscaler", "Upscaler"),
-        ("settings.vsync", "Vertical sync"),
-        ("settings.weather_density", "Weather density"),
-        ("settings.window_mode", "Window mode"),
-    ];
-    EN.iter().find(|(k, _)| *k == key).map_or(key, |(_, v)| v)
+    text(key)
 }
 
 /// Display text of an option name (`ultra_performance` becomes
-/// `Ultra performance`).
+/// `Ultra performance`); the fallback when the table has no text.
 pub fn option_label(option: &str) -> String {
     let mut text = option.replace('_', " ");
     if let Some(first) = text.get_mut(..1) {
         first.make_ascii_uppercase();
     }
     text
+}
+
+/// Display text of `option` of setting `id`: the table entry
+/// `option.<id>.<option>` when it exists, else [`option_label`].
+pub fn option_text(id: &str, option: &str) -> String {
+    try_text(&format!("option.{id}.{option}")).map_or_else(|| option_label(option), str::to_owned)
 }
 
 /// What the settings screen asks of its host.
@@ -125,6 +111,10 @@ pub enum SettingsEvent {
     KeepResolution,
     /// The player asked to go back to the previous resolution.
     RevertResolution,
+    /// The player changed a key binding.
+    BindingsChanged,
+    /// The player edited the pseudonym.
+    PseudonymChanged,
     /// The player left the screen.
     Back,
 }
@@ -139,6 +129,11 @@ pub struct SettingsScreen<'a> {
     pub confirm: Option<ConfirmState>,
     /// Selected category tab.
     pub tab: usize,
+    /// State of the rebinding view (kept by the host between frames).
+    pub rebind: RebindView,
+    /// Smoothed network jitter in seconds, to show the automatic
+    /// interpolation delay (0 when unknown).
+    pub jitter: f64,
     /// Events of this frame.
     pub events: Vec<SettingsEvent>,
 }
@@ -151,6 +146,8 @@ impl<'a> SettingsScreen<'a> {
             available_upscalers,
             confirm: None,
             tab: 0,
+            rebind: RebindView::default(),
+            jitter: 0.0,
             events: Vec::new(),
         }
     }
@@ -172,7 +169,7 @@ impl<'a> SettingsScreen<'a> {
         let mut new = current;
         ui.add_enabled_ui(free_scale, |ui| {
             ui.horizontal(|ui| {
-                ui.label(label(meta.label_key));
+                ui.label(text(meta.label_key));
                 match (meta.ty, &mut new) {
                     (SettingType::Bool, Value::Bool(v)) => {
                         ui.checkbox(v, "");
@@ -184,13 +181,13 @@ impl<'a> SettingsScreen<'a> {
                         ui.add(egui::Slider::new(v, min..=max));
                     }
                     (SettingType::Choice(options), Value::Choice(i)) => {
-                        let shown = option_label(options[(*i).min(options.len() - 1)]);
+                        let shown = option_text(meta.id, options[(*i).min(options.len() - 1)]);
                         egui::ComboBox::from_id_salt(meta.id)
                             .selected_text(shown)
                             .show_ui(ui, |ui| {
                                 for (n, name) in options.iter().enumerate() {
                                     if self.offered(meta, n) {
-                                        ui.selectable_value(i, n, option_label(name));
+                                        ui.selectable_value(i, n, option_text(meta.id, name));
                                     }
                                 }
                             });
@@ -205,8 +202,84 @@ impl<'a> SettingsScreen<'a> {
     }
 }
 
+impl SettingsScreen<'_> {
+    fn pseudonym_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(text("settings.pseudonym"));
+            let mut name = self.settings.network.pseudonym.clone();
+            let edit =
+                ui.add(egui::TextEdit::singleline(&mut name).char_limit(MAX_PSEUDONYM_CHARS));
+            if edit.changed() {
+                self.settings.network.pseudonym = name;
+                self.events.push(SettingsEvent::PseudonymChanged);
+            }
+            if edit.lost_focus() {
+                self.settings.clean_pseudonym();
+            }
+        });
+    }
+
+    /// Extra information under some rows.
+    fn after_row(&self, ui: &mut egui::Ui, id: &str) {
+        let note = match id {
+            "mouse_dpi" => Some(fill(
+                text("settings.cm_per_360"),
+                &[("value", &format!("{:.1}", self.settings.cm_per_360()))],
+            )),
+            "interpolation_delay_ms" => Some(fill(
+                text("settings.interpolation_effective"),
+                &[(
+                    "value",
+                    &format!(
+                        "{:.0}",
+                        self.settings.interpolation_delay(self.jitter) * 1000.0
+                    ),
+                )],
+            )),
+            _ => None,
+        };
+        if let Some(note) = note {
+            ui.weak(note);
+        }
+    }
+}
+
+/// Draws the reticle as set in `game` on a dark swatch.
+fn reticle_preview(ui: &mut egui::Ui, game: &GameSettings) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(96.0, 96.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, egui::Color32::from_gray(30));
+    let alpha = (game.reticle_opacity.clamp(0.0, 1.0) * 255.0) as u8;
+    let colour = egui::Color32::from_white_alpha(alpha);
+    let c = rect.center();
+    let (size, gap) = (game.reticle_size as f32 / 2.0, game.reticle_gap as f32);
+    let stroke = egui::Stroke::new(game.reticle_thickness as f32, colour);
+    let dot = |p: &egui::Painter| p.circle_filled(c, game.reticle_thickness as f32, colour);
+    let cross = |p: &egui::Painter| {
+        for d in [egui::vec2(1.0, 0.0), egui::vec2(0.0, 1.0)] {
+            p.line_segment([c + d * gap, c + d * (gap + size)], stroke);
+            p.line_segment([c - d * gap, c - d * (gap + size)], stroke);
+        }
+    };
+    match game.reticle_style {
+        ReticleStyle::Cross => cross(&painter),
+        ReticleStyle::Dot => {
+            dot(&painter);
+        }
+        ReticleStyle::Circle => {
+            painter.circle_stroke(c, (gap + size).min(46.0), stroke);
+        }
+        ReticleStyle::CrossDot => {
+            cross(&painter);
+            dot(&painter);
+        }
+    }
+}
+
 impl Screen for SettingsScreen<'_> {
     fn show(&mut self, ctx: &egui::Context, theme: &Theme) {
+        // The language of the setting is the language of this very frame.
+        set_language(self.settings.game.language);
         let menu = build_settings_menu(self.settings);
         egui::Window::new("settings")
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -224,14 +297,36 @@ impl Screen for SettingsScreen<'_> {
                 ui.set_min_width(480.0);
                 ui.horizontal(|ui| {
                     for (n, c) in menu.categories.iter().enumerate() {
-                        ui.selectable_value(&mut self.tab, n, label(c.category.label_key()));
+                        ui.selectable_value(&mut self.tab, n, text(c.category.label_key()));
                     }
                 });
                 ui.separator();
                 if let Some(category) = menu.categories.get(self.tab) {
-                    for entry in &category.entries {
-                        self.row(ui, entry.meta);
-                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(420.0)
+                        .show(ui, |ui| {
+                            if category.category == Category::Network {
+                                self.pseudonym_row(ui);
+                            }
+                            for entry in &category.entries {
+                                self.row(ui, entry.meta);
+                                self.after_row(ui, entry.meta.id);
+                            }
+                            match category.category {
+                                Category::Controls => {
+                                    ui.separator();
+                                    if self.rebind.show(ui, &mut self.settings.bindings) {
+                                        self.events.push(SettingsEvent::BindingsChanged);
+                                    }
+                                }
+                                Category::Game => {
+                                    ui.separator();
+                                    ui.label(text("settings.reticle_preview"));
+                                    reticle_preview(ui, &self.settings.game);
+                                }
+                                _ => {}
+                            }
+                        });
                 }
                 if let Some(state) = self.confirm {
                     ui.separator();
@@ -241,20 +336,26 @@ impl Screen for SettingsScreen<'_> {
                     };
                     ui.colored_label(
                         theme.text_muted,
-                        format!("Keep this resolution? Reverting in {left} s"),
+                        fill(
+                            text("settings.confirm_resolution"),
+                            &[("seconds", &left.to_string())],
+                        ),
                     );
                     ui.horizontal(|ui| {
-                        if ui.button("Keep").clicked() {
+                        if ui.button(text("settings.keep")).clicked() {
                             self.events.push(SettingsEvent::KeepResolution);
                         }
-                        if ui.button("Revert").clicked() {
+                        if ui.button(text("settings.revert")).clicked() {
                             self.events.push(SettingsEvent::RevertResolution);
                         }
                     });
                 }
                 ui.add_space(8.0);
                 if ui
-                    .add_sized([ui.available_width(), 36.0], egui::Button::new("Back"))
+                    .add_sized(
+                        [ui.available_width(), 36.0],
+                        egui::Button::new(text("nav.back")),
+                    )
                     .clicked()
                 {
                     self.events.push(SettingsEvent::Back);
@@ -320,5 +421,7 @@ mod tests {
     fn option_labels_are_readable() {
         assert_eq!(option_label("ultra_performance"), "Ultra performance");
         assert_eq!(option_label("1280x720"), "1280x720");
+        assert_eq!(option_text("window_mode", "windowed"), "Windowed");
+        assert_eq!(option_text("resolution", "1280x720"), "1280x720");
     }
 }
