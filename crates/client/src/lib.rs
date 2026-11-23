@@ -34,6 +34,11 @@
 //!   becomes a [`HostConfig`] (match, rotation, bots), a [`JoinTarget`] is an
 //!   address or a LAN entry, and [`Favorites`] keeps favourites and history in
 //!   `favorites.ron`.
+//! * [`profile`], [`loadout_flow`], [`preview`] (lot 6.3): the player's classes
+//!   in `profile.ron` ([`Profile`]), the glue between the loadout screen and
+//!   the class catalogue and budget of `faset-mode-fps`, and the 3D character
+//!   preview ([`CharacterPreview`]) drawn through the renderer's usual
+//!   interfaces. The server revalidates every loadout it receives.
 //! * [`interpolation`]: shows remote entities a deliberate delay in the
 //!   past with Hermite interpolation between snapshots, extrapolating for at
 //!   most a quarter of a second, and gives the [`ViewTime`] a fire command
@@ -64,9 +69,12 @@ pub mod hosting;
 pub mod hud;
 pub mod interpolation;
 pub mod join;
+pub mod loadout_flow;
 pub mod map_load;
 pub mod map_sync;
 pub mod prediction;
+pub mod preview;
+pub mod profile;
 pub mod session;
 pub mod state;
 
@@ -80,6 +88,7 @@ pub use discovery::{
     DiscoveryResponder, ServerBrowser, ServerEntry, ServerInfo, DISCOVERY_PORT, ENTRY_TTL,
     GAME_PORT, REFRESH_INTERVAL,
 };
+pub use faset_mode_fps::Loadout;
 pub use favorites::{data_dir, Favorites, FavoritesError};
 pub use feel::{cm_per_360, degrees_per_count, CriticalSpring, FeelParams, DEGREES_PER_COUNT};
 pub use host_flow::host_config;
@@ -100,5 +109,7 @@ pub use prediction::{
     PredictionHistory, ReconcileOutcome, Tolerance, VisualOffset, COMMANDS_PER_PACKET,
     HISTORY_TICKS, SMOOTHING_TAU, SNAP_DISTANCE,
 };
+pub use preview::CharacterPreview;
+pub use profile::{Appearance, Profile, ProfileError, SavedClass, PROFILE_VERSION};
 pub use session::{map_config, Session, SessionError};
 pub use state::{AppState, StateError, StateStack, Transition};

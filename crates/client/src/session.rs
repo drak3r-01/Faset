@@ -23,8 +23,10 @@ use std::time::Duration;
 use faset_core::glam::Vec3;
 use faset_core::{NetId, Tick};
 use faset_mapfmt::MapFile;
+use faset_minigame_api::{GameEvent, ModeId, ModeMessage};
+use faset_mode_fps::ServerMsg;
 use faset_net::{Channel, ClientEndpoint, SendError, Transport, TransportError, UdpTransport};
-use faset_protocol::{InputCommand, Message, PROTOCOL_VERSION};
+use faset_protocol::{Event, InputCommand, Message, PROTOCOL_VERSION};
 use faset_server::{
     build_fingerprint, map_fingerprint, InputPacket, MapConfig, ServerConfig, SnapshotDecoder,
 };
@@ -121,6 +123,10 @@ pub struct Session {
     zones: Zones,
     decoder: SnapshotDecoder,
     player: Option<NetId>,
+    /// Mode byte of the server's hello (lot 6.3).
+    mode: Option<u8>,
+    /// Reason of the last loadout replacement the server reported.
+    loadout_replaced: Option<u8>,
     clock: ClockSync,
     prediction: Option<Prediction>,
     remotes: RemoteInterpolation,
@@ -193,6 +199,8 @@ impl Session {
             zones,
             decoder: SnapshotDecoder::new(),
             player: None,
+            mode: None,
+            loadout_replaced: None,
             clock: ClockSync::default(),
             prediction: None,
             remotes: RemoteInterpolation::default(),
@@ -271,6 +279,42 @@ impl Session {
         self.now
     }
 
+    /// Mode byte the server announced (`None` before its hello).
+    #[must_use]
+    pub fn mode(&self) -> Option<u8> {
+        self.mode
+    }
+
+    /// Sends mode-defined bytes to the server's mode (lot 6.3). Returns
+    /// whether they were queued: false before the server's hello.
+    pub fn send_mode_message(&mut self, bytes: Vec<u8>) -> bool {
+        let Some(mode) = self.mode else {
+            return false;
+        };
+        let message = ModeMessage {
+            mode: ModeId(mode),
+            bytes,
+        };
+        self.send_event(&Message::Event(Event::Mode(message.encode())));
+        true
+    }
+
+    /// The reason code of the last loadout the server replaced with the
+    /// default class, once ([`LoadoutError::code`](faset_mode_fps::LoadoutError::code)).
+    pub fn take_loadout_replaced(&mut self) -> Option<u8> {
+        self.loadout_replaced.take()
+    }
+
+    fn on_event(&mut self, event: &Event) {
+        if let Some(GameEvent::Mode(bytes)) = GameEvent::from_protocol(event) {
+            if let Some(ServerMsg::LoadoutReplaced { player, reason }) = ServerMsg::decode(&bytes) {
+                if Some(player) == self.player {
+                    self.loadout_replaced = Some(reason);
+                }
+            }
+        }
+    }
+
     fn send_event(&mut self, msg: &Message) {
         if let Ok(bytes) = msg.encode() {
             // A full channel only delays the event; the handshake is
@@ -345,9 +389,16 @@ impl Session {
         }
         self.conn.update(real)?;
         while let Some(bytes) = self.conn.recv(Channel::Event) {
-            if let Ok(Message::ServerHello { player_id, .. }) = Message::decode(&bytes) {
-                self.player = Some(player_id);
-                self.send_event(&Message::Ready);
+            match Message::decode(&bytes) {
+                Ok(Message::ServerHello {
+                    mode, player_id, ..
+                }) => {
+                    self.player = Some(player_id);
+                    self.mode = Some(mode);
+                    self.send_event(&Message::Ready);
+                }
+                Ok(Message::Event(event)) => self.on_event(&event),
+                _ => {}
             }
         }
         while let Some(bytes) = self.conn.recv(Channel::Snapshot) {

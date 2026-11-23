@@ -38,6 +38,7 @@ use faset_sim::StaticWorld;
 use crate::class::Catalog;
 use crate::drive;
 use crate::hud::{HudInput, HudModel, HudState};
+use crate::loadout::LoadoutMsg;
 use crate::message::ServerMsg;
 use crate::pickup::{
     Pickup, PickupEvent, PickupKind, Pickups, JUMP_MULTIPLIER, KINDS, SPEED_MULTIPLIER, TIMED,
@@ -669,10 +670,24 @@ impl<V: Variant> GameMode for FpsPlay<V> {
     }
 
     fn on_client_message(&mut self, ctx: &mut ModeCtx, player: NetId, bytes: &[u8]) {
+        let idle = (ctx.phase() != Phase::Playing).then(|| ctx.tick().seconds());
+        if bytes.first() == Some(&LoadoutMsg::TAG) {
+            // Lot 6.3: the full loadout is revalidated; an invalid one is
+            // replaced by the default class and the sender is told.
+            let msg = LoadoutMsg::decode(bytes);
+            if let Err(e) = self.rules.choose_loadout(player, msg.as_ref(), idle) {
+                tracing::debug!(player = player.0, %e, "invalid loadout replaced");
+                let reply = ServerMsg::LoadoutReplaced {
+                    player,
+                    reason: e.code(),
+                };
+                ctx.broadcast(GameEvent::Mode(reply.encode()));
+            }
+            return;
+        }
         let Some(msg) = ClassMsg::decode(bytes) else {
             return;
         };
-        let idle = (ctx.phase() != Phase::Playing).then(|| ctx.tick().seconds());
         let ok = self.rules.choose_class(
             player,
             usize::from(msg.class),

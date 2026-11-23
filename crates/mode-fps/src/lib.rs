@@ -14,6 +14,7 @@
 //! * [`respawn`] - [`choose_spawn`].
 //! * [`rules`] and [`mode`] - [`FpsRules`] (shots, kills, respawns) and
 //!   [`FpsMode`], its `minigame-api` adapter.
+//! * [`loadout`] - lot 6.3: the point budget, [`Loadout`] and its server check.
 //! * [`message`] - wire layouts of the mode's messages.
 //! * [`pickup`] and [`play`] - lot 4.7: pickups, timed bonuses, and the two
 //!   playable modes `fps.ffa` and `fps.team`.
@@ -30,6 +31,7 @@ pub mod damage;
 mod drive;
 pub mod explosion;
 pub mod hud;
+pub mod loadout;
 pub mod melee;
 pub mod message;
 pub mod mode;
@@ -57,6 +59,7 @@ pub use hud::{
     focal_px, reticle_radius_px, BonusView, ChoiceMoment, ClassChoice, ClassOption, DamageNumber,
     FeedLine, HudInput, HudModel, HudState, ScoreRow,
 };
+pub use loadout::{validate_loadout, Loadout, LoadoutError, LoadoutMsg, LoadoutRules};
 pub use melee::{melee_attack, rewound_hitboxes, MeleeReport};
 pub use message::ProjectileSpawn;
 pub use message::{FireMsg, ServerMsg, FLAG_FRESH_PRESS, FLAG_SIGHTED};

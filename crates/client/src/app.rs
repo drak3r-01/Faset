@@ -18,14 +18,20 @@ use dedicated::maps::Catalog;
 use faset_core::glam::Vec3;
 use faset_core::Tick;
 use faset_minigame_api::Registry;
+use faset_mode_fps::class::Catalog as ClassCatalog;
+use faset_mode_fps::{validate_loadout, LoadoutRules, FFA_ID, TEAM_ID};
 use faset_protocol::InputCommand;
-use faset_ui::{AppState, MenuModel, PlayRequest, ServerListModel, ServerRow, UiCommand};
+use faset_ui::{
+    AppState, LoadoutSelection, MenuModel, PlayRequest, ServerListModel, ServerRow, UiCommand,
+};
 
 use crate::discovery::{ServerBrowser, DISCOVERY_PORT};
 use crate::favorites::Favorites;
 use crate::host_flow::host_config;
 use crate::join::JoinTarget;
+use crate::loadout_flow;
 use crate::map_load::{load_map, LoadedMap};
+use crate::profile::Profile;
 use crate::session::Session;
 use crate::state::{StateError, StateStack, Transition};
 
@@ -110,6 +116,8 @@ pub struct App {
     connecting_since: Option<Instant>,
     favorites: Favorites,
     favorites_path: Option<PathBuf>,
+    profile: Profile,
+    profile_path: Option<PathBuf>,
     lan: Option<ServerBrowser>,
     lan_list: ServerListModel,
     map: Option<LoadedMap>,
@@ -139,7 +147,11 @@ impl App {
     /// maps of `catalogue`.
     #[must_use]
     pub fn new(registry: Registry, catalogue: MapCatalogue) -> Self {
-        let model = MenuModel::new(&registry, catalogue.names());
+        let mut model = MenuModel::new(&registry, catalogue.names());
+        let profile = Profile::default();
+        model.loadout.choices =
+            loadout_flow::choices(ClassCatalog::builtin_ref(), LoadoutRules::builtin());
+        model.loadout.selection = loadout_flow::selection_of(profile.current());
         Self {
             stack: StateStack::default(),
             model,
@@ -150,6 +162,8 @@ impl App {
             connecting_since: None,
             favorites: Favorites::default(),
             favorites_path: None,
+            profile,
+            profile_path: None,
             lan: None,
             lan_list: ServerListModel::default(),
             map: None,
@@ -169,6 +183,60 @@ impl App {
         }
         self.favorites_path = Some(path);
         self.sync_favorites();
+    }
+
+    /// Keeps the player's classes in `path` (`profile.ron` in the data
+    /// folder): loads them now (an unreadable file is logged and replaced by
+    /// the default profile) and saves after every change (lot 6.3).
+    pub fn use_profile_file(&mut self, path: PathBuf) {
+        match Profile::load(&path) {
+            Ok(p) => self.profile = p,
+            Err(e) => tracing::warn!(error = %e, "profile not loaded"),
+        }
+        self.profile_path = Some(path);
+        self.model.loadout.selection = loadout_flow::selection_of(self.profile.current());
+    }
+
+    /// The player's profile.
+    #[must_use]
+    pub fn profile(&self) -> &Profile {
+        &self.profile
+    }
+
+    /// Keeps `selection` as the player's class: it must pass the same check
+    /// the server runs, is saved to the profile, and goes to the server if a
+    /// match is running (it applies at the next spawn).
+    fn save_loadout(&mut self, selection: &LoadoutSelection) {
+        let class = loadout_flow::saved_class(selection, &self.profile.current().name);
+        if let Err(e) = validate_loadout(&class.loadout) {
+            tracing::warn!(error = %e, "loadout refused");
+            self.status = Some(format!("loadout refused: {e}"));
+            return;
+        }
+        self.profile.set_current(class);
+        if let Some(path) = &self.profile_path {
+            if let Err(e) = self.profile.save(path) {
+                tracing::warn!(error = %e, "profile not saved");
+            }
+        }
+        self.send_loadout();
+    }
+
+    /// Sends the current class to the server when its mode is an FPS mode.
+    fn send_loadout(&mut self) {
+        let fps = [FFA_ID, TEAM_ID]
+            .into_iter()
+            .filter_map(|id| self.registry.find(id).map(|e| e.id.0));
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        if !session.mode().is_some_and(|m| fps.clone().any(|f| f == m)) {
+            return;
+        }
+        let loadout = &self.profile.current().loadout;
+        if let Some(msg) = loadout_flow::message(ClassCatalog::builtin_ref(), loadout) {
+            session.send_mode_message(msg.encode());
+        }
     }
 
     /// Replaces the LAN browser (tests inject one aimed at loopback). `None`
@@ -305,6 +373,7 @@ impl App {
                 self.favorites.toggle(address.trim());
                 self.save_favorites();
             }
+            UiCommand::SaveLoadout(selection) => self.save_loadout(&selection),
             UiCommand::LeaveMatch => {
                 self.close_session();
                 self.stack.reset(AppState::MainMenu);
@@ -465,13 +534,28 @@ impl App {
                 self.stack.reset(AppState::MainMenu);
             }
         }
+        if let Some(reason) = self
+            .session
+            .as_mut()
+            .and_then(Session::take_loadout_replaced)
+        {
+            tracing::warn!(
+                reason,
+                "the server replaced the loadout with the default class"
+            );
+            self.status = Some("the server refused your class and gave you the Trooper".to_owned());
+        }
         let ready = self.session.as_ref().is_some_and(Session::in_game);
         match self.stack.top() {
             AppState::Loading if ready => {
                 self.model.loading = 1.0;
                 let _ = self.stack.replace(AppState::InGame);
+                self.send_loadout();
             }
-            AppState::Connecting if ready => self.stack.reset(AppState::InGame),
+            AppState::Connecting if ready => {
+                self.stack.reset(AppState::InGame);
+                self.send_loadout();
+            }
             AppState::Connecting
                 if self
                     .connecting_since

@@ -9,6 +9,7 @@ use faset_minigame_api::{
     ModeDescriptor, ModeEntry, Registry, SettingKind, SettingSpec, SettingValue, Settings,
 };
 
+use crate::loadout::{loadout_screen, LoadoutModel, LoadoutSelection};
 use crate::{text, Screen, Theme};
 
 /// Application states. The stack of states lives in `faset-client`; the enum
@@ -76,6 +77,8 @@ pub enum UiCommand {
     ToggleFavourite(String),
     /// Leave the running match and return to the main menu.
     LeaveMatch,
+    /// Keep the loadout built on the loadout screen (lot 6.3).
+    SaveLoadout(LoadoutSelection),
 }
 
 /// A mini-game offered by the play screen, copied from the registry.
@@ -184,6 +187,8 @@ pub struct MenuModel {
     pub loading: f32,
     /// Name of the map being loaded.
     pub loading_map: String,
+    /// The loadout screen's data (content: lot 6.3).
+    pub loadout: LoadoutModel,
 }
 
 impl MenuModel {
@@ -231,8 +236,20 @@ pub(crate) fn panel(
     title: &str,
     add: impl FnOnce(&mut egui::Ui),
 ) {
+    panel_at(ctx, theme, title, egui::Align2::CENTER_CENTER, add);
+}
+
+/// [`panel`] anchored elsewhere (the loadout screen leaves the middle to the
+/// 3D preview).
+pub(crate) fn panel_at(
+    ctx: &egui::Context,
+    theme: &Theme,
+    title: &str,
+    anchor: egui::Align2,
+    add: impl FnOnce(&mut egui::Ui),
+) {
     egui::Window::new(title)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .anchor(anchor, egui::vec2(24.0 * anchor_sign(anchor), 0.0))
         .collapsible(false)
         .resizable(false)
         .title_bar(false)
@@ -249,6 +266,16 @@ pub(crate) fn panel(
             ui.add_space(12.0);
             add(ui);
         });
+}
+
+/// Margin direction of an anchor: right of the left edge, left of the right
+/// edge, none when centred.
+fn anchor_sign(anchor: egui::Align2) -> f32 {
+    match anchor.x() {
+        egui::Align::Min => 1.0,
+        egui::Align::Center => 0.0,
+        egui::Align::Max => -1.0,
+    }
 }
 
 fn wide_button(ui: &mut egui::Ui, key: &str) -> bool {
@@ -418,17 +445,6 @@ fn placeholder(
     });
 }
 
-/// Classes screen (content: lot 6.3).
-pub fn loadout(ctx: &egui::Context, theme: &Theme, cmds: &mut Vec<UiCommand>) {
-    placeholder(
-        ctx,
-        theme,
-        text("loadout.title"),
-        text("loadout.placeholder"),
-        cmds,
-    );
-}
-
 /// Settings screen (content: lots 6.4 and 6.5).
 pub fn settings(ctx: &egui::Context, theme: &Theme, cmds: &mut Vec<UiCommand>) {
     placeholder(
@@ -501,7 +517,7 @@ pub fn show_state(
         AppState::MainMenu => main_menu(ctx, theme, cmds),
         AppState::ServerBrowser => crate::browser::server_browser(ctx, theme, model, cmds),
         AppState::HostSetup => host_setup(ctx, theme, model, cmds),
-        AppState::Loadout => loadout(ctx, theme, cmds),
+        AppState::Loadout => loadout_screen(ctx, theme, &mut model.loadout, cmds),
         AppState::Settings => settings(ctx, theme, cmds),
         AppState::Connecting => connecting(ctx, theme, cmds),
         AppState::Loading => loading(ctx, theme, model),

@@ -24,6 +24,7 @@
 mod browser;
 mod error;
 mod i18n;
+mod loadout;
 mod overlay;
 mod paint;
 mod screens;
@@ -41,6 +42,10 @@ use serde::{Deserialize, Serialize};
 pub use browser::{BrowserEntry, ServerListModel, ENTRY_TTL};
 pub use error::UiError;
 pub use i18n::text;
+pub use loadout::{
+    display_name, loadout_screen, ClassRow, LoadoutChoices, LoadoutModel, LoadoutSelection,
+    PaletteColour, PreviewRequest, WeaponRow, PALETTE,
+};
 pub use overlay::{NetSample, Overlay, SimStats, UiStats};
 pub use paint::EguiPass;
 pub use screens::{
