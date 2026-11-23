@@ -69,7 +69,7 @@ fn correct_map_passes() {
 
 #[test]
 fn example_map_passes() {
-    let text = include_bytes!("../../../assets/maps/example.ron");
+    let text = include_bytes!("../../../assets/testdata/example.ron");
     let report = validate_bytes(text);
     assert!(report.is_ok(), "{:?}", report.errors);
 }

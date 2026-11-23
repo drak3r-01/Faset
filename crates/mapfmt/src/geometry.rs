@@ -63,7 +63,7 @@ pub struct MeshChunk {
 /// Material names the map format knows, with the renderer material id they
 /// paint (ids of `render/data/materials.ron`) and a base colour that tints
 /// the pattern (white leaves it as is).
-pub const MATERIAL_NAMES: [(&str, u8); 38] = [
+pub const MATERIAL_NAMES: [(&str, u8); 42] = [
     ("brick", 14),
     ("wood", 15),
     ("grass", 16),
@@ -100,6 +100,10 @@ pub const MATERIAL_NAMES: [(&str, u8); 38] = [
     ("brick_slate", 47),
     ("wood_white", 48),
     ("clay", 49),
+    ("lamp_warm", 50),
+    ("lamp_white", 51),
+    ("lamp_red", 52),
+    ("lamp_green", 53),
     ("checker", 3),
     ("grid", 5),
 ];

@@ -92,7 +92,7 @@ fn the_sample_map_passes() {
     assert!(panel.is_ok(), "{:?}", panel.issues());
     assert!(panel.stats().triangles > 0);
     assert!(panel.stats().longest_line_of_sight_m > 20.0);
-    let example = parse(include_bytes!("../../../assets/maps/example.ron")).unwrap();
+    let example = parse(include_bytes!("../../../assets/testdata/example.ron")).unwrap();
     assert!(panel_for(&example).is_ok());
 }
 

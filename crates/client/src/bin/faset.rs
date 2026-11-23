@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use faset_client::{
     App, EguiInput, FirstPersonCamera, FpsHud, GameInput, HudOptions, LocalFrame, MapCatalogue,
-    MatchScene, RawInput, SceneFrame,
+    MapLook, MatchScene, RawInput, SceneFrame,
 };
 use faset_core::bindings::Input;
 use faset_core::settings::{self, ConfirmState, ResolutionConfirm, Settings};
@@ -27,10 +27,7 @@ use faset_minigame_api::Registry;
 use faset_mode_fps::{register_modes, FpsMode};
 use faset_mode_race::RaceMode;
 use faset_render::glam::{Mat4, Vec3};
-use faset_render::{
-    perspective_reverse_z, AmbienceProfile, Camera, Instance, RenderConfig, RenderWorld, Renderer,
-    SkyParams,
-};
+use faset_render::{perspective_reverse_z, Camera, Instance, RenderConfig, RenderWorld, Renderer};
 use faset_ui::egui::{self, Event};
 use faset_ui::{
     AppState, FrameInput, Screen, SettingsEvent, SettingsScreen, StateScreen, Theme, Ui, UiConfig,
@@ -74,6 +71,10 @@ struct Client {
     grabbed: bool,
     focused: bool,
     instances: Vec<Instance>,
+    /// What the map's theme asks of the renderer (ambience, sky, weather,
+    /// water, lights), and when the map was loaded.
+    look: MapLook,
+    look_since: Instant,
     /// Meshes of the loadout screen's character, uploaded on first use.
     preview: Option<faset_client::CharacterPreview>,
     /// Boxes of the match scene, uploaded on first use.
@@ -351,6 +352,8 @@ impl Client {
             return;
         }
         if let Some(map) = self.app.take_map() {
+            self.look = MapLook::of(&map.map);
+            self.look_since = Instant::now();
             match map.upload(renderer) {
                 Ok(instances) => self.instances = instances,
                 Err(e) => tracing::error!("cannot upload the map: {e}"),
@@ -480,15 +483,10 @@ impl Client {
         let mut world = RenderWorld {
             camera,
             instances: self.instances.clone(),
-            ambience: AmbienceProfile::builtin("day").expect("built-in profile"),
-            sky: SkyParams {
-                time_h: 15.0,
-                latitude_deg: 45.0,
-                ..SkyParams::default()
-            },
-            draw_sky: true,
             ..RenderWorld::default()
         };
+        self.look
+            .apply(&mut world, self.look_since.elapsed().as_secs_f32());
         renderer.set_material_time(elapsed.as_secs_f32());
         if in_match {
             self.add_scene(&mut world, dt_s);
@@ -661,6 +659,8 @@ fn main() -> Result<()> {
         grabbed: false,
         focused: true,
         instances: Vec::new(),
+        look: MapLook::default(),
+        look_since: Instant::now(),
         preview: None,
         scene: None,
         prev_view_proj: None,

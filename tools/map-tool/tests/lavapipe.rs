@@ -7,7 +7,7 @@ use faset_client::load_map;
 use image::RgbaImage;
 use map_tool::view::{Viewer, VIEW_SIZE};
 
-const EXAMPLE: &[u8] = include_bytes!("../../../assets/maps/example.ron");
+const EXAMPLE: &[u8] = include_bytes!("../../../assets/testdata/example.ron");
 
 fn reference(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/refs/{name}.png"))

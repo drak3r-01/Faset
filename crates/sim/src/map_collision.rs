@@ -120,7 +120,7 @@ mod tests {
     use super::*;
 
     fn example() -> (MapFile, MapCollision) {
-        let text = include_str!("../../../assets/maps/example.ron");
+        let text = include_str!("../../../assets/testdata/example.ron");
         let map = faset_mapfmt::expand(&faset_mapfmt::parse(text.as_bytes()).unwrap());
         let col = MapCollision::build(&map);
         (map, col)

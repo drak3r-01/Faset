@@ -18,7 +18,7 @@ use crate::math::Aabb;
 pub const THUMBNAIL_SIZE: usize = 64;
 
 /// Brush materials known to the map geometry (`faset_mapfmt::geometry`).
-pub const MATERIALS: [&str; 41] = [
+pub const MATERIALS: [&str; 45] = [
     "brick",
     "wood",
     "grass",
@@ -55,6 +55,10 @@ pub const MATERIALS: [&str; 41] = [
     "brick_slate",
     "wood_white",
     "clay",
+    "lamp_warm",
+    "lamp_white",
+    "lamp_red",
+    "lamp_green",
     "checker",
     "grid",
     "lava",

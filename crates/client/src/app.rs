@@ -38,7 +38,10 @@ use crate::state::{StateError, StateStack, Transition};
 
 /// Map embedded in the executable, so the menus work without an assets
 /// folder.
-const EMBEDDED_MAP: (&str, &str) = ("example", include_str!("../../../assets/maps/example.ron"));
+const EMBEDDED_MAP: (&str, &str) = (
+    "example",
+    include_str!("../../../assets/testdata/example.ron"),
+);
 
 /// How long a remote connection may take before the player is sent back.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);

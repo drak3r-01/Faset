@@ -14,7 +14,7 @@ fn root(rel: &str) -> String {
 
 fn trial(seed: &str, out: &Path) {
     let status = Command::new(env!("CARGO_BIN_EXE_map-tool"))
-        .args(["trial", &root("../../assets/maps/example.ron")])
+        .args(["trial", &root("../../assets/testdata/example.ron")])
         .args(["--seed", seed, "--out"])
         .arg(out)
         .status()
@@ -46,7 +46,7 @@ fn trial_report_has_the_five_metrics() {
 
 #[test]
 fn same_seed_gives_a_byte_identical_report() {
-    let bytes = std::fs::read(root("../../assets/maps/example.ron")).unwrap();
+    let bytes = std::fs::read(root("../../assets/testdata/example.ron")).unwrap();
     let map = faset_mapfmt::parse(&bytes).unwrap();
     let cfg = TrialConfig {
         seconds: 40.0,

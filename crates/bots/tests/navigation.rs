@@ -57,7 +57,7 @@ fn has_edge(
 
 #[test]
 fn example_map_accessibility() {
-    let text = include_str!("../../../assets/maps/example.ron");
+    let text = include_str!("../../../assets/testdata/example.ron");
     let map = faset_mapfmt::parse(text.as_bytes()).unwrap();
     let t = Instant::now();
     let g = NavGraph::build(&map, &params());
@@ -275,7 +275,7 @@ fn paths_go_around_walls_and_run_straight_in_the_open() {
 
 #[test]
 fn building_twice_gives_the_same_graph() {
-    let text = include_str!("../../../assets/maps/example.ron");
+    let text = include_str!("../../../assets/testdata/example.ron");
     let map = faset_mapfmt::parse(text.as_bytes()).unwrap();
     let (a, b) = (
         NavGraph::build(&map, &params()),

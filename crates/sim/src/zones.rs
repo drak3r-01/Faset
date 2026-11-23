@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn example_map_zones_are_read_in_metres() {
-        let text = include_str!("../../../assets/maps/example.ron");
+        let text = include_str!("../../../assets/testdata/example.ron");
         let map = faset_mapfmt::expand(&faset_mapfmt::parse(text.as_bytes()).unwrap());
         let zones = Zones::from_map(&map);
         assert_eq!(zones.volumes().len(), map.zones.len());

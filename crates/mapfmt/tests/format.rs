@@ -1,11 +1,11 @@
-//! Acceptance tests of the map format against `assets/maps/example.ron`.
+//! Acceptance tests of the map format against `assets/testdata/example.ron`.
 
 use faset_mapfmt::{
     expand_prefabs, expand_symmetry, fingerprint, parse, to_ron, Brush, MapError, Symmetry, Team,
     FORMAT_VERSION, MAX_MAP_BYTES,
 };
 
-const EXAMPLE: &[u8] = include_bytes!("../../../assets/maps/example.ron");
+const EXAMPLE: &[u8] = include_bytes!("../../../assets/testdata/example.ron");
 
 #[test]
 fn example_round_trips_byte_identically() {

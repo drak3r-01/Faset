@@ -20,7 +20,7 @@ fn example_map_exits_zero_and_writes_a_report() {
     let status = tool()
         .args([
             "validate",
-            &root("../../assets/maps/example.ron"),
+            &root("../../assets/testdata/example.ron"),
             "--report",
         ])
         .arg(&out)

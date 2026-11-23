@@ -3,7 +3,7 @@
 //! Lot 4.11: map files (the `mapfmt` RON format of lots 3.1 to 3.3) load:
 //! collision, spawns, zones, objective zones and pickups. The embedded maps
 //! are the sim's test arena (no file) and the example map `example`
-//! (`assets/maps/example.ron`).
+//! (`assets/testdata/example.ron`).
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +18,7 @@ pub const TEST_ARENA: &str = "test-arena";
 /// Name of the embedded example map.
 pub const EXAMPLE: &str = "example";
 
-const EXAMPLE_RON: &str = include_str!("../../../assets/maps/example.ron");
+const EXAMPLE_RON: &str = include_str!("../../../assets/testdata/example.ron");
 
 /// Height of a spawn's capsule centre above the spawn's feet position:
 /// half the standing capsule plus 1 cm, so the first tick lands.

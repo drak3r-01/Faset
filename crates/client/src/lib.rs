@@ -73,6 +73,7 @@ pub mod input;
 pub mod interpolation;
 pub mod join;
 pub mod loadout_flow;
+pub mod look;
 pub mod map_load;
 pub mod map_sync;
 pub mod match_view;
@@ -110,6 +111,7 @@ pub use interpolation::{
     DEFAULT_SNAPSHOT_INTERVAL, MAX_EXTRAPOLATION,
 };
 pub use join::JoinTarget;
+pub use look::MapLook;
 pub use map_load::{load_map, LoadedMap, MapLoadError};
 pub use map_sync::{MapCache, MapEvent, MapSync, MapSyncError};
 pub use match_view::{Blast, LiveProjectile, LocalFrame, MatchView};

@@ -80,7 +80,7 @@ impl LoadedMap {
 mod tests {
     use super::*;
 
-    const EXAMPLE: &str = include_str!("../../../assets/maps/example.ron");
+    const EXAMPLE: &str = include_str!("../../../assets/testdata/example.ron");
 
     #[test]
     fn example_map_loads() {
