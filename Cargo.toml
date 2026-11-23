@@ -14,6 +14,7 @@ thiserror = "2"
 tracing = "0.1"
 proptest = "1"
 faset-assets = { path = "crates/assets", version = "0.0.1-rc.1" }
+faset-upscale = { path = "crates/upscale", version = "0.0.1-rc.1" }
 faset-render = { path = "crates/render", version = "0.0.1-rc.1" }
 faset-core = { path = "crates/core", version = "0.0.1-rc.1" }
 faset-protocol = { path = "crates/protocol", version = "0.0.1-rc.1" }

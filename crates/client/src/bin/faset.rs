@@ -1,7 +1,10 @@
 //! The Faset client: a window, the renderer, the egui menus and the
 //! application state stack of `faset-client`.
 //!
-//! `faset [--maps DIR] [--seconds N] [--no-vsync]`
+//! `faset [--maps DIR] [--seconds N] [--no-vsync] [--safe] [--settings FILE]`
+//!
+//! `--safe` resets the display settings to their defaults; `--settings` picks
+//! another `settings.toml` than the one in the OS configuration folder.
 //!
 //! The main menu runs over a slowly rotating view of a map. The play screen
 //! starts an integrated server and joins it; the match is shown from the
@@ -14,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use faset_client::{App, MapCatalogue};
+use faset_core::settings::{self, ConfirmState, ResolutionConfirm, Settings};
 use faset_core::Tick;
 use faset_minigame_api::Registry;
 use faset_mode_fps::{register_modes, FpsMode};
@@ -25,12 +29,17 @@ use faset_render::{
     SkyParams,
 };
 use faset_ui::egui::{self, Event, PointerButton};
-use faset_ui::{AppState, FrameInput, StateScreen, Theme, Ui, UiConfig};
+use faset_ui::{
+    AppState, FrameInput, SettingsEvent, SettingsScreen, StateScreen, Theme, Ui, UiConfig,
+};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
+
+#[path = "faset_settings/apply.rs"]
+mod apply;
 
 /// Seconds for one turn of the menu camera.
 const MENU_TURN_SECONDS: f32 = 120.0;
@@ -40,6 +49,13 @@ const EYE_OFFSET: f32 = 0.7;
 struct Client {
     app: App,
     vsync: bool,
+    /// Settings being edited, and the last ones applied.
+    settings: Settings,
+    applied: Settings,
+    settings_path: Option<PathBuf>,
+    settings_tab: usize,
+    confirm: Option<ResolutionConfirm>,
+    live: Option<apply::Live>,
     limit: Option<Duration>,
     start: Instant,
     last_frame: Instant,
@@ -98,7 +114,10 @@ impl Client {
     fn create(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
         let attrs = Window::default_attributes()
             .with_title("Faset")
-            .with_inner_size(winit::dpi::PhysicalSize::new(1600, 900));
+            .with_inner_size({
+                let (w, h) = self.settings.display.resolution.size();
+                winit::dpi::PhysicalSize::new(w, h)
+            });
         let window = event_loop
             .create_window(attrs)
             .context("cannot create the window")?;
@@ -114,6 +133,10 @@ impl Client {
         .context("cannot create the renderer")?;
         let ui = Ui::new(&mut renderer, UiConfig::default(), Theme::default())
             .context("cannot create the UI")?;
+        let mut live = apply::Live::new(&renderer, &self.settings);
+        let applied = live.apply_all(&mut renderer, &window, &self.settings);
+        tracing::info!("applied {} settings at start-up", applied.len());
+        self.live = Some(live);
         self.ui = Some(ui);
         self.renderer = Some(renderer);
         self.window = Some(window);
@@ -201,6 +224,14 @@ impl Client {
         }
     }
 
+    fn save_settings(&self) {
+        if let Some(path) = &self.settings_path {
+            if let Err(e) = settings::save_settings(path, &self.settings) {
+                tracing::error!("{e}");
+            }
+        }
+    }
+
     fn toggle_pause(&mut self) {
         match self.app.stack().top() {
             AppState::InGame => {
@@ -212,7 +243,8 @@ impl Client {
     }
 
     fn camera(&mut self, aspect: f32, t: f32) -> Camera {
-        let proj = perspective_reverse_z(70f32.to_radians(), aspect, 0.1);
+        let fov = self.live.as_ref().map_or(70.0, |l| l.tuning.fov_deg);
+        let proj = perspective_reverse_z(fov.to_radians(), aspect, 0.1);
         let in_match = matches!(self.app.stack().states().first(), Some(AppState::InGame));
         let (eye, target) = match self.app.session().and_then(|s| s.display_position()) {
             Some(position) if in_match => {
@@ -236,7 +268,8 @@ impl Client {
     }
 
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
-        let now = Instant::now();
+        let now_frame = Instant::now();
+        let now = now_frame;
         let dt = now - self.last_frame;
         self.last_frame = now;
         let elapsed = self.start.elapsed();
@@ -271,11 +304,60 @@ impl Client {
             dt: dt.as_secs_f32(),
             events: std::mem::take(&mut self.events),
         });
-        let commands = {
+        let now = elapsed.as_secs_f64();
+        let mut commands = Vec::new();
+        if state == AppState::Settings {
+            let available = self
+                .live
+                .as_ref()
+                .map(|l| l.available.clone())
+                .unwrap_or_default();
+            let mut screen = SettingsScreen::new(&mut self.settings, &available);
+            screen.tab = self.settings_tab;
+            screen.confirm = self.confirm.map(|c| c.poll(now));
+            ui.draw(&mut screen);
+            self.settings_tab = screen.tab;
+            for event in screen.events {
+                match event {
+                    SettingsEvent::Back => commands.push(faset_ui::UiCommand::Pop),
+                    SettingsEvent::KeepResolution => self.confirm = None,
+                    SettingsEvent::RevertResolution => {
+                        if let Some(c) = self.confirm.take() {
+                            self.settings.display.resolution = c.previous;
+                        }
+                    }
+                    SettingsEvent::Changed(id) => {
+                        if id == "resolution" && self.confirm.is_none() {
+                            self.confirm = Some(ResolutionConfirm::start(
+                                self.applied.display.resolution,
+                                now,
+                            ));
+                        }
+                    }
+                }
+            }
+        } else {
             let mut screen = StateScreen::new(state, self.app.model_mut());
             ui.draw(&mut screen);
-            screen.commands
-        };
+            commands = screen.commands;
+        }
+        if self
+            .confirm
+            .is_some_and(|c| c.poll(now) == ConfirmState::Expired)
+        {
+            if let Some(c) = self.confirm.take() {
+                self.settings.display.resolution = c.previous;
+            }
+        }
+        if let (Some(live), Some(window)) = (&mut self.live, &self.window) {
+            if self.settings != self.applied {
+                let old = std::mem::replace(&mut self.applied, self.settings.clone());
+                live.apply_changes(renderer, window, &old, &self.settings);
+            }
+        }
+        if commands.contains(&faset_ui::UiCommand::Pop) && state == AppState::Settings {
+            self.save_settings();
+        }
         self.app.handle(commands);
 
         let aspect = size_px.0.max(1) as f32 / size_px.1.max(1) as f32;
@@ -284,7 +366,7 @@ impl Client {
             return;
         };
         camera.jitter_px = renderer.upscaler_jitter(renderer.frames_rendered() as u32);
-        let world = RenderWorld {
+        let mut world = RenderWorld {
             camera,
             instances: self.instances.clone(),
             ambience: AmbienceProfile::builtin("day").expect("built-in profile"),
@@ -296,9 +378,27 @@ impl Client {
             draw_sky: true,
             ..RenderWorld::default()
         };
+        if let Some(live) = &self.live {
+            let d = live.tuning.weather_density;
+            let w = &mut world.weather;
+            w.rain *= d;
+            w.snow *= d;
+            w.sand *= d;
+            w.storm *= d;
+            if live.tuning.brightness != 1.0 {
+                let mut post = faset_render::PostParams::from_profile(&world.ambience, false);
+                post.exposure *= live.tuning.brightness;
+                world.post = Some(post);
+            }
+        }
         if let Err(e) = renderer.render_frame(&world) {
             tracing::error!("frame failed: {e}");
             event_loop.exit();
+        }
+        if let Some(budget) = self.live.as_ref().and_then(|l| l.tuning.frame_budget()) {
+            if let Some(rest) = budget.checked_sub(now_frame.elapsed()) {
+                std::thread::sleep(rest);
+            }
         }
     }
 }
@@ -343,6 +443,14 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
 
+    let settings_path = value("--settings")
+        .map(PathBuf::from)
+        .or_else(settings::settings_path);
+    let settings = match &settings_path {
+        Some(path) => settings::load_settings_with(path, args.iter().any(|a| a == "--safe")),
+        None => Settings::default(),
+    };
+
     let event_loop = EventLoop::new().context("cannot create the event loop")?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::new(registry(), MapCatalogue::scan(&maps_dir));
@@ -350,8 +458,19 @@ fn main() -> Result<()> {
         app.use_favorites_file(dir.join(faset_client::favorites::FILE_NAME));
     }
     let mut client = Client {
+<<<<<<< HEAD
         app,
         vsync: !args.iter().any(|a| a == "--no-vsync"),
+=======
+        app: App::new(registry(), MapCatalogue::scan(&maps_dir)),
+        vsync: settings.display.vsync && !args.iter().any(|a| a == "--no-vsync"),
+        applied: settings.clone(),
+        settings,
+        settings_path,
+        settings_tab: 0,
+        confirm: None,
+        live: None,
+>>>>>>> origin/main
         limit: (seconds > 0).then(|| Duration::from_secs(seconds)),
         start: Instant::now(),
         last_frame: Instant::now(),

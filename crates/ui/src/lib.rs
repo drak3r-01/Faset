@@ -27,6 +27,7 @@ mod i18n;
 mod overlay;
 mod paint;
 mod screens;
+mod settings_menu;
 mod theme;
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -44,6 +45,10 @@ pub use overlay::{NetSample, Overlay, SimStats, UiStats};
 pub use paint::EguiPass;
 pub use screens::{
     show_state, AppState, MenuModel, ModeChoice, PlayRequest, ServerRow, StateScreen, UiCommand,
+};
+pub use settings_menu::{
+    build_settings_menu, label as settings_label, option_label, Menu, MenuCategory, MenuEntry,
+    SettingsEvent, SettingsScreen,
 };
 pub use theme::Theme;
 

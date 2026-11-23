@@ -18,6 +18,7 @@ faset-net.workspace = true
 faset-server.workspace = true
 faset-mapfmt.workspace = true
 faset-render.workspace = true
+faset-upscale.workspace = true
 faset-ui.workspace = true
 faset-minigame-api.workspace = true
 faset-mode-fps.workspace = true
