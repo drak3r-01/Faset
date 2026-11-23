@@ -80,19 +80,19 @@ pub use discovery::{
     DiscoveryResponder, ServerBrowser, ServerEntry, ServerInfo, DISCOVERY_PORT, ENTRY_TTL,
     GAME_PORT, REFRESH_INTERVAL,
 };
-pub use feel::{cm_per_360, degrees_per_count, CriticalSpring, FeelParams, DEGREES_PER_COUNT};
 pub use favorites::{data_dir, Favorites, FavoritesError};
+pub use feel::{cm_per_360, degrees_per_count, CriticalSpring, FeelParams, DEGREES_PER_COUNT};
 pub use host_flow::host_config;
 pub use hosting::{
     host_game, HostConfig, HostError, HostHandle, HostRotation, LanStatus, TickHook,
 };
-pub use join::JoinTarget;
 pub use hud::FpsHud;
 pub use interpolation::{
     hermite, interpolation_delay, lerp_angle, InterpolationBuffer, InterpolationConfig,
     RemoteInterpolation, RemoteState, RemoteView, SampleMode, ViewTime, BUFFER_SNAPSHOTS,
     DEFAULT_SNAPSHOT_INTERVAL, MAX_EXTRAPOLATION,
 };
+pub use join::JoinTarget;
 pub use map_load::{load_map, LoadedMap, MapLoadError};
 pub use map_sync::{MapCache, MapEvent, MapSync, MapSyncError};
 pub use prediction::{

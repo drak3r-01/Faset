@@ -44,7 +44,11 @@ impl ServerListModel {
     /// the first-seen order; an entry already listed is updated.
     pub fn observe(&mut self, row: ServerRow, age: Duration) {
         let last_seen = self.now.saturating_sub(age);
-        match self.entries.iter_mut().find(|e| e.row.address == row.address) {
+        match self
+            .entries
+            .iter_mut()
+            .find(|e| e.row.address == row.address)
+        {
             Some(e) => {
                 e.row = row;
                 e.last_seen = e.last_seen.max(last_seen);
@@ -174,7 +178,10 @@ mod tests {
         list.observe(row("a:1"), Duration::ZERO);
         list.observe(row("b:1"), Duration::from_secs(5));
         list.advance(Duration::from_secs(4));
-        assert_eq!(list.rows().iter().map(|r| &*r.address).collect::<Vec<_>>(), ["a:1"]);
+        assert_eq!(
+            list.rows().iter().map(|r| &*r.address).collect::<Vec<_>>(),
+            ["a:1"]
+        );
     }
 
     #[test]

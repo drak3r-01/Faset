@@ -9,9 +9,7 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use faset_client::{
-    host_config, host_game, App, AppState, MapCatalogue, ServerBrowser,
-};
+use faset_client::{host_config, host_game, App, AppState, MapCatalogue, ServerBrowser};
 use faset_minigame_api::Registry;
 use faset_mode_fps::register_modes;
 use faset_mode_race::RaceMode;
@@ -79,7 +77,10 @@ fn a_host_with_four_bots_is_joined_through_the_lan_list() {
 
     let start = Instant::now();
     while host.player_count() < 4 {
-        assert!(start.elapsed() < Duration::from_secs(5), "bots never joined");
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "bots never joined"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
 

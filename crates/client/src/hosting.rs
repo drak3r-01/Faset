@@ -18,10 +18,10 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 
+use faset_minigame_api::Match;
 use faset_net::{
     Datagram, MemoryAddr, MemoryNetwork, MemoryTransport, Transport, TransportError, UdpTransport,
 };
-use faset_minigame_api::Match;
 use faset_server::{
     Bot, ConfigError, MapProvider, RotationConfig, Server, ServerConfig, TickClock,
 };
@@ -267,8 +267,7 @@ fn run_server(
                 mode: server.config().mode,
                 map: map_name.clone(),
                 players: u16::try_from(count).unwrap_or(u16::MAX),
-                max_players: u16::try_from(server.config().limits.max_players)
-                    .unwrap_or(u16::MAX),
+                max_players: u16::try_from(server.config().limits.max_players).unwrap_or(u16::MAX),
                 game_port: *game_port,
             });
         }

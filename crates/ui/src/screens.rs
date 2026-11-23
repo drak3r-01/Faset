@@ -225,7 +225,12 @@ impl MenuModel {
     }
 }
 
-pub(crate) fn panel(ctx: &egui::Context, theme: &Theme, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+pub(crate) fn panel(
+    ctx: &egui::Context,
+    theme: &Theme,
+    title: &str,
+    add: impl FnOnce(&mut egui::Ui),
+) {
     egui::Window::new(title)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .collapsible(false)

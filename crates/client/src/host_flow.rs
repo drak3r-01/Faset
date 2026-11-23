@@ -215,8 +215,13 @@ pub fn host_config(
                 let level = bot_level(request.bot_level);
                 config.bots = (0..count)
                     .map(|i| {
-                        Box::new(FpsBot::new(level, bot_seed(seed, i), map.clone(), &rules, i))
-                            as Box<dyn Bot>
+                        Box::new(FpsBot::new(
+                            level,
+                            bot_seed(seed, i),
+                            map.clone(),
+                            &rules,
+                            i,
+                        )) as Box<dyn Bot>
                     })
                     .collect();
                 config.tick_hook = Some(rebrain_hook(bot_map_slot, rules, level, seed));

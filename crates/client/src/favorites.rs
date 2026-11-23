@@ -42,7 +42,11 @@ pub struct Favorites {
 /// `$XDG_DATA_HOME/faset` or `~/.local/share/faset` elsewhere.
 #[must_use]
 pub fn data_dir() -> Option<PathBuf> {
-    let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let var = |k: &str| {
+        std::env::var_os(k)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
     if cfg!(windows) {
         var("APPDATA").map(|p| p.join("Faset"))
     } else {
