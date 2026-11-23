@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 /// Procedural pattern of a material, evaluated in the fragment shader.
 ///
 /// The discriminants are the ids the shader switches on
-/// (`faset-shaders/src/materials.wgsl`).
+/// (`faset-shaders/src/materials.wgsl`; ids 14 and up are the pixel-art
+/// patterns of `pixel.wgsl`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Pattern {
     /// Colour A only.
@@ -39,11 +40,39 @@ pub enum Pattern {
     Emissive = 12,
     /// Scrolling scanlines between A and B with flicker.
     Hologram = 13,
+    /// Pixel bricks, mortar in colour B.
+    PixelBrick = 14,
+    /// Pixel boards, seams dark (colour B).
+    PixelWood = 15,
+    /// Pixel grass: blades in colour B.
+    PixelGrass = 16,
+    /// Pixel sand with ripples; pebbles in colour B.
+    PixelSand = 17,
+    /// Pixel cobblestones, joints in colour B.
+    PixelStone = 18,
+    /// Pixel concrete panels.
+    PixelConcrete = 19,
+    /// Pixel metal plates with rivets (colour B).
+    PixelMetal = 20,
+    /// Animated pixel water, sparkles in colour B.
+    PixelWater = 21,
+    /// Pixel tiles in a checker of A and B.
+    PixelTile = 22,
+    /// Pixel earth with pebbles (colour B).
+    PixelDirt = 23,
+    /// Pixel snow with cool flecks (colour B).
+    PixelSnow = 24,
+    /// Pixel crate: frame and brace A, boards B.
+    PixelCrate = 25,
+    /// Pixel hazard stripes, A and B.
+    PixelHazard = 26,
+    /// Pixel foliage clumps, gaps in colour B.
+    PixelLeaves = 27,
 }
 
 impl Pattern {
     /// Every pattern, in id order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 28] = [
         Self::Flat,
         Self::Gradient,
         Self::Noise,
@@ -58,6 +87,20 @@ impl Pattern {
         Self::Lava,
         Self::Emissive,
         Self::Hologram,
+        Self::PixelBrick,
+        Self::PixelWood,
+        Self::PixelGrass,
+        Self::PixelSand,
+        Self::PixelStone,
+        Self::PixelConcrete,
+        Self::PixelMetal,
+        Self::PixelWater,
+        Self::PixelTile,
+        Self::PixelDirt,
+        Self::PixelSnow,
+        Self::PixelCrate,
+        Self::PixelHazard,
+        Self::PixelLeaves,
     ];
 }
 
@@ -130,7 +173,8 @@ impl MaterialTable {
         Ok(Self { entries })
     }
 
-    /// The built-in table: ids 0..=13 show one pattern each.
+    /// The built-in table: ids 0..=27 show one pattern each, 28..=49 are
+    /// colour variants of the pixel patterns.
     pub fn builtin() -> Self {
         Self::from_ron(BUILTIN).expect("the built-in material table is valid")
     }
@@ -205,12 +249,12 @@ mod tests {
     fn builtin_table_parses_with_one_material_per_pattern() {
         let table = MaterialTable::builtin();
         for (id, pattern) in Pattern::ALL.iter().enumerate() {
-            let m = table.get(id as u8).expect("ids 0..=13 exist");
+            let m = table.get(id as u8).expect("ids 0..=27 exist");
             assert_eq!(m.pattern, *pattern);
             assert_eq!(m.id, id as u8);
             assert_eq!(*pattern as usize, id);
         }
-        assert_eq!(table.iter().count(), Pattern::ALL.len());
+        assert!(table.iter().count() >= Pattern::ALL.len());
         assert_eq!(
             table.get(0).unwrap().color_a,
             [1.0; 3],

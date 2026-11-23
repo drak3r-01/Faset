@@ -7,6 +7,7 @@
 // distant surfaces do not shimmer.
 
 #include "noise.wgsl"
+#include "pixel.wgsl"
 
 // Pattern ids; must match `render::Pattern`.
 const PATTERN_FLAT: u32 = 0u;
@@ -23,6 +24,8 @@ const PATTERN_WATER: u32 = 10u;
 const PATTERN_LAVA: u32 = 11u;
 const PATTERN_EMISSIVE: u32 = 12u;
 const PATTERN_HOLOGRAM: u32 = 13u;
+// Pixel-art patterns 14..=27 live in pixel.wgsl.
+const PATTERN_PIXEL_FIRST: u32 = 14u;
 
 const TAU: f32 = 6.283185307;
 
@@ -187,6 +190,11 @@ fn material_surface(id: u32, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3
     let phase = time * m.speed;
     let a = m.color_a.rgb;
     let b = m.color_b.rgb;
+
+    if m.pattern >= PATTERN_PIXEL_FIRST {
+        let v = pixel_surface(m.pattern, p, normal, dp, phase);
+        return diffuse(mix(a, b, clamp(v.x, 0.0, 1.0)) * v.y);
+    }
 
     switch m.pattern {
         case PATTERN_FLAT: {

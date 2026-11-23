@@ -14,6 +14,8 @@ use faset_render::{
 };
 use faset_ui::{LoadoutSelection, PreviewRequest, PALETTE};
 
+use crate::weapon_models::WeaponModels;
+
 /// Seconds the character takes to turn once.
 pub const TURN_SECONDS: f32 = 12.0;
 /// Vertical field of view of the preview camera, degrees.
@@ -35,6 +37,8 @@ fn linear(rgb: [u8; 3]) -> [u8; 3] {
 pub struct CharacterPreview {
     /// One unit cube per palette colour, then metal, skin and ground.
     cubes: Vec<MeshId>,
+    /// Detailed weapon models; a weapon without one is drawn as a box.
+    models: WeaponModels,
 }
 
 /// Box size of a weapon held in the hand or carried (width, height, length).
@@ -79,7 +83,39 @@ impl CharacterPreview {
             let (vertices, indices) = cube_mesh(0.5, &[rgb; 6], 0);
             cubes.push(renderer.upload_mesh(&vertices, &indices)?);
         }
-        Ok(Self { cubes })
+        Ok(Self {
+            cubes,
+            models: WeaponModels::upload(renderer)?,
+        })
+    }
+
+    /// The weapon models, shared with the first-person view.
+    #[must_use]
+    pub fn models(&self) -> &WeaponModels {
+        &self.models
+    }
+
+    /// The model of weapon `id` placed with its grip at `at`, scaled by
+    /// `scale` and moved by `turn` (a rotation and a translation), or a box
+    /// of the weapon's size when it has no model.
+    fn carried(&self, id: &str, at: Vec3, scale: f32, upright: bool, turn: Mat4) -> Instance {
+        if let Some(model) = self.models.get(id) {
+            let pose = if upright {
+                Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)
+            } else {
+                Mat4::IDENTITY
+            };
+            let world =
+                turn * Mat4::from_translation(at) * pose * Mat4::from_scale(Vec3::splat(scale));
+            return Instance::new(model.mesh, 0, world);
+        }
+        let size = weapon_size(id);
+        let size = if upright {
+            Vec3::new(size.x, size.z, size.y)
+        } else {
+            size
+        };
+        self.part(METAL, at - Vec3::Z * size.z * 0.3, size, turn)
     }
 
     /// A box of `size` centred on `centre`, moved by `transform`, in palette
@@ -152,38 +188,53 @@ impl CharacterPreview {
                 turn,
             ),
         ];
-        let primary = weapon_size(&selection.primary);
-        out.push(self.part(
-            METAL,
-            Vec3::new(0.3 * b, 1.2, -0.3 - primary.z * 0.3),
-            primary,
+        // Details: boots, belt, backpack and a dark visor.
+        let parts = [
+            (
+                GROUND,
+                Vec3::new(-0.14 * b, 0.07, -0.03),
+                Vec3::new(0.24 * b, 0.14, 0.34),
+            ),
+            (
+                GROUND,
+                Vec3::new(0.14 * b, 0.07, -0.03),
+                Vec3::new(0.24 * b, 0.14, 0.34),
+            ),
+            (
+                METAL,
+                Vec3::new(0.0, 0.88, 0.0),
+                Vec3::new(0.58 * b, 0.07, 0.32),
+            ),
+            (
+                accent,
+                Vec3::new(0.0, 1.2, 0.24),
+                Vec3::new(0.4 * b, 0.48, 0.18),
+            ),
+            (
+                GROUND,
+                Vec3::new(0.0, 1.68, -0.125),
+                Vec3::new(0.24, 0.07, 0.04),
+            ),
+        ];
+        for (colour, centre, size) in parts {
+            out.push(self.part(colour, centre, size, turn));
+        }
+        out.push(self.carried(
+            &selection.primary,
+            Vec3::new(0.3 * b, 1.12, -0.28),
+            0.8,
+            false,
             turn,
         ));
         if let Some(id) = &selection.secondary {
-            out.push(self.part(
-                METAL,
-                Vec3::new(0.32 * b, 0.82, -0.05),
-                weapon_size(id),
-                turn,
-            ));
+            out.push(self.carried(id, Vec3::new(0.32 * b, 0.8, -0.02), 0.7, false, turn));
         }
         if let Some(id) = &selection.melee {
             // Slung across the back, upright.
-            let s = weapon_size(id);
-            out.push(self.part(
-                accent,
-                Vec3::new(-0.15, 1.2, 0.22),
-                Vec3::new(s.x, s.z, s.y),
-                turn,
-            ));
+            out.push(self.carried(id, Vec3::new(-0.15, 0.7, 0.22), 0.9, true, turn));
         }
         if let Some(id) = &selection.gadget {
-            out.push(self.part(
-                accent,
-                Vec3::new(-0.3 * b, 0.9, -0.1),
-                weapon_size(id),
-                turn,
-            ));
+            out.push(self.carried(id, Vec3::new(-0.3 * b, 0.85, -0.1), 0.7, false, turn));
         }
         out
     }

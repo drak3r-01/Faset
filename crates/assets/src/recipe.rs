@@ -31,6 +31,20 @@ pub enum Pattern {
     Lava = 11,
     Emissive = 12,
     Hologram = 13,
+    PixelBrick = 14,
+    PixelWood = 15,
+    PixelGrass = 16,
+    PixelSand = 17,
+    PixelStone = 18,
+    PixelConcrete = 19,
+    PixelMetal = 20,
+    PixelWater = 21,
+    PixelTile = 22,
+    PixelDirt = 23,
+    PixelSnow = 24,
+    PixelCrate = 25,
+    PixelHazard = 26,
+    PixelLeaves = 27,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

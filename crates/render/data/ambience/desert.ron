@@ -1,12 +1,12 @@
 // Ambience profile "desert": hard high sun, sand tones (heat haze in 2.7).
 // Colours are linear RGB. See `render::AmbienceProfile`.
 (
-    sun: (color: (1.0, 0.92, 0.75), intensity: 0.9, direction: (0.3, 0.9, 0.2), source: Profile),
+    sun: (color: (1.0, 0.92, 0.75), intensity: 1.15, direction: (0.3, 0.9, 0.2), source: Profile),
     ambient: (ground: (0.20, 0.15, 0.08), sky: (0.22, 0.24, 0.28)),
     ramp: (threshold: 0.15, softness: 0.02, shadow: (0.15, 0.10, 0.08)),
     rim: (color: (0.10, 0.08, 0.05), power: 4.0),
-    fog: (color: (0.85, 0.75, 0.60), density: 0.006, falloff: 0.04, height: 0.0),
-    sky: (horizon: (0.90, 0.80, 0.65), zenith: (0.30, 0.50, 0.85), exponent: 0.4, stars: 0.0),
+    fog: (color: (0.85, 0.75, 0.60), density: 0.004, falloff: 0.04, height: 0.0),
+    sky: (horizon: (0.90, 0.80, 0.65), zenith: (0.16, 0.42, 0.95), exponent: 0.4, stars: 0.0),
     shadow: (depth_bias: 1.0, slope_bias: 1.5, normal_offset: 1.0),
     weather: (kind: Sand, intensity: 0.0, wind: 4.0, heat_haze: 0.6),
     exposure: 1.0,
@@ -14,7 +14,7 @@
         lift: (0.0, 0.0, 0.0),
         gamma: (1.0, 1.0, 1.0),
         gain: (1.0, 1.0, 1.0),
-        saturation: 1.0,
+        saturation: 1.2,
         hue_shift: 0.0,
         bloom_threshold: 1.0,
         bloom_intensity: 0.05,

@@ -1,12 +1,13 @@
-// Ambience profile "day": clear midday, warm sun, blue sky ambient, light haze.
+// Ambience profile "day": clear saturated midday, warm sun, vivid blue sky, a
+// touch of distance haze (pixel-art look: bold colours, hard-ish shadows).
 // Colours are linear RGB. See `render::AmbienceProfile`.
 (
-    sun: (color: (1.0, 0.95, 0.85), intensity: 0.75, direction: (0.4, 0.8, 0.3), source: Profile),
-    ambient: (ground: (0.12, 0.11, 0.08), sky: (0.22, 0.28, 0.38)),
-    ramp: (threshold: 0.2, softness: 0.08, shadow: (0.05, 0.05, 0.10)),
+    sun: (color: (1.0, 0.93, 0.78), intensity: 1.05, direction: (0.45, 0.75, 0.3), source: Profile),
+    ambient: (ground: (0.16, 0.14, 0.09), sky: (0.26, 0.34, 0.50)),
+    ramp: (threshold: 0.2, softness: 0.06, shadow: (0.06, 0.07, 0.16)),
     rim: (color: (0.08, 0.08, 0.10), power: 3.0),
-    fog: (color: (0.60, 0.70, 0.85), density: 0.004, falloff: 0.05, height: 0.0),
-    sky: (horizon: (0.60, 0.70, 0.85), zenith: (0.20, 0.40, 0.80), exponent: 0.5, stars: 0.0),
+    fog: (color: (0.62, 0.78, 0.98), density: 0.0025, falloff: 0.05, height: 0.0),
+    sky: (horizon: (0.62, 0.80, 1.0), zenith: (0.10, 0.34, 0.95), exponent: 0.45, stars: 0.0),
     shadow: (depth_bias: 1.0, slope_bias: 1.5, normal_offset: 1.0),
     weather: (kind: Clear, intensity: 0.0, wind: 2.0, heat_haze: 0.0),
     exposure: 1.0,
@@ -14,10 +15,10 @@
         lift: (0.0, 0.0, 0.0),
         gamma: (1.0, 1.0, 1.0),
         gain: (1.0, 1.0, 1.0),
-        saturation: 1.0,
+        saturation: 1.25,
         hue_shift: 0.0,
-        bloom_threshold: 1.0,
-        bloom_intensity: 0.05,
+        bloom_threshold: 0.9,
+        bloom_intensity: 0.08,
     ),
     water: (shallow: (0.10, 0.45, 0.45), deep: (0.02, 0.10, 0.18), fog_density: 0.15, caustics: 0.5),
 )
