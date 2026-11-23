@@ -4,8 +4,10 @@
 
 use std::time::Duration;
 
+use faset_audio::Engine;
 use faset_core::settings::{
-    AntiAliasing, SettingMeta, Settings, SettingsSink, UpscaleLevel, UpscalerChoice, WindowMode,
+    AccessibilitySettings, AntiAliasing, Category, ControlSettings, GameSettings, NetworkSettings,
+    SettingMeta, Settings, SettingsSink, UpscaleLevel, UpscalerChoice, WindowMode,
 };
 use faset_render::{PostSettings, Renderer};
 use faset_upscale::{effective_quality, Fsr1, Quality, Registry, UpscaleBridge, UpscalerKind};
@@ -46,8 +48,24 @@ pub struct Live {
     pub tuning: Tuning,
     /// Upscalers this GPU can run (the menu offers only these).
     pub available: Vec<UpscalerChoice>,
+    /// Controls read by the input code.
+    pub controls: ControlSettings,
+    /// Network values read when a session starts and by the interpolation.
+    pub network: NetworkSettings,
+    /// Game values read by the HUD and the weapon view.
+    pub game: GameSettings,
+    /// Accessibility values read by the camera, the post chain and the UI.
+    pub accessibility: AccessibilitySettings,
+    /// The audio engine, if a device could be opened.
+    audio: Option<Engine>,
     registry: Registry<faset_render::GpuHandles>,
     installed: Option<Installed>,
+}
+
+fn new_audio(settings: &Settings) -> Option<Engine> {
+    Engine::new(crate::audio::audio_config(settings))
+        .map_err(|e| tracing::warn!("no audio engine: {e}"))
+        .ok()
 }
 
 fn kind_of(choice: UpscalerChoice) -> UpscalerKind {
@@ -111,6 +129,11 @@ impl Live {
             .collect();
         Self {
             tuning: tuning_of(settings),
+            controls: settings.controls.clone(),
+            network: settings.network.clone(),
+            game: settings.game.clone(),
+            accessibility: settings.accessibility.clone(),
+            audio: new_audio(settings),
             available,
             registry,
             installed: None,
@@ -276,6 +299,41 @@ impl SettingsSink for RenderSink<'_> {
             }
             "upscaler" | "upscale_level" | "render_scale" | "sharpness" => {
                 self.live.apply_upscaler(self.renderer, settings)
+            }
+            "master_volume" | "effects_volume" | "ui_volume" | "key_sound" => {
+                match self.live.audio.as_mut() {
+                    Some(engine) => {
+                        crate::audio::apply_volume(engine, meta.id, settings).unwrap_or(false)
+                    }
+                    None => false,
+                }
+            }
+            "output_device" => {
+                // A new engine on the chosen device (the audio crate cannot
+                // switch device on a running engine).
+                self.live.audio = new_audio(settings);
+                self.live.audio.is_some()
+            }
+            "language" => {
+                faset_ui::set_language(settings.game.language);
+                self.live.game = settings.game.clone();
+                true
+            }
+            _ if meta.category == Category::Controls => {
+                self.live.controls = settings.controls.clone();
+                true
+            }
+            _ if meta.category == Category::Network => {
+                self.live.network = settings.network.clone();
+                true
+            }
+            _ if meta.category == Category::Game => {
+                self.live.game = settings.game.clone();
+                true
+            }
+            _ if meta.category == Category::Accessibility => {
+                self.live.accessibility = settings.accessibility.clone();
+                true
             }
             // No runtime hook in the renderer's public interface yet: the
             // value is stored and takes effect when the renderer offers one.
