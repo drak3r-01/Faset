@@ -25,7 +25,7 @@ faset-mode-fps.workspace = true
 faset-mode-race.workspace = true
 faset-bots.workspace = true
 # Bot brains and the match provider of the integrated server (lot 6.2).
-dedicated = { path = "../dedicated" }
+dedicated = { path = "../dedicated", version = "0.0.1-rc.1" }
 ron = "0.12"
 anyhow = "1"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
