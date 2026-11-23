@@ -7,36 +7,38 @@
 //! another `settings.toml` than the one in the OS configuration folder.
 //!
 //! The main menu runs over a slowly rotating view of a map. The play screen
-//! starts an integrated server and joins it; the match is shown from the
-//! local player's eye with no controls yet (lot 6.1 delivers the application
-//! layer: the playable first-person loop comes later). `Escape` opens and
-//! closes the pause menu during a match.
+//! starts an integrated server and joins it (or joins a server by address or
+//! from the LAN list); the match is played from the first-person view with
+//! the keys and mouse of the bindings, the HUD, the other players, the
+//! pickups and the weapon in hand (lot 6.6). `Escape` opens and closes the
+//! pause menu during a match.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use faset_client::{App, MapCatalogue};
+use faset_client::{
+    App, EguiInput, FirstPersonCamera, FpsHud, GameInput, HudOptions, LocalFrame, MapCatalogue,
+    MatchScene, RawInput, SceneFrame,
+};
+use faset_core::bindings::Input;
 use faset_core::settings::{self, ConfirmState, ResolutionConfirm, Settings};
-use faset_core::Tick;
 use faset_minigame_api::Registry;
 use faset_mode_fps::{register_modes, FpsMode};
 use faset_mode_race::RaceMode;
-use faset_protocol::InputCommand;
 use faset_render::glam::{Mat4, Vec3};
 use faset_render::{
     perspective_reverse_z, AmbienceProfile, Camera, Instance, RenderConfig, RenderWorld, Renderer,
     SkyParams,
 };
-use faset_ui::egui::{self, Event, PointerButton};
+use faset_ui::egui::{self, Event};
 use faset_ui::{
-    AppState, FrameInput, SettingsEvent, SettingsScreen, StateScreen, Theme, Ui, UiConfig,
+    AppState, FrameInput, Screen, SettingsEvent, SettingsScreen, StateScreen, Theme, Ui, UiConfig,
 };
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, NamedKey};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 #[path = "faset_settings/apply.rs"]
 mod apply;
@@ -45,12 +47,11 @@ mod audio;
 
 /// Seconds for one turn of the menu camera.
 const MENU_TURN_SECONDS: f32 = 120.0;
-/// Eye height above the capsule centre, metres.
-const EYE_OFFSET: f32 = 0.7;
+/// Longest frame the simulation is asked to catch up on, seconds.
+const MAX_FRAME_SECONDS: f32 = 0.25;
 
 struct Client {
     app: App,
-    vsync: bool,
     /// Settings being edited, and the last ones applied.
     settings: Settings,
     applied: Settings,
@@ -62,11 +63,21 @@ struct Client {
     limit: Option<Duration>,
     start: Instant,
     last_frame: Instant,
-    events: Vec<Event>,
-    pointer_px: (f32, f32),
+    /// Window events turned into egui events and game input.
+    input: EguiInput,
+    /// The player's keys, mouse and look.
+    game: GameInput,
+    /// Session whose spawn orientation the look was taken from.
+    look_from: Option<u64>,
+    camera: FirstPersonCamera,
+    /// The mouse is grabbed and hidden: the match is being played.
+    grabbed: bool,
+    focused: bool,
     instances: Vec<Instance>,
     /// Meshes of the loadout screen's character, uploaded on first use.
     preview: Option<faset_client::CharacterPreview>,
+    /// Boxes of the match scene, uploaded on first use.
+    scene: Option<MatchScene>,
     prev_view_proj: Option<Mat4>,
     // Field order: UI and renderer are dropped before the window.
     ui: Option<Ui>,
@@ -85,34 +96,20 @@ fn registry() -> Registry {
     registry
 }
 
-fn idle(tick: Tick) -> InputCommand {
-    InputCommand {
-        tick,
-        buttons: 0,
-        move_x: 0,
-        move_y: 0,
-        yaw: 0,
-        pitch: 0,
-        weapon_slot: 1,
-    }
+/// The HUD and the pause menu share one frame: the HUD under, the screen of
+/// the state on top.
+struct Composite<'a> {
+    hud: Option<FpsHud>,
+    top: &'a mut dyn Screen,
 }
 
-fn egui_key(key: &Key) -> Option<egui::Key> {
-    Some(match key {
-        Key::Named(NamedKey::Escape) => egui::Key::Escape,
-        Key::Named(NamedKey::Enter) => egui::Key::Enter,
-        Key::Named(NamedKey::Tab) => egui::Key::Tab,
-        Key::Named(NamedKey::Backspace) => egui::Key::Backspace,
-        Key::Named(NamedKey::Delete) => egui::Key::Delete,
-        Key::Named(NamedKey::ArrowLeft) => egui::Key::ArrowLeft,
-        Key::Named(NamedKey::ArrowRight) => egui::Key::ArrowRight,
-        Key::Named(NamedKey::ArrowUp) => egui::Key::ArrowUp,
-        Key::Named(NamedKey::ArrowDown) => egui::Key::ArrowDown,
-        Key::Named(NamedKey::Home) => egui::Key::Home,
-        Key::Named(NamedKey::End) => egui::Key::End,
-        Key::Named(NamedKey::F3) => egui::Key::F3,
-        _ => return None,
-    })
+impl Screen for Composite<'_> {
+    fn show(&mut self, ctx: &egui::Context, theme: &Theme) {
+        if let Some(hud) = &mut self.hud {
+            hud.show(ctx, theme);
+        }
+        self.top.show(ctx, theme);
+    }
 }
 
 impl Client {
@@ -130,7 +127,7 @@ impl Client {
         let mut renderer = Renderer::new_windowed(
             &window,
             &RenderConfig {
-                vsync: self.vsync,
+                vsync: self.settings.display.vsync,
                 size: (size.width.max(1), size.height.max(1)),
                 ..RenderConfig::default()
             },
@@ -152,85 +149,44 @@ impl Client {
         Ok(())
     }
 
-    fn on_window_event(&mut self, event: WindowEvent, event_loop: &ActiveEventLoop) {
-        let ppp = self
+    /// Physical pixels per egui point.
+    fn points_per_pixel(&self) -> f32 {
+        let factor = self
             .window
             .as_ref()
             .map_or(1.0, |w| w.scale_factor() as f32);
-        match event {
+        factor * self.settings.accessibility.ui_scale
+    }
+
+    /// Whether the keyboard and mouse drive the player.
+    fn playing(&self) -> bool {
+        self.focused
+            && self.app.accepts_game_input()
+            && self.app.session().is_some_and(|s| s.in_game())
+    }
+
+    fn on_window_event(&mut self, event: WindowEvent, event_loop: &ActiveEventLoop) {
+        match &event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                self.pointer_px = (position.x as f32, position.y as f32);
-                self.events.push(Event::PointerMoved(egui::pos2(
-                    position.x as f32 / ppp,
-                    position.y as f32 / ppp,
-                )));
-            }
-            WindowEvent::CursorLeft { .. } => self.events.push(Event::PointerGone),
-            WindowEvent::MouseInput { state, button, .. } => {
-                let button = match button {
-                    MouseButton::Left => PointerButton::Primary,
-                    MouseButton::Right => PointerButton::Secondary,
-                    MouseButton::Middle => PointerButton::Middle,
-                    _ => return,
-                };
-                self.events.push(Event::PointerButton {
-                    pos: egui::pos2(self.pointer_px.0 / ppp, self.pointer_px.1 / ppp),
-                    button,
-                    pressed: state == ElementState::Pressed,
-                    modifiers: egui::Modifiers::NONE,
-                });
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (unit, delta) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        (egui::MouseWheelUnit::Line, egui::vec2(x, y))
-                    }
-                    MouseScrollDelta::PixelDelta(p) => (
-                        egui::MouseWheelUnit::Point,
-                        egui::vec2(p.x as f32 / ppp, p.y as f32 / ppp),
-                    ),
-                };
-                self.events.push(Event::MouseWheel {
-                    unit,
-                    delta,
-                    phase: egui::TouchPhase::Move,
-                    source: egui::MouseWheelSource::Wheel,
-                    modifiers: egui::Modifiers::NONE,
-                });
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                let pressed = event.state == ElementState::Pressed;
-                if pressed && event.logical_key == Key::Named(NamedKey::Escape) && !event.repeat {
-                    self.toggle_pause();
-                }
-                if let Some(key) = egui_key(&event.logical_key) {
-                    self.events.push(Event::Key {
-                        key,
-                        physical_key: None,
-                        pressed,
-                        repeat: event.repeat,
-                        modifiers: egui::Modifiers::NONE,
-                    });
-                }
-                if pressed {
-                    if let Some(text) = event
-                        .text
-                        .as_ref()
-                        .filter(|t| !t.chars().any(char::is_control))
-                    {
-                        self.events.push(Event::Text(text.to_string()));
-                    }
+            WindowEvent::Focused(focused) => {
+                self.focused = *focused;
+                if !focused {
+                    self.game.release_all();
                 }
             }
-            WindowEvent::RedrawRequested => self.redraw(event_loop),
+            WindowEvent::RedrawRequested => {
+                self.redraw(event_loop);
+                return;
+            }
             _ => {}
         }
+        let ppp = self.points_per_pixel();
+        self.input.on_window_event(&event, ppp);
     }
 
     fn save_settings(&self) {
@@ -244,6 +200,7 @@ impl Client {
     fn toggle_pause(&mut self) {
         match self.app.stack().top() {
             AppState::InGame => {
+                self.game.release_all();
                 let _ = self.app.pause();
             }
             AppState::Pause => self.app.handle(vec![faset_ui::UiCommand::Pop]),
@@ -251,46 +208,148 @@ impl Client {
         }
     }
 
-    fn camera(&mut self, aspect: f32, t: f32) -> Camera {
-        let fov = self.live.as_ref().map_or(70.0, |l| l.tuning.fov_deg);
-        let proj = perspective_reverse_z(fov.to_radians(), aspect, 0.1);
-        let in_match = matches!(self.app.stack().states().first(), Some(AppState::InGame));
-        let (eye, target) = match self.app.session().and_then(|s| s.display_position()) {
-            Some(position) if in_match => {
-                let eye = position + Vec3::Y * EYE_OFFSET;
-                (eye, eye - Vec3::Z)
+    /// Routes the raw keys, buttons and wheel of the frame: to the game while
+    /// it is played, to the pause key always, to the rebinding view when it
+    /// waits for a key egui does not name.
+    fn route_raw_input(&mut self) {
+        let playing = self.playing();
+        for raw in self.input.take_raw() {
+            let (input, pressed) = match raw {
+                RawInput::Key { name, pressed } => {
+                    if pressed && name == faset_core::bindings::RESERVED_KEY {
+                        self.toggle_pause();
+                        continue;
+                    }
+                    (Input::key(&name), pressed)
+                }
+                RawInput::Mouse { index, pressed } => (Input::Mouse(index), pressed),
+                RawInput::Wheel(lines) => {
+                    if playing {
+                        self.game.wheel(lines);
+                    }
+                    continue;
+                }
+            };
+            // Releases always go through, so no key stays stuck.
+            if playing || !pressed {
+                self.game.press(
+                    input,
+                    pressed,
+                    &self.settings.bindings,
+                    &self.settings.controls,
+                );
             }
-            _ => {
+        }
+    }
+
+    /// Grabs and hides the mouse while the match is played.
+    fn update_cursor(&mut self, playing: bool) {
+        if playing == self.grabbed {
+            return;
+        }
+        let Some(window) = &self.window else { return };
+        if playing {
+            let grabbed = window
+                .set_cursor_grab(CursorGrabMode::Locked)
+                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+            if let Err(e) = grabbed {
+                tracing::warn!("cannot grab the mouse: {e}");
+            }
+            window.set_cursor_visible(false);
+        } else {
+            let _ = window.set_cursor_grab(CursorGrabMode::None);
+            window.set_cursor_visible(true);
+        }
+        self.grabbed = playing;
+    }
+
+    /// The camera of the frame and the field of view of the 3D view.
+    fn camera(&mut self, aspect: f32, t: f32, dt: f32) -> (Camera, f32) {
+        let fov = self.live.as_ref().map_or(80.0, |l| l.tuning.fov_deg);
+        let calm = self.settings.accessibility.reduce_shake;
+        let mut params = self.camera.params().clone();
+        params.fov_base_deg = fov;
+        params.roll_max_deg = if calm { 0.0 } else { 1.5 };
+        params.landing_max_dip = if calm { 0.0 } else { 0.3 };
+        if &params != self.camera.params() {
+            self.camera.set_params(params);
+        }
+        let in_match = matches!(self.app.stack().states().first(), Some(AppState::InGame));
+        let pose = self
+            .app
+            .session()
+            .filter(|_| in_match)
+            .and_then(|s| s.prediction())
+            .and_then(|p| {
+                let mut state = p.controller_state()?;
+                state.pos = p.display_position()?;
+                Some(state)
+            })
+            .map(|state| self.camera.update(dt, &state, self.game.look()));
+        let (view, fov_y) = match pose {
+            Some(pose) => (
+                Mat4::from_rotation_translation(pose.orientation, pose.eye).inverse(),
+                pose.fov_y,
+            ),
+            None => {
                 let (center, radius) = self.app.map_extent();
                 let angle = t * std::f32::consts::TAU / MENU_TURN_SECONDS;
                 let eye = center + Vec3::new(angle.cos(), 0.55, angle.sin()) * radius * 0.9;
-                (eye, center)
+                (
+                    faset_render::glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Y),
+                    fov.to_radians(),
+                )
             }
         };
-        let view = faset_render::glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
+        let proj = perspective_reverse_z(fov_y, aspect, 0.1);
         let mut camera = Camera::new(view, proj);
         if let Some(prev) = self.prev_view_proj {
             camera.prev_view_proj = prev;
         }
         self.prev_view_proj = Some(camera.view_proj());
-        camera
+        (camera, fov_y)
     }
 
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        let (Some(mut renderer), Some(mut ui)) = (self.renderer.take(), self.ui.take()) else {
+            return;
+        };
+        self.draw_frame(event_loop, &mut renderer, &mut ui);
+        self.renderer = Some(renderer);
+        self.ui = Some(ui);
+    }
+
+    fn draw_frame(&mut self, event_loop: &ActiveEventLoop, renderer: &mut Renderer, ui: &mut Ui) {
         let now_frame = Instant::now();
         let now = now_frame;
         let dt = now - self.last_frame;
         self.last_frame = now;
         let elapsed = self.start.elapsed();
+        let dt_s = dt.as_secs_f32().min(MAX_FRAME_SECONDS);
 
-        self.app.update(dt, &mut idle);
+        self.route_raw_input();
+        let playing = self.playing();
+        self.update_cursor(playing);
+        // The look starts where the server put the player.
+        if let Some(session) = self.app.session() {
+            if playing && self.look_from != Some(session.instance_id()) {
+                if let Some(state) = session.prediction().and_then(|p| p.state()) {
+                    self.game.set_look(state.yaw, state.pitch);
+                    self.look_from = Some(session.instance_id());
+                }
+            }
+        }
+
+        {
+            let (bindings, controls) = (&self.settings.bindings, &self.settings.controls);
+            let game = &mut self.game;
+            self.app
+                .update(dt, &mut |tick| game.command(tick, bindings, controls));
+        }
         if self.app.quit_requested() || self.limit.is_some_and(|l| elapsed >= l) {
             event_loop.exit();
             return;
         }
-        let (Some(renderer), Some(ui)) = (&mut self.renderer, &mut self.ui) else {
-            return;
-        };
         if let Some(map) = self.app.take_map() {
             match map.upload(renderer) {
                 Ok(instances) => self.instances = instances,
@@ -300,9 +359,22 @@ impl Client {
         if let Some(status) = self.app.take_status() {
             tracing::warn!("{status}");
         }
+        let in_match = matches!(self.app.stack().states().first(), Some(AppState::InGame))
+            && self.app.session().is_some_and(|s| s.in_game());
+        if in_match && self.scene.is_none() {
+            match MatchScene::upload(renderer) {
+                Ok(scene) => self.scene = Some(scene),
+                Err(e) => tracing::error!("cannot upload the match scene: {e}"),
+            }
+        }
 
         let size_px = renderer.size();
         let state = self.app.stack().top();
+        let mut events = self.input.take_events();
+        if playing {
+            // The mouse and the typing belong to the game.
+            events.retain(|e| matches!(e, Event::Key { .. } | Event::WindowFocused(_)));
+        }
         ui.begin_frame(FrameInput {
             size_px,
             scale_factor: self
@@ -310,10 +382,25 @@ impl Client {
                 .as_ref()
                 .map_or(1.0, |w| w.scale_factor() as f32),
             time: elapsed.as_secs_f64(),
-            dt: dt.as_secs_f32(),
-            events: std::mem::take(&mut self.events),
+            dt: dt_s,
+            events,
         });
         let now = elapsed.as_secs_f64();
+        let aspect = size_px.0.max(1) as f32 / size_px.1.max(1) as f32;
+        let (camera, fov_y) = self.camera(aspect, elapsed.as_secs_f32(), dt_s);
+
+        // The HUD of the match, under the screen of the state.
+        let hud = if in_match {
+            let frame = self.local_frame(dt_s);
+            let options = HudOptions::from_settings(&self.settings.game);
+            self.app
+                .session_mut()
+                .and_then(|s| s.view_mut().hud_model(&frame, dt_s))
+                .map(|model| FpsHud::new(model, fov_y).with_options(options))
+        } else {
+            None
+        };
+
         let mut commands = Vec::new();
         if state == AppState::Settings {
             let available = self
@@ -325,7 +412,10 @@ impl Client {
             screen.tab = self.settings_tab;
             screen.rebind = std::mem::take(&mut self.rebind);
             screen.confirm = self.confirm.map(|c| c.poll(now));
-            ui.draw(&mut screen);
+            ui.draw(&mut Composite {
+                hud,
+                top: &mut screen,
+            });
             self.settings_tab = screen.tab;
             self.rebind = std::mem::take(&mut screen.rebind);
             for event in screen.events {
@@ -350,7 +440,10 @@ impl Client {
             }
         } else {
             let mut screen = StateScreen::new(state, self.app.model_mut());
-            ui.draw(&mut screen);
+            ui.draw(&mut Composite {
+                hud,
+                top: &mut screen,
+            });
             commands = screen.commands;
         }
         if self
@@ -376,13 +469,13 @@ impl Client {
         if commands.contains(&faset_ui::UiCommand::Pop) && state == AppState::Settings {
             self.save_settings();
         }
+        if commands.contains(&faset_ui::UiCommand::LeaveMatch) {
+            self.game.release_all();
+            self.look_from = None;
+        }
         self.app.handle(commands);
 
-        let aspect = size_px.0.max(1) as f32 / size_px.1.max(1) as f32;
-        let mut camera = self.camera(aspect, elapsed.as_secs_f32());
-        let Some(renderer) = &mut self.renderer else {
-            return;
-        };
+        let mut camera = camera;
         camera.jitter_px = renderer.upscaler_jitter(renderer.frames_rendered() as u32);
         let mut world = RenderWorld {
             camera,
@@ -396,6 +489,10 @@ impl Client {
             draw_sky: true,
             ..RenderWorld::default()
         };
+        renderer.set_material_time(elapsed.as_secs_f32());
+        if in_match {
+            self.add_scene(&mut world, dt_s);
+        }
         if state == AppState::Loadout {
             if self.preview.is_none() {
                 match faset_client::CharacterPreview::upload(renderer) {
@@ -435,6 +532,44 @@ impl Client {
             }
         }
     }
+
+    /// What the HUD needs of the local player this frame.
+    fn local_frame(&self, _dt: f32) -> LocalFrame {
+        let state = self
+            .app
+            .session()
+            .and_then(|s| s.prediction())
+            .and_then(|p| p.controller_state());
+        LocalFrame {
+            speed: state.map_or(0.0, |s| Vec3::new(s.vel.x, 0.0, s.vel.z).length()),
+            airborne: state.is_some_and(|s| !s.on_ground),
+            sighted: self
+                .game
+                .aiming(&self.settings.bindings, &self.settings.controls),
+            scoreboard: self.game.scoreboard(&self.settings.bindings),
+        }
+    }
+
+    /// Adds the other players, pickups, projectiles and the weapon in hand.
+    fn add_scene(&mut self, world: &mut RenderWorld, dt: f32) {
+        let (Some(scene), Some(session)) = (&mut self.scene, self.app.session_mut()) else {
+            return;
+        };
+        let camera = world.camera;
+        let cam_world = camera.view.inverse();
+        let (_, orientation, eye) = cam_world.to_scale_rotation_translation();
+        let state = session.prediction().and_then(|p| p.controller_state());
+        let frame = SceneFrame {
+            eye,
+            orientation,
+            dt,
+            speed: state.map_or(0.0, |s| Vec3::new(s.vel.x, 0.0, s.vel.z).length()),
+            grounded: state.is_none_or(|s| s.on_ground),
+            weapon_position: self.settings.game.weapon_position,
+            look: self.game.look(),
+        };
+        world.instances.extend(scene.instances(session, &frame));
+    }
 }
 
 impl ApplicationHandler for Client {
@@ -450,6 +585,18 @@ impl ApplicationHandler for Client {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         self.on_window_event(event, event_loop);
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device: DeviceId,
+        event: DeviceEvent,
+    ) {
+        if let (DeviceEvent::MouseMotion { delta: (dx, dy) }, true) = (event, self.grabbed) {
+            self.game
+                .mouse_motion(dx, dy, &self.settings.bindings, &self.settings.controls);
+        }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
@@ -480,10 +627,13 @@ fn main() -> Result<()> {
     let settings_path = value("--settings")
         .map(PathBuf::from)
         .or_else(settings::settings_path);
-    let settings = match &settings_path {
+    let mut settings = match &settings_path {
         Some(path) => settings::load_settings_with(path, args.iter().any(|a| a == "--safe")),
         None => Settings::default(),
     };
+    if args.iter().any(|a| a == "--no-vsync") {
+        settings.display.vsync = false;
+    }
 
     let event_loop = EventLoop::new().context("cannot create the event loop")?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -494,7 +644,6 @@ fn main() -> Result<()> {
     }
     let mut client = Client {
         app,
-        vsync: settings.display.vsync && !args.iter().any(|a| a == "--no-vsync"),
         applied: settings.clone(),
         settings,
         settings_path,
@@ -505,10 +654,15 @@ fn main() -> Result<()> {
         limit: (seconds > 0).then(|| Duration::from_secs(seconds)),
         start: Instant::now(),
         last_frame: Instant::now(),
-        events: Vec::new(),
-        pointer_px: (0.0, 0.0),
+        input: EguiInput::new(),
+        game: GameInput::new(),
+        look_from: None,
+        camera: FirstPersonCamera::new(faset_client::FeelParams::default()),
+        grabbed: false,
+        focused: true,
         instances: Vec::new(),
         preview: None,
+        scene: None,
         prev_view_proj: None,
         ui: None,
         renderer: None,

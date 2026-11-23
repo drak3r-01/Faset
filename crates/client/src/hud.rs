@@ -9,6 +9,7 @@
 //!
 //! [`Ui`]: faset_ui::Ui
 
+use faset_core::settings::{GameSettings, ReticleStyle};
 use faset_mode_fps::hud::{ChoiceMoment, ClassChoice, ScoreRow};
 use faset_mode_fps::{HudModel, PickupKind};
 use faset_ui::egui::{
@@ -19,6 +20,62 @@ use faset_ui::{Screen, Theme};
 /// Height in points the layout constants are designed for.
 const DESIGN_HEIGHT: f32 = 720.0;
 
+/// How the HUD is drawn: the player's reticle and HUD settings (lot 6.6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HudOptions {
+    /// Reticle shape.
+    pub style: ReticleStyle,
+    /// Length of a reticle tick, in design points.
+    pub tick: f32,
+    /// Thickness of the reticle lines, in design points.
+    pub thickness: f32,
+    /// Smallest gap at the reticle centre, in design points.
+    pub gap: f32,
+    /// Reticle opacity, 0 to 1.
+    pub opacity: f32,
+    /// Scale of the whole HUD.
+    pub scale: f32,
+    /// Show the speed indicator.
+    pub speed_indicator: bool,
+    /// Show damage numbers.
+    pub damage_numbers: bool,
+}
+
+impl Default for HudOptions {
+    /// The look of lot 4.8: a cross with a dot, speed and damage numbers.
+    fn default() -> Self {
+        Self {
+            style: ReticleStyle::CrossDot,
+            tick: 9.0,
+            thickness: 1.5,
+            gap: 2.0,
+            opacity: 1.0,
+            scale: 1.0,
+            speed_indicator: true,
+            damage_numbers: true,
+        }
+    }
+}
+
+impl HudOptions {
+    /// The options a player's game settings ask for. The settings count
+    /// pixels of a 720-point-high display: 16 px of reticle is a 9-point
+    /// tick, 2 px of thickness is 1.5 points, a 4 px gap is 2 points.
+    #[must_use]
+    pub fn from_settings(game: &GameSettings) -> Self {
+        Self {
+            style: game.reticle_style,
+            tick: game.reticle_size as f32 * 0.5625,
+            thickness: game.reticle_thickness as f32 * 0.75,
+            gap: game.reticle_gap as f32 * 0.5,
+            opacity: game.reticle_opacity.clamp(0.0, 1.0),
+            scale: game.hud_scale.clamp(0.5, 2.0),
+            speed_indicator: game.speed_indicator,
+            damage_numbers: game.damage_numbers,
+        }
+    }
+}
+
 /// The FPS HUD of one frame, as a UI screen.
 #[derive(Debug, Clone)]
 pub struct FpsHud {
@@ -26,14 +83,27 @@ pub struct FpsHud {
     pub model: HudModel,
     /// Vertical field of view of the 3D view, radians (reticle size).
     pub fov_y: f32,
+    /// How to draw it.
+    pub options: HudOptions,
 }
 
 impl FpsHud {
     /// A HUD for `model` seen through a view of vertical field of view
-    /// `fov_y`.
+    /// `fov_y`, with the default look.
     #[must_use]
     pub fn new(model: HudModel, fov_y: f32) -> Self {
-        Self { model, fov_y }
+        Self {
+            model,
+            fov_y,
+            options: HudOptions::default(),
+        }
+    }
+
+    /// The same HUD drawn with `options`.
+    #[must_use]
+    pub fn with_options(mut self, options: HudOptions) -> Self {
+        self.options = options;
+        self
     }
 }
 
@@ -42,12 +112,14 @@ impl Screen for FpsHud {
         let painter = ctx.layer_painter(LayerId::background());
         let rect = ctx.content_rect();
         let ppp = ctx.pixels_per_point();
-        let k = (rect.height() / DESIGN_HEIGHT).clamp(0.4, 4.0);
+        let o = self.options;
+        let k = (rect.height() / DESIGN_HEIGHT).clamp(0.4, 4.0) * o.scale;
         let hud = Hud {
             p: &painter,
             theme,
             rect,
             k,
+            options: o,
         };
         let m = &self.model;
         if m.low_health() {
@@ -60,13 +132,17 @@ impl Screen for FpsHud {
             );
         }
         hud.markers(m);
-        hud.numbers(m);
+        if o.damage_numbers {
+            hud.numbers(m);
+        }
         hud.vitals(m);
         hud.bonuses(m);
         hud.ammo(m);
         hud.top(m);
         hud.feed(m);
-        hud.speed(m);
+        if o.speed_indicator {
+            hud.speed(m);
+        }
         if let Some(rows) = &m.scoreboard {
             hud.scoreboard(rows);
         }
@@ -81,6 +157,7 @@ struct Hud<'a> {
     theme: &'a Theme,
     rect: Rect,
     k: f32,
+    options: HudOptions,
 }
 
 impl Hud<'_> {
@@ -114,24 +191,47 @@ impl Hud<'_> {
 
     /// Dynamic reticle: four ticks whose gap is the dispersion cone.
     fn reticle(&self, m: &HudModel, radius_pts: f32) {
+        let o = &self.options;
         let c = self.rect.center();
-        let gap = radius_pts.max(2.0 * self.k);
-        let len = 9.0 * self.k;
-        let colour = if m.hit_marker > 0.0 {
+        let gap = radius_pts.max(o.gap * self.k);
+        let len = o.tick * self.k;
+        let base = if m.hit_marker > 0.0 {
             self.theme.text
         } else {
             Color32::from_white_alpha(230)
         };
-        for dir in [Vec2::X, -Vec2::X, Vec2::Y, -Vec2::Y] {
-            let (a, b) = (c + dir * gap, c + dir * (gap + len));
-            self.p.line_segment(
-                [a, b],
-                Stroke::new(3.0 * self.k, Color32::from_black_alpha(140)),
+        let colour = base.gamma_multiply(o.opacity);
+        let shadow = Color32::from_black_alpha(140).gamma_multiply(o.opacity);
+        let ticks = matches!(o.style, ReticleStyle::Cross | ReticleStyle::CrossDot);
+        if ticks {
+            for dir in [Vec2::X, -Vec2::X, Vec2::Y, -Vec2::Y] {
+                let (a, b) = (c + dir * gap, c + dir * (gap + len));
+                self.p.line_segment(
+                    [a, b],
+                    Stroke::new((o.thickness * 2.0).max(o.thickness + 1.0) * self.k, shadow),
+                );
+                self.p
+                    .line_segment([a, b], Stroke::new(o.thickness * self.k, colour));
+            }
+        }
+        if o.style == ReticleStyle::Circle {
+            let r = gap + len * 0.5;
+            self.p.circle_stroke(
+                c,
+                r,
+                Stroke::new((o.thickness * 2.0).max(o.thickness + 1.0) * self.k, shadow),
             );
             self.p
-                .line_segment([a, b], Stroke::new(1.5 * self.k, colour));
+                .circle_stroke(c, r, Stroke::new(o.thickness * self.k, colour));
         }
-        self.p.circle_filled(c, 1.2 * self.k, colour);
+        if matches!(o.style, ReticleStyle::Dot | ReticleStyle::CrossDot) {
+            let r = if o.style == ReticleStyle::Dot {
+                (o.thickness * 0.8 + 1.0) * self.k
+            } else {
+                1.2 * self.k
+            };
+            self.p.circle_filled(c, r, colour);
+        }
     }
 
     /// Hit marker (white X) and kill marker (red X).

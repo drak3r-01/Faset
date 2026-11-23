@@ -23,24 +23,30 @@ use std::time::Duration;
 use faset_core::glam::Vec3;
 use faset_core::{NetId, Tick};
 use faset_mapfmt::MapFile;
-use faset_minigame_api::{GameEvent, ModeId, ModeMessage};
+use faset_minigame_api::{GameEvent, ModeId, ModeMessage, Registry};
 use faset_mode_fps::ServerMsg;
 use faset_net::{Channel, ClientEndpoint, SendError, Transport, TransportError, UdpTransport};
 use faset_protocol::{Event, InputCommand, Message, PROTOCOL_VERSION};
 use faset_server::{
     build_fingerprint, map_fingerprint, InputPacket, MapConfig, ServerConfig, SnapshotDecoder,
 };
-use faset_sim::{MapCollision, StaticWorld, Zones};
+use faset_sim::{MapCollision, MoveScale, StaticWorld, Zones};
 
 use crate::clock::ClockSync;
 use crate::hosting::{host_game, HostConfig, HostError, HostHandle};
 use crate::interpolation::{RemoteInterpolation, RemoteState};
+use crate::map_sync::{MapCache, MapEvent, MapSync};
+use crate::match_view::MatchView;
 use crate::prediction::{AuthoritativeState, PredictedState, Prediction};
 
 /// Height of a spawn's capsule centre above the spawn's feet position: half
 /// the standing capsule plus 1 cm, so the first tick lands (same value as the
 /// dedicated server).
 const SPAWN_LIFT: f32 = 0.91;
+
+/// Seconds without news of an awaited map before the session plays on the
+/// default arena.
+const MAP_WAIT_SECONDS: f64 = 4.0;
 
 /// A session that cannot start.
 #[derive(Debug, thiserror::Error)]
@@ -132,6 +138,22 @@ pub struct Session {
     remotes: RemoteInterpolation,
     entities: usize,
     now: f64,
+    /// The match as the client sees it (lot 6.6).
+    view: MatchView,
+    /// Map announcements and downloads (lot 6.6).
+    maps: MapSync,
+    /// Fingerprint of the map the session's collision world is built from.
+    map_fp: Option<u64>,
+    /// The next map file to show, set when a map became ready.
+    new_map: Option<Vec<u8>>,
+    /// Bytes of the map download received, `(chunks, total)`.
+    map_progress: Option<(u16, u16)>,
+    /// Why the session cannot go on (a refused map), once.
+    failure: Option<String>,
+    /// Server tick of the latest snapshot.
+    server_tick: Tick,
+    /// Session time of the last news of a map being awaited.
+    map_wait: Option<f64>,
 }
 
 impl Session {
@@ -161,10 +183,13 @@ impl Session {
             config.server.map.statics.clone(),
             config.server.map.zones.clone(),
         );
+        let fingerprint = config.server.map.fingerprint;
         let host = host_game(config, open_to_lan)?;
         let (transport, addr) = host.connect_local();
         let conn = Box::new(ClientEndpoint::new(transport, addr));
-        Ok(Self::with_conn(conn, Some(host), seed, statics, zones))
+        let mut session = Self::with_conn(conn, Some(host), seed, statics, zones);
+        session.map_fp = Some(fingerprint);
+        Ok(session)
     }
 
     /// Connects to the server at `address`.
@@ -206,7 +231,61 @@ impl Session {
             remotes: RemoteInterpolation::default(),
             entities: 0,
             now: 0.0,
+            view: MatchView::new(Registry::new()),
+            maps: MapSync::new(MapCache::new()),
+            map_fp: None,
+            new_map: None,
+            map_progress: None,
+            failure: None,
+            server_tick: Tick(0),
+            map_wait: None,
         }
+    }
+
+    /// Gives the session the modes it can mirror (lot 6.6): without them
+    /// there is no match state, HUD or scoreboard.
+    #[must_use]
+    pub fn with_registry(mut self, registry: Registry) -> Self {
+        self.view = MatchView::new(registry);
+        self
+    }
+
+    /// Gives the session the maps it already has (lot 6.6): a map announced
+    /// by the server is looked up here by fingerprint before it is
+    /// downloaded.
+    #[must_use]
+    pub fn with_map_cache(mut self, cache: MapCache) -> Self {
+        self.maps = MapSync::new(cache);
+        self
+    }
+
+    /// The match as the client sees it: phase, scores, players, pickups,
+    /// projectiles and the HUD model.
+    pub fn view_mut(&mut self) -> &mut MatchView {
+        &mut self.view
+    }
+
+    /// The match as the client sees it.
+    #[must_use]
+    pub fn view(&self) -> &MatchView {
+        &self.view
+    }
+
+    /// The bytes of a map the renderer must show, once per map: the one a
+    /// remote server announced at the handshake or a rotation.
+    pub fn take_new_map(&mut self) -> Option<Vec<u8>> {
+        self.new_map.take()
+    }
+
+    /// Chunks `(received, total)` of the map being downloaded.
+    #[must_use]
+    pub fn map_progress(&self) -> Option<(u16, u16)> {
+        self.map_progress
+    }
+
+    /// Why the session cannot go on, once (a map that failed its check).
+    pub fn take_failure(&mut self) -> Option<String> {
+        self.failure.take()
     }
 
     /// Process-unique id of this match instance: two sessions never share it,
@@ -279,6 +358,12 @@ impl Session {
         self.now
     }
 
+    /// Server tick of the latest snapshot.
+    #[must_use]
+    pub fn server_tick(&self) -> Tick {
+        self.server_tick
+    }
+
     /// Mode byte the server announced (`None` before its hello).
     #[must_use]
     pub fn mode(&self) -> Option<u8> {
@@ -306,12 +391,85 @@ impl Session {
     }
 
     fn on_event(&mut self, event: &Event) {
+        if let Event::MapChange { map_fingerprint } = event {
+            if self.map_fp == Some(*map_fingerprint) {
+                self.send_event(&Message::Ready);
+            } else {
+                self.begin_map(*map_fingerprint);
+            }
+            return;
+        }
+        self.view.on_event(event, self.now);
         if let Some(GameEvent::Mode(bytes)) = GameEvent::from_protocol(event) {
             if let Some(ServerMsg::LoadoutReplaced { player, reason }) = ServerMsg::decode(&bytes) {
                 if Some(player) == self.player {
                     self.loadout_replaced = Some(reason);
                 }
             }
+        }
+    }
+
+    /// The server announced map `fingerprint`: use the copy we have or ask
+    /// for it.
+    fn begin_map(&mut self, fingerprint: u64) {
+        self.map_wait = Some(self.now);
+        if let Some(request) = self.maps.on_map_change(fingerprint) {
+            self.send_event(&request);
+        }
+    }
+
+    /// A map is ready: build the collision world of the prediction from it,
+    /// hand the file to the renderer and tell the server.
+    fn install_map(&mut self, fingerprint: u64, bytes: Vec<u8>) {
+        match map_config(&bytes) {
+            Ok((config, _)) => {
+                self.statics = config.statics;
+                self.zones = config.zones;
+                self.map_fp = Some(fingerprint);
+                self.map_wait = None;
+                self.map_progress = None;
+                if self.prediction.take().is_some() {
+                    // A new world: synchronise the clock and predict again.
+                    self.clock = ClockSync::default();
+                    self.remotes = RemoteInterpolation::default();
+                }
+                self.new_map = Some(bytes);
+                self.send_event(&Message::Ready);
+            }
+            Err(e) => self.failure = Some(format!("the server's map is unusable: {e}")),
+        }
+    }
+
+    fn poll_maps(&mut self) {
+        while let Some(bytes) = self.conn.recv(Channel::MapTransfer) {
+            if let Ok(msg) = Message::decode(&bytes) {
+                self.maps.on_chunk(&msg);
+            }
+        }
+        while let Some(event) = self.maps.poll_event() {
+            match event {
+                MapEvent::Progress {
+                    received, total, ..
+                } => {
+                    self.map_progress = Some((received, total));
+                    self.map_wait = Some(self.now);
+                }
+                MapEvent::Ready { fingerprint, bytes } => self.install_map(fingerprint, bytes),
+                MapEvent::Failed { error, .. } => {
+                    self.failure = Some(format!("the server's map was refused: {error}"));
+                }
+            }
+        }
+        // A server that does not publish its map (no rotation) never
+        // answers: play on the default arena as before, the server stays
+        // authoritative.
+        if self
+            .map_wait
+            .is_some_and(|t| self.now - t > MAP_WAIT_SECONDS)
+        {
+            tracing::warn!("the server did not send its map; predicting on the default arena");
+            self.map_wait = None;
+            self.send_event(&Message::Ready);
         }
     }
 
@@ -328,6 +486,8 @@ impl Session {
             return;
         };
         self.entities = snap.entities.len();
+        self.server_tick = snap.tick;
+        self.view.on_server_tick(snap.tick);
         let Some(me) = self.player else { return };
         let remotes = snap.entities.iter().filter(|r| r.id != me).map(|r| {
             let state = RemoteState {
@@ -391,21 +551,33 @@ impl Session {
         while let Some(bytes) = self.conn.recv(Channel::Event) {
             match Message::decode(&bytes) {
                 Ok(Message::ServerHello {
-                    mode, player_id, ..
+                    mode,
+                    player_id,
+                    map_fingerprint,
+                    ..
                 }) => {
                     self.player = Some(player_id);
                     self.mode = Some(mode);
-                    self.send_event(&Message::Ready);
+                    self.view.start(mode, player_id);
+                    if self.map_fp == Some(map_fingerprint) {
+                        self.send_event(&Message::Ready);
+                    } else {
+                        self.begin_map(map_fingerprint);
+                    }
                 }
                 Ok(Message::Event(event)) => self.on_event(&event),
                 _ => {}
             }
         }
+        self.poll_maps();
         while let Some(bytes) = self.conn.recv(Channel::Snapshot) {
             self.on_snapshot(&bytes);
         }
         let due: Vec<Tick> = self.clock.advance(real).collect();
         if let Some(p) = self.prediction.as_mut() {
+            p.set_frozen(!self.view.movement_allowed() || !self.view.local_alive());
+            let (run, jump) = self.view.move_scale();
+            p.set_move_scale(MoveScale { run, jump });
             for &tick in &due {
                 let mut command = input(tick);
                 command.tick = tick;

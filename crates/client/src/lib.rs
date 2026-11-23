@@ -39,6 +39,7 @@
 //!   the class catalogue and budget of `faset-mode-fps`, and the 3D character
 //!   preview ([`CharacterPreview`]) drawn through the renderer's usual
 //!   interfaces. The server revalidates every loadout it receives.
+//! * [`input`], [`egui_input`], [`match_view`], [`scene`] (lot 6.6): the player's keys and mouse as input commands (`GameInput`), the winit to egui adapter (`EguiInput`), the client's copy of a match (`MatchView`: mode mirror, kills, projectiles, the HUD model of each frame) and the other players, pickups and weapon in hand (`MatchScene`).
 //! * [`interpolation`]: shows remote entities a deliberate delay in the
 //!   past with Hermite interpolation between snapshots, extrapolating for at
 //!   most a quarter of a second, and gives the [`ViewTime`] a fire command
@@ -62,19 +63,23 @@ pub mod app;
 pub mod camera;
 pub mod clock;
 pub mod discovery;
+pub mod egui_input;
 pub mod favorites;
 pub mod feel;
 pub mod host_flow;
 pub mod hosting;
 pub mod hud;
+pub mod input;
 pub mod interpolation;
 pub mod join;
 pub mod loadout_flow;
 pub mod map_load;
 pub mod map_sync;
+pub mod match_view;
 pub mod prediction;
 pub mod preview;
 pub mod profile;
+pub mod scene;
 pub mod session;
 pub mod state;
 
@@ -88,6 +93,7 @@ pub use discovery::{
     DiscoveryResponder, ServerBrowser, ServerEntry, ServerInfo, DISCOVERY_PORT, ENTRY_TTL,
     GAME_PORT, REFRESH_INTERVAL,
 };
+pub use egui_input::{EguiInput, RawInput};
 pub use faset_mode_fps::Loadout;
 pub use favorites::{data_dir, Favorites, FavoritesError};
 pub use feel::{cm_per_360, degrees_per_count, CriticalSpring, FeelParams, DEGREES_PER_COUNT};
@@ -95,7 +101,8 @@ pub use host_flow::host_config;
 pub use hosting::{
     host_game, HostConfig, HostError, HostHandle, HostRotation, LanStatus, TickHook,
 };
-pub use hud::FpsHud;
+pub use hud::{FpsHud, HudOptions};
+pub use input::GameInput;
 pub use interpolation::{
     hermite, interpolation_delay, lerp_angle, InterpolationBuffer, InterpolationConfig,
     RemoteInterpolation, RemoteState, RemoteView, SampleMode, ViewTime, BUFFER_SNAPSHOTS,
@@ -104,6 +111,7 @@ pub use interpolation::{
 pub use join::JoinTarget;
 pub use map_load::{load_map, LoadedMap, MapLoadError};
 pub use map_sync::{MapCache, MapEvent, MapSync, MapSyncError};
+pub use match_view::{Blast, LiveProjectile, LocalFrame, MatchView};
 pub use prediction::{
     AuthoritativeState, HistoryEntry, PredictedState, Prediction, PredictionError,
     PredictionHistory, ReconcileOutcome, Tolerance, VisualOffset, COMMANDS_PER_PACKET,
@@ -111,5 +119,6 @@ pub use prediction::{
 };
 pub use preview::CharacterPreview;
 pub use profile::{Appearance, Profile, ProfileError, SavedClass, PROFILE_VERSION};
+pub use scene::{MatchScene, SceneFrame};
 pub use session::{map_config, Session, SessionError};
 pub use state::{AppState, StateError, StateStack, Transition};

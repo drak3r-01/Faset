@@ -31,6 +31,7 @@ use crate::host_flow::host_config;
 use crate::join::JoinTarget;
 use crate::loadout_flow;
 use crate::map_load::{load_map, LoadedMap};
+use crate::map_sync::MapCache;
 use crate::profile::Profile;
 use crate::session::Session;
 use crate::state::{StateError, StateStack, Transition};
@@ -49,6 +50,9 @@ pub struct MapCatalogue {
     maps: BTreeMap<String, Option<PathBuf>>,
     /// The same maps with their gameplay data, for the integrated server.
     gameplay: Catalog,
+    /// The folder the maps were read from, where a joining client looks for
+    /// a map the server announces (lot 6.6).
+    dir: Option<PathBuf>,
 }
 
 impl MapCatalogue {
@@ -69,6 +73,7 @@ impl MapCatalogue {
         Self {
             maps,
             gameplay: Catalog::scan(dir),
+            dir: Some(dir.to_path_buf()),
         }
     }
 
@@ -76,6 +81,24 @@ impl MapCatalogue {
     #[must_use]
     pub fn names(&self) -> Vec<String> {
         self.maps.keys().cloned().collect()
+    }
+
+    /// The maps a session already has, looked up by fingerprint: the
+    /// embedded one, the map folder and `cache_dir` for downloaded maps.
+    #[must_use]
+    pub fn map_cache(&self, cache_dir: Option<PathBuf>) -> MapCache {
+        let mut cache = MapCache::new();
+        cache.insert(
+            faset_server::map_fingerprint(EMBEDDED_MAP.1.as_bytes()),
+            EMBEDDED_MAP.1.as_bytes().to_vec(),
+        );
+        if let Some(dir) = cache_dir {
+            cache = cache.with_cache_dir(dir);
+        }
+        if let Some(dir) = &self.dir {
+            cache = cache.with_folder(dir);
+        }
+        cache
     }
 
     /// The maps with their gameplay data (spawns, objectives, pickups).
@@ -195,6 +218,12 @@ impl App {
         }
         self.profile_path = Some(path);
         self.model.loadout.selection = loadout_flow::selection_of(self.profile.current());
+    }
+
+    /// The maps a new session starts with.
+    fn session_maps(&self) -> MapCache {
+        self.catalogue
+            .map_cache(crate::favorites::data_dir().map(|d| d.join("maps")))
     }
 
     /// The player's profile.
@@ -390,6 +419,9 @@ impl App {
         };
         match Session::connect(addr) {
             Ok(session) => {
+                let session = session
+                    .with_registry(self.registry.clone())
+                    .with_map_cache(self.session_maps());
                 self.close_session();
                 self.session = Some(session);
                 self.connecting_since = Some(Instant::now());
@@ -489,7 +521,10 @@ impl App {
             &self.model.maps,
             seed_now(),
         )?;
-        let session = Session::hosted(config, request.lan).map_err(|e| e.to_string())?;
+        let session = Session::hosted(config, request.lan)
+            .map_err(|e| e.to_string())?
+            .with_registry(self.registry.clone())
+            .with_map_cache(self.session_maps());
         self.map_bounds = bounds_of(&loaded);
         self.map = Some(loaded);
         self.session = Some(session);
@@ -532,6 +567,29 @@ impl App {
                 self.status = Some(e.to_string());
                 self.close_session();
                 self.stack.reset(AppState::MainMenu);
+            }
+        }
+        if let Some(session) = self.session.as_mut() {
+            // A map the server announced (handshake or rotation): show it.
+            if let Some(bytes) = session.take_new_map() {
+                match load_map(&bytes) {
+                    Ok(map) => {
+                        self.map_bounds = bounds_of(&map);
+                        self.map = Some(map);
+                    }
+                    Err(e) => tracing::error!(error = %e, "the server's map cannot be shown"),
+                }
+            }
+            if session.map_progress().is_some() {
+                // A download in progress is not a silent server.
+                self.connecting_since = self.connecting_since.map(|_| Instant::now());
+            }
+            if let Some(failure) = session.take_failure() {
+                tracing::error!(%failure, "session failed");
+                self.status = Some(failure);
+                self.close_session();
+                self.stack.reset(AppState::MainMenu);
+                self.queue_background();
             }
         }
         if let Some(reason) = self

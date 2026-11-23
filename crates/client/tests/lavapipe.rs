@@ -15,6 +15,8 @@ use tracing_subscriber::Layer;
 mod hud_captures;
 #[path = "lavapipe/loadout_preview.rs"]
 mod loadout_preview;
+#[path = "lavapipe/match_scene.rs"]
+mod match_scene;
 
 const REFERENCE: &str = "tests/refs/example_map.png";
 const EXAMPLE: &str = include_str!("../../../assets/maps/example.ron");

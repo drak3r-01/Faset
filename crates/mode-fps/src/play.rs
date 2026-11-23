@@ -136,6 +136,12 @@ pub struct PlayView {
     pub bonus_tenths: [u16; 4],
     /// Index of the class in the catalog (lot 4.11).
     pub class: Option<u8>,
+    /// Index of the weapon in hand in the match's weapon list (lot 6.6).
+    pub weapon: u8,
+    /// Rounds in the magazine of the weapon in hand (lot 6.6).
+    pub ammo: u16,
+    /// Rounds outside the magazine (lot 6.6).
+    pub reserve: u16,
 }
 
 /// The rules over the built-in catalog, parsed once.
@@ -268,8 +274,9 @@ impl<V: Variant> FpsPlay<V> {
     }
 
     /// Layout: player count (2), per player id (2), health (2), armour (2),
-    /// alive (1), team (1, 255 none), class (1, 255 none; lot 4.11), four
-    /// bonus tenths (2 each); pickup
+    /// alive (1), team (1, 255 none), class (1, 255 none; lot 4.11), weapon
+    /// index (1), magazine (2), reserve (2; lot 6.6), four bonus tenths (2
+    /// each); pickup
     /// count (2), per pickup kind (1), available (1), position (12); team
     /// count (1), per team score (4).
     fn encode(&self) -> Vec<u8> {
@@ -289,6 +296,9 @@ impl<V: Variant> FpsPlay<V> {
                     .and_then(|c| u8::try_from(c).ok())
                     .unwrap_or(u8::MAX),
             );
+            out.push(u8::try_from(slot.weapon_index).unwrap_or(u8::MAX));
+            out.extend_from_slice(&to_u16(slot.weapon.ammo as f32).to_le_bytes());
+            out.extend_from_slice(&to_u16(slot.weapon.reserve as f32).to_le_bytes());
             for kind in TIMED {
                 // Rounded up, with a margin for the float error of `until - now`.
                 let tenths =
@@ -334,6 +344,9 @@ impl<V: Variant> FpsPlay<V> {
                 u8::MAX => None,
                 c => Some(c),
             };
+            let weapon = r.u8()?;
+            let ammo = r.u16()?;
+            let reserve = r.u16()?;
             let mut bonus_tenths = [0; 4];
             for t in &mut bonus_tenths {
                 *t = r.u16()?;
@@ -347,6 +360,9 @@ impl<V: Variant> FpsPlay<V> {
                     team,
                     bonus_tenths,
                     class,
+                    weapon,
+                    ammo,
+                    reserve,
                 },
             );
         }
@@ -711,6 +727,10 @@ impl<V: Variant> GameMode for FpsPlay<V> {
 }
 
 impl<V: Variant> GameModeClient for FpsPlay<V> {
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn vitals(&self, player: NetId) -> Option<Vitals> {
         let v = self.view.get(&player)?;
         let max_health = v
@@ -777,5 +797,60 @@ impl<V: Variant> GameModeClient for FpsPlay<V> {
         for line in self.hud_model().text_lines() {
             ui.text(line);
         }
+    }
+}
+
+impl<V: Variant> crate::client_view::FpsClient for FpsPlay<V> {
+    fn set_hud_input(&mut self, input: HudInput) {
+        FpsPlay::set_hud_input(self, input);
+    }
+
+    fn advance_hud(&mut self, dt: f32) {
+        FpsPlay::advance_hud(self, dt);
+    }
+
+    fn hud_model(&self) -> HudModel {
+        FpsPlay::hud_model(self)
+    }
+
+    fn players(&self) -> Vec<(NetId, crate::client_view::ClientPlayer)> {
+        self.view
+            .iter()
+            .map(|(&id, v)| {
+                (
+                    id,
+                    crate::client_view::ClientPlayer {
+                        alive: v.alive,
+                        health: v.health,
+                        armour: v.armour,
+                        team: v.team.map(|t| t.0),
+                        class: v.class,
+                        weapon: Some(usize::from(v.weapon)),
+                        ammo: v.ammo,
+                        reserve: v.reserve,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn pickups(&self) -> Vec<crate::client_view::ClientPickup> {
+        self.pickups
+            .items()
+            .iter()
+            .map(|p| crate::client_view::ClientPickup {
+                kind: p.kind,
+                position: p.position,
+                available: p.available(),
+            })
+            .collect()
+    }
+
+    fn weapons(&self) -> &[crate::weapon::WeaponDef] {
+        self.rules.weapons()
+    }
+
+    fn classes(&self) -> &[crate::class::ClassDef] {
+        self.rules.classes()
     }
 }
