@@ -11,19 +11,22 @@
 //! the main menu.
 
 use std::collections::BTreeMap;
-use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use dedicated::maps::Catalog;
 use faset_core::glam::Vec3;
 use faset_core::Tick;
 use faset_minigame_api::Registry;
 use faset_protocol::InputCommand;
-use faset_server::ServerConfig;
-use faset_ui::{AppState, MenuModel, PlayRequest, UiCommand};
+use faset_ui::{AppState, MenuModel, PlayRequest, ServerListModel, ServerRow, UiCommand};
 
+use crate::discovery::{ServerBrowser, DISCOVERY_PORT};
+use crate::favorites::Favorites;
+use crate::host_flow::host_config;
+use crate::join::JoinTarget;
 use crate::map_load::{load_map, LoadedMap};
-use crate::session::{map_config, Session, SessionError};
+use crate::session::Session;
 use crate::state::{StateError, StateStack, Transition};
 
 /// Map embedded in the executable, so the menus work without an assets
@@ -38,6 +41,8 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone, Default)]
 pub struct MapCatalogue {
     maps: BTreeMap<String, Option<PathBuf>>,
+    /// The same maps with their gameplay data, for the integrated server.
+    gameplay: Catalog,
 }
 
 impl MapCatalogue {
@@ -55,13 +60,22 @@ impl MapCatalogue {
             }
         }
         maps.insert(EMBEDDED_MAP.0.to_owned(), None);
-        Self { maps }
+        Self {
+            maps,
+            gameplay: Catalog::scan(dir),
+        }
     }
 
     /// Map names, sorted.
     #[must_use]
     pub fn names(&self) -> Vec<String> {
         self.maps.keys().cloned().collect()
+    }
+
+    /// The maps with their gameplay data (spawns, objectives, pickups).
+    #[must_use]
+    pub fn gameplay(&self) -> &Catalog {
+        &self.gameplay
     }
 
     /// The file bytes of map `name`.
@@ -94,6 +108,10 @@ pub struct App {
     session: Option<Session>,
     pending: Option<PendingMatch>,
     connecting_since: Option<Instant>,
+    favorites: Favorites,
+    favorites_path: Option<PathBuf>,
+    lan: Option<ServerBrowser>,
+    lan_list: ServerListModel,
     map: Option<LoadedMap>,
     map_bounds: (Vec3, Vec3),
     status: Option<String>,
@@ -130,10 +148,52 @@ impl App {
             session: None,
             pending: None,
             connecting_since: None,
+            favorites: Favorites::default(),
+            favorites_path: None,
+            lan: None,
+            lan_list: ServerListModel::default(),
             map: None,
             map_bounds: (Vec3::splat(-8.0), Vec3::splat(8.0)),
             status: None,
             quit: false,
+        }
+    }
+
+    /// Keeps favourites and history in `path` (`favorites.ron` in the data
+    /// folder, see [`favorites::data_dir`]): loads them now and saves after
+    /// every change. An unreadable file is logged and replaced.
+    pub fn use_favorites_file(&mut self, path: PathBuf) {
+        match Favorites::load(&path) {
+            Ok(f) => self.favorites = f,
+            Err(e) => tracing::warn!(error = %e, "favourites not loaded"),
+        }
+        self.favorites_path = Some(path);
+        self.sync_favorites();
+    }
+
+    /// Replaces the LAN browser (tests inject one aimed at loopback). `None`
+    /// stops browsing; the join screen opens a default one when needed.
+    pub fn set_lan_browser(&mut self, browser: Option<ServerBrowser>) {
+        self.lan = browser;
+    }
+
+    /// The favourites and history.
+    #[must_use]
+    pub fn favorites(&self) -> &Favorites {
+        &self.favorites
+    }
+
+    fn sync_favorites(&mut self) {
+        self.model.favourites.clone_from(&self.favorites.favourites);
+        self.model.history.clone_from(&self.favorites.history);
+    }
+
+    fn save_favorites(&mut self) {
+        self.sync_favorites();
+        if let Some(path) = &self.favorites_path {
+            if let Err(e) = self.favorites.save(path) {
+                tracing::warn!(error = %e, "favourites not saved");
+            }
         }
     }
 
@@ -240,24 +300,11 @@ impl App {
                     .unwrap_or_default();
                 self.pending = Some(PendingMatch { request, frames: 0 });
             }
-            UiCommand::Connect(address) => match resolve(&address) {
-                Some(addr) => match Session::connect(addr) {
-                    Ok(session) => {
-                        self.close_session();
-                        self.session = Some(session);
-                        self.connecting_since = Some(Instant::now());
-                        if let Err(e) = self.stack.push(AppState::Connecting) {
-                            tracing::warn!(error = %e, "cannot show the connection screen");
-                        }
-                        if !self.model.history.contains(&address) {
-                            self.model.history.insert(0, address);
-                            self.model.history.truncate(8);
-                        }
-                    }
-                    Err(e) => self.status = Some(e.to_string()),
-                },
-                None => self.status = Some(format!("invalid address `{address}`")),
-            },
+            UiCommand::Connect(address) => self.connect(&JoinTarget::Address(address)),
+            UiCommand::ToggleFavourite(address) => {
+                self.favorites.toggle(address.trim());
+                self.save_favorites();
+            }
             UiCommand::LeaveMatch => {
                 self.close_session();
                 self.stack.reset(AppState::MainMenu);
@@ -265,6 +312,58 @@ impl App {
             }
             UiCommand::Push(_) | UiCommand::Pop | UiCommand::Replace(_) => {}
         }
+    }
+
+    fn connect(&mut self, target: &JoinTarget) {
+        let Some(addr) = target.resolve() else {
+            self.status = Some(format!("invalid address `{}`", target.label()));
+            return;
+        };
+        match Session::connect(addr) {
+            Ok(session) => {
+                self.close_session();
+                self.session = Some(session);
+                self.connecting_since = Some(Instant::now());
+                if let Err(e) = self.stack.push(AppState::Connecting) {
+                    tracing::warn!(error = %e, "cannot show the connection screen");
+                }
+                self.favorites.record_join(&target.label());
+                self.save_favorites();
+            }
+            Err(e) => self.status = Some(e.to_string()),
+        }
+    }
+
+    /// Browses the LAN while the join screen is on top, and feeds the list.
+    fn update_lan(&mut self, dt: Duration) {
+        if self.stack.top() != AppState::ServerBrowser {
+            self.lan = None;
+            self.lan_list = ServerListModel::default();
+            self.model.lan_servers.clear();
+            return;
+        }
+        if self.lan.is_none() {
+            match ServerBrowser::new(DISCOVERY_PORT) {
+                Ok(b) => self.lan = Some(b),
+                Err(e) => tracing::warn!(error = %e, "LAN browsing unavailable"),
+            }
+        }
+        if let Some(browser) = self.lan.as_mut() {
+            browser.update(dt);
+            self.lan_list.advance(dt);
+            for entry in browser.entries() {
+                self.lan_list.observe(
+                    ServerRow {
+                        name: entry.info.name.clone(),
+                        address: entry.addr.to_string(),
+                        players: (entry.info.players, entry.info.max_players),
+                        map: entry.info.map.clone(),
+                    },
+                    browser.age(entry),
+                );
+            }
+        }
+        self.model.lan_servers = self.lan_list.rows();
     }
 
     /// Reacts to the transitions of the stack: cancelling a connection
@@ -314,19 +413,14 @@ impl App {
             .ok_or("no map selected")?;
         let bytes = self.catalogue.bytes(&name)?;
         let loaded = load_map(&bytes).map_err(|e| e.to_string())?;
-        let (map, _) = map_config(&bytes).map_err(|e: SessionError| e.to_string())?;
-        let mode = self
-            .registry
-            .find(&request.mode)
-            .map_or(0, |entry| entry.id.0);
-        let mut server = ServerConfig {
-            mode,
-            map,
-            seed: seed_now(),
-            ..ServerConfig::default()
-        };
-        server.limits.max_players = usize::from(request.max_players.max(1));
-        let session = Session::solo(server, &name, request.lan).map_err(|e| e.to_string())?;
+        let config = host_config(
+            request,
+            &self.registry,
+            &self.catalogue.gameplay,
+            &self.model.maps,
+            seed_now(),
+        )?;
+        let session = Session::hosted(config, request.lan).map_err(|e| e.to_string())?;
         self.map_bounds = bounds_of(&loaded);
         self.map = Some(loaded);
         self.session = Some(session);
@@ -338,6 +432,7 @@ impl App {
     /// (asking `input` for the local player's commands) and moves from
     /// `Loading` or `Connecting` to `InGame` when the match is ready.
     pub fn update(&mut self, dt: Duration, input: &mut dyn FnMut(Tick) -> InputCommand) {
+        self.update_lan(dt);
         if self.stack.top() == AppState::Boot {
             self.queue_background();
             if let Err(e) = self.stack.replace(AppState::MainMenu) {
@@ -398,16 +493,6 @@ impl App {
     pub fn pause(&mut self) -> Result<(), StateError> {
         self.stack.push(AppState::Pause)
     }
-}
-
-fn resolve(address: &str) -> Option<SocketAddr> {
-    address.to_socket_addrs().ok()?.next().or_else(|| {
-        // A bare host uses the default game port.
-        (address, crate::discovery::GAME_PORT)
-            .to_socket_addrs()
-            .ok()?
-            .next()
-    })
 }
 
 fn seed_now() -> u64 {

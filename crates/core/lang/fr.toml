@@ -192,3 +192,5 @@
 "settings.weapon_position" = "Position de l'arme"
 "settings.weather_density" = "Densité météo"
 "settings.window_mode" = "Mode d'affichage"
+"join.favourite" = "Favori"
+"join.unfavourite" = "Retirer des favoris"

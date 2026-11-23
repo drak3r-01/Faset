@@ -192,3 +192,5 @@
 "settings.weapon_position" = "Weapon position"
 "settings.weather_density" = "Weather density"
 "settings.window_mode" = "Window mode"
+"join.favourite" = "Favourite"
+"join.unfavourite" = "Unfavourite"
