@@ -190,6 +190,13 @@ impl Catalog {
         Self::from_ron(weapons, classes).expect("embedded data is valid")
     }
 
+    /// [`builtin`](Self::builtin), parsed once.
+    #[must_use]
+    pub fn builtin_ref() -> &'static Self {
+        static CATALOG: std::sync::OnceLock<Catalog> = std::sync::OnceLock::new();
+        CATALOG.get_or_init(Self::builtin)
+    }
+
     /// Loads `<dir>/weapons/*.ron` and `<dir>/classes/*.ron`, in file-name order.
     ///
     /// # Errors

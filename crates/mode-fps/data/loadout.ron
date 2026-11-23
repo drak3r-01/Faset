@@ -1,0 +1,29 @@
+// Loadout budget (lot 6.3). A loadout is a class plus a primary, an optional
+// secondary, an optional melee weapon and an optional gadget; its cost is the
+// sum of the weapon costs and must not exceed `budget`.
+// Decision: budget 10. Every base class (main weapon + sidearm, at most 7
+// points) fits, but the heaviest picks do not: precision rifle (6) + sidearm
+// (1) + baguette (1) + toaster (3) = 11.
+(
+    budget: 10,
+    costs: {
+        "assault_rifle": 4,
+        "smg": 4,
+        "pump_shotgun": 5,
+        "precision_rifle": 6,
+        "boomer_rocket_launcher": 6,
+        "rubber_chicken_launcher": 5,
+        "sidearm": 1,
+        "baguette": 1,
+        "banana_peel": 2,
+        "confetti_cannon": 2,
+        "toaster": 3,
+        "bubble_gun": 2,
+    },
+    // Any class may take any primary; the other slots also need the weapon in
+    // the class's `secondaries` list.
+    primaries: ["assault_rifle", "smg", "pump_shotgun", "precision_rifle", "boomer_rocket_launcher", "rubber_chicken_launcher"],
+    secondaries: ["sidearm"],
+    melee: ["baguette"],
+    gadgets: ["banana_peel", "confetti_cannon", "toaster", "bubble_gun"],
+)

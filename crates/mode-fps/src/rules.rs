@@ -21,6 +21,7 @@ use crate::class::{Catalog, ClassDef};
 use crate::damage::{
     Combatant, DamageContext, DamageEvent, DamageOutcome, DamageType, HitZone, DEFAULT_HEALTH,
 };
+use crate::loadout::{LoadoutError, LoadoutMsg, LoadoutRules};
 use crate::melee::{melee_attack, rewound_hitboxes};
 use crate::message::{FireMsg, ServerMsg, FLAG_FRESH_PRESS, FLAG_SIGHTED};
 use crate::pickup::{ActiveBonuses, PickupKind, ARMOUR_AMOUNT, HEAL_AMOUNT, MAX_ARMOUR};
@@ -212,6 +213,20 @@ pub enum FireError {
     Rejected(ShotReject),
 }
 
+/// What a player picked for its next spawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Choice {
+    class: usize,
+    /// Weapon indices; `None` primary means the class's main weapon.
+    primary: Option<usize>,
+    secondary: Option<usize>,
+    melee: Option<usize>,
+    gadget: Option<usize>,
+    /// A full loadout (lot 6.3): an empty secondary means none, not the
+    /// class default.
+    full: bool,
+}
+
 /// The FPS core rules: players, weapons, damage, respawns.
 #[derive(Debug, Clone)]
 pub struct FpsRules {
@@ -231,7 +246,9 @@ pub struct FpsRules {
     default_class: usize,
     /// Class and secondary weapon index chosen by each player, applied at
     /// its next spawn.
-    choices: BTreeMap<NetId, (usize, Option<usize>)>,
+    choices: BTreeMap<NetId, Choice>,
+    /// Budget, costs and slot pools (lot 6.3).
+    loadout_rules: LoadoutRules,
     projectiles: ProjectileSystem,
     /// Movement multipliers last asked of the host.
     scales: BTreeMap<NetId, (f32, f32)>,
@@ -270,6 +287,7 @@ impl FpsRules {
             classes: Vec::new(),
             default_class: 0,
             choices: BTreeMap::new(),
+            loadout_rules: LoadoutRules::builtin().clone(),
             projectiles: ProjectileSystem::new(),
             scales: BTreeMap::new(),
         }
@@ -326,12 +344,69 @@ impl FpsRules {
                 None => return false,
             },
         };
-        self.choices.insert(player, (class, secondary));
+        let choice = Choice {
+            class,
+            primary: None,
+            secondary,
+            melee: None,
+            gadget: None,
+            full: false,
+        };
+        self.apply_choice(player, choice, now_if_idle);
+        true
+    }
+
+    fn apply_choice(&mut self, player: NetId, choice: Choice, now_if_idle: Option<f64>) {
+        self.choices.insert(player, choice);
         if let (Some(now), true) = (now_if_idle, self.slots.contains_key(&player)) {
             let slot = self.fresh_slot(player, 0, now);
             self.slots.insert(player, slot);
         }
-        true
+    }
+
+    /// Records the full loadout of a player (lot 6.3), applied like
+    /// [`choose_class`](Self::choose_class). A loadout that breaks the rules
+    /// is replaced by the default class's.
+    ///
+    /// # Errors
+    /// Why the loadout was refused; the player then has the default class.
+    pub fn choose_loadout(
+        &mut self,
+        player: NetId,
+        msg: Option<&LoadoutMsg>,
+        now_if_idle: Option<f64>,
+    ) -> Result<(), LoadoutError> {
+        let verdict = msg.ok_or(LoadoutError::Malformed).and_then(|m| {
+            let ids: Vec<String> = self.weapons.iter().map(|w| w.id.clone()).collect();
+            let loadout = m
+                .to_loadout(&self.classes, &ids)
+                .ok_or(LoadoutError::Malformed)?;
+            self.loadout_rules.validate(&self.classes, &loadout)?;
+            Ok((m, loadout))
+        });
+        let choice = match &verdict {
+            Ok((m, _)) => {
+                let weapon = |i: u8| (i != u8::MAX).then_some(usize::from(i));
+                Choice {
+                    class: usize::from(m.class),
+                    primary: weapon(m.primary),
+                    secondary: weapon(m.secondary),
+                    melee: weapon(m.melee),
+                    gadget: weapon(m.gadget),
+                    full: true,
+                }
+            }
+            Err(_) => Choice {
+                class: self.default_class,
+                primary: None,
+                secondary: None,
+                melee: None,
+                gadget: None,
+                full: false,
+            },
+        };
+        self.apply_choice(player, choice, now_if_idle);
+        verdict.map(|_| ())
     }
 
     /// Weapons, health and class a player spawns with.
@@ -339,20 +414,34 @@ impl FpsRules {
         if self.classes.is_empty() {
             return (vec![weapon_index], DEFAULT_HEALTH, None);
         }
-        let (c, secondary) = self
-            .choices
-            .get(&player)
-            .copied()
-            .unwrap_or((self.default_class, None));
-        let class = &self.classes[c];
-        let main = self.weapon_index(&class.main_weapon).unwrap_or(0);
+        let choice = self.choices.get(&player).copied().unwrap_or(Choice {
+            class: self.default_class,
+            primary: None,
+            secondary: None,
+            melee: None,
+            gadget: None,
+            full: false,
+        });
+        let class = &self.classes[choice.class];
+        let main = choice
+            .primary
+            .or_else(|| self.weapon_index(&class.main_weapon))
+            .unwrap_or(0);
         let mut loadout = vec![main];
-        if let Some(s) =
-            secondary.or_else(|| class.secondaries.first().and_then(|s| self.weapon_index(s)))
-        {
-            loadout.push(s);
-        }
-        (loadout, class.health, Some(c))
+        let secondary = if choice.full {
+            choice.secondary
+        } else {
+            choice
+                .secondary
+                .or_else(|| class.secondaries.first().and_then(|s| self.weapon_index(s)))
+        };
+        loadout.extend(
+            secondary
+                .into_iter()
+                .chain(choice.melee)
+                .chain(choice.gadget),
+        );
+        (loadout, class.health, Some(choice.class))
     }
 
     /// Run speed factor of a player's class (1 without classes).

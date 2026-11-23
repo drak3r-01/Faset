@@ -122,6 +122,9 @@ pub enum ServerMsg {
     PickupTaken { index: u16, player: NetId },
     /// Pickup `index` is available again.
     PickupRespawned { index: u16 },
+    /// The server refused the loadout `player` sent and gave it the default
+    /// class instead (lot 6.3). `reason` is a [`LoadoutError::code`](crate::LoadoutError::code).
+    LoadoutReplaced { player: NetId, reason: u8 },
 }
 
 impl ServerMsg {
@@ -172,6 +175,11 @@ impl ServerMsg {
             Self::PickupRespawned { index } => {
                 out.push(7);
                 out.extend_from_slice(&index.to_le_bytes());
+            }
+            Self::LoadoutReplaced { player, reason } => {
+                out.push(8);
+                out.extend_from_slice(&player.0.to_le_bytes());
+                out.push(reason);
             }
             Self::Respawn { player, position } => {
                 out.push(3);
@@ -230,6 +238,10 @@ impl ServerMsg {
             }),
             (7, 2) => Some(Self::PickupRespawned {
                 index: u16::from_le_bytes(b.get(0..2)?.try_into().ok()?),
+            }),
+            (8, 3) => Some(Self::LoadoutReplaced {
+                player: id(0)?,
+                reason: b[2],
             }),
             (5, 12) => {
                 let centre = Vec3::new(float(0)?, float(4)?, float(8)?);
@@ -298,6 +310,10 @@ mod tests {
                 player: NetId(8),
             },
             ServerMsg::PickupRespawned { index: 7 },
+            ServerMsg::LoadoutReplaced {
+                player: NetId(9),
+                reason: 5,
+            },
         ] {
             assert_eq!(ServerMsg::decode(&m.encode()), Some(m));
         }

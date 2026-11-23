@@ -24,6 +24,7 @@
 mod browser;
 mod error;
 mod i18n;
+mod loadout;
 mod overlay;
 mod paint;
 mod rebinding;
@@ -42,6 +43,10 @@ use serde::{Deserialize, Serialize};
 pub use browser::{BrowserEntry, ServerListModel, ENTRY_TTL};
 pub use error::UiError;
 pub use i18n::{fill, language, set_language, text, try_text};
+pub use loadout::{
+    display_name, loadout_screen, ClassRow, LoadoutChoices, LoadoutModel, LoadoutSelection,
+    PaletteColour, PreviewRequest, WeaponRow, PALETTE,
+};
 pub use overlay::{NetSample, Overlay, SimStats, UiStats};
 pub use paint::EguiPass;
 pub use rebinding::{RebindResult, RebindView};

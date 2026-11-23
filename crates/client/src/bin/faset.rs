@@ -65,6 +65,8 @@ struct Client {
     events: Vec<Event>,
     pointer_px: (f32, f32),
     instances: Vec<Instance>,
+    /// Meshes of the loadout screen's character, uploaded on first use.
+    preview: Option<faset_client::CharacterPreview>,
     prev_view_proj: Option<Mat4>,
     // Field order: UI and renderer are dropped before the window.
     ui: Option<Ui>,
@@ -394,6 +396,22 @@ impl Client {
             draw_sky: true,
             ..RenderWorld::default()
         };
+        if state == AppState::Loadout {
+            if self.preview.is_none() {
+                match faset_client::CharacterPreview::upload(renderer) {
+                    Ok(p) => self.preview = Some(p),
+                    Err(e) => tracing::error!("cannot upload the preview: {e}"),
+                }
+            }
+            if let Some(preview) = &self.preview {
+                let request = self.app.model().loadout.preview_request();
+                let yaw = elapsed.as_secs_f32() * std::f32::consts::TAU
+                    / faset_client::preview::TURN_SECONDS;
+                let jitter = world.camera.jitter_px;
+                world = preview.render_world(&request, yaw, aspect);
+                world.camera.jitter_px = jitter;
+            }
+        }
         if let Some(live) = &self.live {
             let d = live.tuning.weather_density;
             let w = &mut world.weather;
@@ -472,6 +490,7 @@ fn main() -> Result<()> {
     let mut app = App::new(registry(), MapCatalogue::scan(&maps_dir));
     if let Some(dir) = faset_client::data_dir() {
         app.use_favorites_file(dir.join(faset_client::favorites::FILE_NAME));
+        app.use_profile_file(dir.join(faset_client::profile::FILE_NAME));
     }
     let mut client = Client {
         app,
@@ -489,6 +508,7 @@ fn main() -> Result<()> {
         events: Vec::new(),
         pointer_px: (0.0, 0.0),
         instances: Vec::new(),
+        preview: None,
         prev_view_proj: None,
         ui: None,
         renderer: None,
