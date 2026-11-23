@@ -20,7 +20,7 @@ use faset_client::{App, MapCatalogue};
 use faset_core::settings::{self, ConfirmState, ResolutionConfirm, Settings};
 use faset_core::Tick;
 use faset_minigame_api::Registry;
-use faset_mode_fps::FpsMode;
+use faset_mode_fps::{register_modes, FpsMode};
 use faset_mode_race::RaceMode;
 use faset_protocol::InputCommand;
 use faset_render::glam::{Mat4, Vec3};
@@ -71,6 +71,8 @@ struct Client {
 
 fn registry() -> Registry {
     let mut registry = Registry::new();
+    // The playable modes first (they take bots), then the core test mode.
+    register_modes(&mut registry).expect("fps modes register");
     registry.register::<FpsMode>().expect("fps mode registers");
     registry
         .register::<RaceMode>()
@@ -451,8 +453,12 @@ fn main() -> Result<()> {
 
     let event_loop = EventLoop::new().context("cannot create the event loop")?;
     event_loop.set_control_flow(ControlFlow::Poll);
+    let mut app = App::new(registry(), MapCatalogue::scan(&maps_dir));
+    if let Some(dir) = faset_client::data_dir() {
+        app.use_favorites_file(dir.join(faset_client::favorites::FILE_NAME));
+    }
     let mut client = Client {
-        app: App::new(registry(), MapCatalogue::scan(&maps_dir)),
+        app,
         vsync: settings.display.vsync && !args.iter().any(|a| a == "--no-vsync"),
         applied: settings.clone(),
         settings,

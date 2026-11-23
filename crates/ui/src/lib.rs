@@ -21,6 +21,7 @@
 //! ui.draw(&mut my_screen);
 //! ```
 
+mod browser;
 mod error;
 mod i18n;
 mod overlay;
@@ -37,6 +38,7 @@ use egui::{Event, RawInput, ViewportId};
 use faset_render::Renderer;
 use serde::{Deserialize, Serialize};
 
+pub use browser::{BrowserEntry, ServerListModel, ENTRY_TTL};
 pub use error::UiError;
 pub use i18n::text;
 pub use overlay::{NetSample, Overlay, SimStats, UiStats};
