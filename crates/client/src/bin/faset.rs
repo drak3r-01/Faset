@@ -40,6 +40,8 @@ use winit::window::{Window, WindowId};
 
 #[path = "faset_settings/apply.rs"]
 mod apply;
+#[path = "faset_settings/audio.rs"]
+mod audio;
 
 /// Seconds for one turn of the menu camera.
 const MENU_TURN_SECONDS: f32 = 120.0;
@@ -54,6 +56,7 @@ struct Client {
     applied: Settings,
     settings_path: Option<PathBuf>,
     settings_tab: usize,
+    rebind: faset_ui::RebindView,
     confirm: Option<ResolutionConfirm>,
     live: Option<apply::Live>,
     limit: Option<Duration>,
@@ -134,6 +137,10 @@ impl Client {
         let mut live = apply::Live::new(&renderer, &self.settings);
         let applied = live.apply_all(&mut renderer, &window, &self.settings);
         tracing::info!("applied {} settings at start-up", applied.len());
+        faset_ui::set_language(self.settings.game.language);
+        let mut ui = ui;
+        ui.set_scale(self.settings.accessibility.ui_scale);
+        ui.overlay().set_visible(self.settings.network.net_graph);
         self.live = Some(live);
         self.ui = Some(ui);
         self.renderer = Some(renderer);
@@ -312,11 +319,14 @@ impl Client {
                 .unwrap_or_default();
             let mut screen = SettingsScreen::new(&mut self.settings, &available);
             screen.tab = self.settings_tab;
+            screen.rebind = std::mem::take(&mut self.rebind);
             screen.confirm = self.confirm.map(|c| c.poll(now));
             ui.draw(&mut screen);
             self.settings_tab = screen.tab;
+            self.rebind = std::mem::take(&mut screen.rebind);
             for event in screen.events {
                 match event {
+                    SettingsEvent::BindingsChanged | SettingsEvent::PseudonymChanged => {}
                     SettingsEvent::Back => commands.push(faset_ui::UiCommand::Pop),
                     SettingsEvent::KeepResolution => self.confirm = None,
                     SettingsEvent::RevertResolution => {
@@ -350,7 +360,13 @@ impl Client {
         if let (Some(live), Some(window)) = (&mut self.live, &self.window) {
             if self.settings != self.applied {
                 let old = std::mem::replace(&mut self.applied, self.settings.clone());
-                live.apply_changes(renderer, window, &old, &self.settings);
+                let changed = live.apply_changes(renderer, window, &old, &self.settings);
+                if changed.contains(&"ui_scale") {
+                    ui.set_scale(self.settings.accessibility.ui_scale);
+                }
+                if changed.contains(&"net_graph") {
+                    ui.overlay().set_visible(self.settings.network.net_graph);
+                }
             }
         }
         if commands.contains(&faset_ui::UiCommand::Pop) && state == AppState::Settings {
@@ -458,6 +474,7 @@ fn main() -> Result<()> {
         settings,
         settings_path,
         settings_tab: 0,
+        rebind: faset_ui::RebindView::default(),
         confirm: None,
         live: None,
         limit: (seconds > 0).then(|| Duration::from_secs(seconds)),

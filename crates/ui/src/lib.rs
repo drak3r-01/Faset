@@ -25,6 +25,7 @@ mod error;
 mod i18n;
 mod overlay;
 mod paint;
+mod rebinding;
 mod screens;
 mod settings_menu;
 mod theme;
@@ -38,15 +39,16 @@ use faset_render::Renderer;
 use serde::{Deserialize, Serialize};
 
 pub use error::UiError;
-pub use i18n::text;
+pub use i18n::{fill, language, set_language, text, try_text};
 pub use overlay::{NetSample, Overlay, SimStats, UiStats};
 pub use paint::EguiPass;
+pub use rebinding::{RebindResult, RebindView};
 pub use screens::{
     show_state, AppState, MenuModel, ModeChoice, PlayRequest, ServerRow, StateScreen, UiCommand,
 };
 pub use settings_menu::{
-    build_settings_menu, label as settings_label, option_label, Menu, MenuCategory, MenuEntry,
-    SettingsEvent, SettingsScreen,
+    build_settings_menu, label as settings_label, option_label, option_text, Menu, MenuCategory,
+    MenuEntry, SettingsEvent, SettingsScreen,
 };
 pub use theme::Theme;
 
@@ -234,6 +236,12 @@ impl Ui {
             pixels_per_point: output.pixels_per_point,
         });
         self.cpu_ms = started.elapsed().as_secs_f32() * 1000.0;
+    }
+
+    /// Sets the interface scale (physical pixels per point is this times
+    /// the platform's scale factor); takes effect on the next frame.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.config.scale = scale.clamp(0.25, 4.0);
     }
 
     /// The debug overlay (record network samples and simulation statistics

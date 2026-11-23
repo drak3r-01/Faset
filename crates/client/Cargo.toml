@@ -20,6 +20,8 @@ faset-mapfmt.workspace = true
 faset-render.workspace = true
 faset-upscale.workspace = true
 faset-ui.workspace = true
+faset-audio.workspace = true
+kira = { version = "0.10", default-features = false, features = [] }
 faset-minigame-api.workspace = true
 faset-mode-fps.workspace = true
 faset-mode-race.workspace = true

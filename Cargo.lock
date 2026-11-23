@@ -919,6 +919,7 @@ name = "faset-client"
 version = "0.0.1-rc.1"
 dependencies = [
  "anyhow",
+ "faset-audio",
  "faset-core",
  "faset-mapfmt",
  "faset-minigame-api",
@@ -933,6 +934,7 @@ dependencies = [
  "faset-upscale",
  "if-addrs",
  "image",
+ "kira",
  "proptest",
  "serde",
  "thiserror 2.0.21",
