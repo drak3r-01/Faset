@@ -82,6 +82,7 @@ pub mod profile;
 pub mod scene;
 pub mod session;
 pub mod state;
+pub mod weapon_models;
 
 pub use app::{App, MapCatalogue, CONNECT_TIMEOUT};
 pub use camera::{CameraPose, FirstPersonCamera, Look};

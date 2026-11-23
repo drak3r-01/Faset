@@ -2,9 +2,10 @@
 //! pickups, the projectiles and blasts, and the weapon in the local
 //! player's hands.
 //!
-//! Everything is built from unit boxes through [`CharacterPreview`]'s
-//! cubes, the same way the loadout screen draws its character, so no new
-//! renderer interface is needed. The weapon in hand is a normal instance
+//! The other players are built from unit boxes through [`CharacterPreview`]'s
+//! cubes, the same way the loadout screen draws its character, carrying the
+//! detailed weapon models of [`crate::weapon_models`]; no new renderer
+//! interface is needed. The weapon in hand is a normal instance
 //! placed in front of the camera and animated by the springs of
 //! `faset-assets` (sway, step, recoil); the renderer has no separate
 //! first-person pass yet, so the weapon can sink into a wall the player
@@ -21,6 +22,7 @@ use faset_ui::LoadoutSelection;
 use crate::camera::Look;
 use crate::preview::{weapon_size, CharacterPreview, METAL, SKIN};
 use crate::session::Session;
+use crate::weapon_models::view_grip;
 
 /// Height of the capsule centre above the feet, metres.
 const CENTRE_HEIGHT: f32 = 0.9;
@@ -34,7 +36,7 @@ const AZURE: usize = 5;
 const VIOLET: usize = 6;
 const BONE: usize = 7;
 /// Scale of the weapon in the first-person view.
-const VIEW_SCALE: f32 = 0.6;
+const VIEW_SCALE: f32 = 0.55;
 
 /// What the scene needs of the local player each frame.
 #[derive(Debug, Clone, Copy)]
@@ -209,7 +211,6 @@ impl MatchScene {
             .weapon
             .and_then(|w| view.weapon_id(w))
             .unwrap_or_default();
-        let size = weapon_size(&id) * VIEW_SCALE;
         let x = match frame.weapon_position {
             WeaponPosition::Right => 0.2,
             WeaponPosition::Left => -0.2,
@@ -217,6 +218,32 @@ impl MatchScene {
         };
         let camera = Mat4::from_rotation_translation(frame.orientation, frame.eye);
         let held = camera * offset.to_mat4();
+        if let Some(model) = self.cubes.models().get(&id) {
+            let grip = view_grip(x, model.length);
+            let world =
+                held * Mat4::from_translation(grip) * Mat4::from_scale(Vec3::splat(VIEW_SCALE));
+            let mut out = vec![Instance::new(model.mesh, 0, world)];
+            // Right hand on the grip, left hand on the fore-end, sleeves back
+            // towards the body.
+            let reach = -0.3 * model.length * VIEW_SCALE - 0.06;
+            for (hand, sleeve_dx) in [
+                (Vec3::new(0.0, -0.025, 0.03), 0.04),
+                (Vec3::new(-0.02, 0.0, reach), -0.06),
+            ] {
+                out.push(
+                    self.cubes
+                        .part(SKIN, grip + hand, Vec3::new(0.065, 0.07, 0.1), held),
+                );
+                out.push(self.cubes.part(
+                    SLATE,
+                    grip + hand + Vec3::new(sleeve_dx, -0.04, 0.15),
+                    Vec3::new(0.07, 0.07, 0.2),
+                    held,
+                ));
+            }
+            return out;
+        }
+        let size = weapon_size(&id) * VIEW_SCALE;
         let centre = Vec3::new(x, -0.19, -0.28 - size.z * 0.5);
         vec![
             self.cubes.part(METAL, centre, size, held),

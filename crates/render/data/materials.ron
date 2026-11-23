@@ -2,7 +2,7 @@
 //
 // Colours are linear RGB (values above 1 glow once lighting and bloom
 // exist). `scale` is metres per pattern cell, `speed` animates water, lava,
-// emissive and hologram (cycles per second). Ids 0..=13 show one pattern
+// emissive and hologram (cycles per second). Ids 0..=27 show one pattern
 // each, in pattern order; content lots add ids after them.
 [
     (id: 0, pattern: Flat, color_a: (1.0, 1.0, 1.0), color_b: (1.0, 1.0, 1.0), scale: 1.0),
@@ -19,4 +19,43 @@
     (id: 11, pattern: Lava, color_a: (0.15, 0.03, 0.01), color_b: (4.0, 1.2, 0.2), scale: 0.8, speed: 0.1),
     (id: 12, pattern: Emissive, color_a: (0.2, 2.5, 3.0), color_b: (0.2, 2.5, 3.0), scale: 1.0, speed: 0.5),
     (id: 13, pattern: Hologram, color_a: (0.05, 0.6, 0.9), color_b: (0.4, 1.5, 2.0), scale: 1.0, speed: 0.25),
+    // Pixel art (ids 14..=27): 16 texels per cell, nearest filtering. Maps tint
+    // them through the vertex colour.
+    (id: 14, pattern: PixelBrick, color_a: (0.55, 0.19, 0.12), color_b: (0.62, 0.58, 0.50), scale: 0.5),
+    (id: 15, pattern: PixelWood, color_a: (0.50, 0.30, 0.13), color_b: (0.16, 0.09, 0.04), scale: 1.0),
+    (id: 16, pattern: PixelGrass, color_a: (0.16, 0.42, 0.10), color_b: (0.40, 0.68, 0.16), scale: 1.0),
+    (id: 17, pattern: PixelSand, color_a: (0.78, 0.62, 0.30), color_b: (0.56, 0.42, 0.20), scale: 1.0),
+    (id: 18, pattern: PixelStone, color_a: (0.36, 0.35, 0.34), color_b: (0.14, 0.14, 0.15), scale: 1.0),
+    (id: 19, pattern: PixelConcrete, color_a: (0.52, 0.52, 0.50), color_b: (0.26, 0.26, 0.26), scale: 2.0),
+    (id: 20, pattern: PixelMetal, color_a: (0.34, 0.40, 0.48), color_b: (0.70, 0.74, 0.80), scale: 1.0),
+    (id: 21, pattern: PixelWater, color_a: (0.03, 0.30, 0.55), color_b: (0.40, 0.85, 0.95), scale: 1.0, speed: 0.15),
+    (id: 22, pattern: PixelTile, color_a: (0.80, 0.78, 0.70), color_b: (0.30, 0.50, 0.65), scale: 1.0),
+    (id: 23, pattern: PixelDirt, color_a: (0.32, 0.20, 0.10), color_b: (0.55, 0.40, 0.25), scale: 1.0),
+    (id: 24, pattern: PixelSnow, color_a: (0.88, 0.92, 1.00), color_b: (0.55, 0.66, 0.85), scale: 1.0),
+    (id: 25, pattern: PixelCrate, color_a: (0.52, 0.31, 0.12), color_b: (0.32, 0.18, 0.07), scale: 1.0),
+    (id: 26, pattern: PixelHazard, color_a: (0.95, 0.70, 0.04), color_b: (0.05, 0.05, 0.05), scale: 2.0),
+    (id: 27, pattern: PixelLeaves, color_a: (0.10, 0.40, 0.10), color_b: (0.38, 0.70, 0.14), scale: 1.0),
+    // Variants (ids 28..=49): the same patterns in other colours.
+    (id: 28, pattern: PixelBrick, color_a: (0.74, 0.58, 0.30), color_b: (0.55, 0.50, 0.40), scale: 0.5), // sand-coloured brick
+    (id: 29, pattern: PixelWood, color_a: (0.74, 0.54, 0.30), color_b: (0.30, 0.18, 0.08), scale: 1.0), // pale pine boards
+    (id: 30, pattern: PixelWood, color_a: (0.30, 0.17, 0.09), color_b: (0.08, 0.04, 0.02), scale: 1.0), // dark boards
+    (id: 31, pattern: PixelStone, color_a: (0.72, 0.56, 0.34), color_b: (0.34, 0.25, 0.14), scale: 1.0), // sandstone
+    (id: 32, pattern: PixelStone, color_a: (0.28, 0.38, 0.26), color_b: (0.08, 0.13, 0.08), scale: 1.0), // mossy stone
+    (id: 33, pattern: PixelConcrete, color_a: (0.82, 0.82, 0.78), color_b: (0.50, 0.50, 0.50), scale: 2.0), // pale concrete
+    (id: 34, pattern: PixelMetal, color_a: (0.72, 0.30, 0.10), color_b: (0.95, 0.55, 0.20), scale: 1.0), // orange painted metal
+    (id: 35, pattern: PixelMetal, color_a: (0.12, 0.30, 0.68), color_b: (0.45, 0.65, 0.95), scale: 1.0), // blue painted metal
+    (id: 36, pattern: PixelMetal, color_a: (0.65, 0.12, 0.10), color_b: (0.95, 0.42, 0.36), scale: 1.0), // red painted metal
+    (id: 37, pattern: PixelMetal, color_a: (0.14, 0.45, 0.22), color_b: (0.45, 0.80, 0.50), scale: 1.0), // green painted metal
+    (id: 38, pattern: PixelGrass, color_a: (0.55, 0.50, 0.18), color_b: (0.80, 0.72, 0.28), scale: 1.0), // dry savanna grass
+    (id: 39, pattern: PixelWater, color_a: (0.04, 0.55, 0.66), color_b: (0.80, 1.00, 1.00), scale: 1.0, speed: 0.15), // lagoon water
+    (id: 40, pattern: PixelSand, color_a: (0.92, 0.84, 0.60), color_b: (0.72, 0.62, 0.40), scale: 1.0), // pale beach sand
+    (id: 41, pattern: PixelStone, color_a: (0.17, 0.16, 0.20), color_b: (0.07, 0.07, 0.09), scale: 1.0), // dark basalt
+    (id: 42, pattern: PixelTile, color_a: (0.10, 0.45, 0.50), color_b: (0.78, 0.84, 0.80), scale: 1.0), // teal tiles
+    (id: 43, pattern: PixelConcrete, color_a: (0.16, 0.16, 0.18), color_b: (0.07, 0.07, 0.08), scale: 2.0), // asphalt
+    (id: 44, pattern: PixelLeaves, color_a: (0.14, 0.52, 0.12), color_b: (0.55, 0.85, 0.22), scale: 1.0), // bright palm fronds
+    (id: 45, pattern: PixelSnow, color_a: (0.55, 0.80, 0.95), color_b: (0.88, 0.96, 1.00), scale: 1.0), // ice
+    (id: 46, pattern: PixelWater, color_a: (0.02, 0.12, 0.34), color_b: (0.22, 0.52, 0.85), scale: 1.0, speed: 0.1), // deep water
+    (id: 47, pattern: PixelBrick, color_a: (0.30, 0.30, 0.36), color_b: (0.12, 0.12, 0.16), scale: 0.5), // slate brick
+    (id: 48, pattern: PixelWood, color_a: (0.90, 0.88, 0.80), color_b: (0.55, 0.52, 0.45), scale: 1.0), // whitewashed boards
+    (id: 49, pattern: PixelDirt, color_a: (0.45, 0.22, 0.12), color_b: (0.70, 0.38, 0.20), scale: 1.0), // red clay
 ]

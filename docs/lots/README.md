@@ -10,6 +10,8 @@ Internal lot outside the plan: 4.11, the phase-4 integration through the real se
 
 Internal lot outside the plan: 6.6, the playable client (controls, HUD, scene, map transfer, settings read; [6.6-playable-client.md](6.6-playable-client.md)).
 
+Internal lot outside the plan: 6.7, the art direction (pixel materials, weapon models, light; [6.7-art-direction.md](6.7-art-direction.md)).
+
 Items the plan leaves unspecified are marked as decisions inside each file: record the chosen value in your report.
 
 Synthèse de tous les lots (numéro, titre, résumé, modèle, statut) : [OVERVIEW.md](OVERVIEW.md)

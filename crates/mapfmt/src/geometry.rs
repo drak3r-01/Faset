@@ -60,23 +60,59 @@ pub struct MeshChunk {
     pub indices: Vec<u32>,
 }
 
+/// Material names the map format knows, with the renderer material id they
+/// paint (ids of `render/data/materials.ron`) and a base colour that tints
+/// the pattern (white leaves it as is).
+pub const MATERIAL_NAMES: [(&str, u8); 38] = [
+    ("brick", 14),
+    ("wood", 15),
+    ("grass", 16),
+    ("sand", 17),
+    ("stone", 18),
+    ("concrete", 19),
+    ("metal", 20),
+    ("water", 21),
+    ("tiles", 22),
+    ("dirt", 23),
+    ("snow", 24),
+    ("crate", 25),
+    ("hazard", 26),
+    ("leaves", 27),
+    ("brick_sand", 28),
+    ("wood_light", 29),
+    ("wood_dark", 30),
+    ("sandstone", 31),
+    ("mossy_stone", 32),
+    ("concrete_white", 33),
+    ("metal_orange", 34),
+    ("container_blue", 35),
+    ("container_red", 36),
+    ("metal_green", 37),
+    ("savanna", 38),
+    ("lagoon", 39),
+    ("sand_white", 40),
+    ("basalt", 41),
+    ("tiles_teal", 42),
+    ("asphalt", 43),
+    ("palm_leaves", 44),
+    ("ice", 45),
+    ("deep_water", 46),
+    ("brick_slate", 47),
+    ("wood_white", 48),
+    ("clay", 49),
+    ("checker", 3),
+    ("grid", 5),
+];
+
 /// Renderer material id and base colour (linear RGB) of a material name.
+/// Lava, emissive and hologram keep their classic patterns. Unknown names
+/// give id 0 and a neutral grey.
 #[must_use]
 pub fn material_style(name: &str) -> (u8, [u8; 3]) {
+    if let Some((_, id)) = MATERIAL_NAMES.iter().find(|(n, _)| *n == name) {
+        return (*id, [255, 255, 255]);
+    }
     match name {
-        "concrete" => (0, [128, 128, 122]),
-        "metal" => (0, [110, 118, 128]),
-        "container_red" => (0, [150, 40, 30]),
-        "container_blue" => (0, [35, 70, 140]),
-        "sand" => (2, [255, 255, 255]),
-        "checker" => (3, [255, 255, 255]),
-        "hazard" => (4, [255, 255, 255]),
-        "grid" => (5, [255, 255, 255]),
-        "brick" => (6, [255, 255, 255]),
-        "wood" => (7, [255, 255, 255]),
-        "tiles" => (8, [255, 255, 255]),
-        "snow" => (9, [255, 255, 255]),
-        "water" => (10, [255, 255, 255]),
         "lava" => (11, [255, 255, 255]),
         "emissive" => (12, [255, 255, 255]),
         "hologram" => (13, [255, 255, 255]),
