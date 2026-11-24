@@ -159,6 +159,8 @@ def build():
 
     # ---- vegetation (lot 6.11): weeds in the cracks of the quay ----
     m.set_vegetation(23, [("asphalt", "Grass", 2.0)])
+    # ---- landscape beyond the bounds (lot 6.12)
+    m.set_surroundings((-70, -56, 70, 56), "Sea", "Slope", "Sea", "Rocks", "Mountains", 0.8, 5, sea_level=-1.0)
     return m
 
 

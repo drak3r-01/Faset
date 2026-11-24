@@ -209,6 +209,8 @@ def build():
         ("grass", "Grass", 45.0), ("grass", "Fern", 10.0), ("grass", "Bush", 1.5),
         ("sand_white", "Grass", 3.0), ("sand_white", "Palm", 0.3), ("sand_white", "Rock", 0.4),
     ])
+    # ---- landscape beyond the bounds (lot 6.12): a lagoon all around
+    m.set_surroundings((-60, -60, 60, 60), "Sea", "Sea", "Sea", "Sea", "Treeline", 0.8, 3, ground=-1.0, sea_level=-1.0)
     return m
 
 

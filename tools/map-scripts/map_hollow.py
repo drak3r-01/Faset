@@ -138,6 +138,8 @@ def build():
         ("terrain:snow", "Pine", 0.6), ("terrain:snow", "Rock", 0.5),
         ("terrain:snow", "Bush", 0.6), ("terrain:snow", "Grass", 8.0),
     ])
+    # ---- landscape beyond the bounds (lot 6.12)
+    m.set_surroundings((-64, -48, 64, 48), "Slope", "Cliff", "Slope", "Forest", "Mountains", 0.3, 7)
     return m
 
 
