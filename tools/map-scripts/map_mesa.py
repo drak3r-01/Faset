@@ -141,6 +141,12 @@ def build():
     m.pickup("Ammo", -37, 3.5, -9, 20)
     m.pickup("Ammo", -16, 0.5, 20, 20)
     m.sym = False
+
+    # ---- vegetation (lot 6.11): dry tufts, shrubs and stones on the banks and in the bed ----
+    m.set_vegetation(11, [
+        ("sand", "Grass", 6.0), ("sand", "Bush", 1.0), ("sand", "Rock", 0.6),
+        ("clay", "Rock", 1.5), ("clay", "Grass", 3.0),
+    ])
     return m
 
 

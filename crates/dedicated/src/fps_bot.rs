@@ -17,7 +17,8 @@
 use std::sync::Arc;
 
 use faset_bots::{
-    Bot, Level, NavGraph, PickupInfo, PickupKind, RawEntity, RawState, SelfState, WeaponParams,
+    Bot, Level, NavGraph, PickupInfo, PickupKind, RawEntity, RawState, SelfState, SightBlockers,
+    WeaponParams,
 };
 use faset_core::glam::Vec3;
 use faset_core::{NetId, Tick, DT};
@@ -32,10 +33,13 @@ pub struct BotMap {
     pub nav: NavGraph,
     /// Health pickups (feet positions).
     pub health: Vec<Vec3>,
+    /// The map's vegetation, which hides players from bots (lot 6.11).
+    pub sight: Arc<SightBlockers>,
 }
 
 impl BotMap {
-    /// The navigation graph and pickups of an expanded map file.
+    /// The navigation graph, pickups and sight blockers of an expanded map
+    /// file.
     #[must_use]
     pub fn build(file: &faset_mapfmt::MapFile, pickups: &[MapPickup]) -> Self {
         Self {
@@ -45,6 +49,7 @@ impl BotMap {
                 .filter(|p| p.kind == "health")
                 .map(|p| p.position)
                 .collect(),
+            sight: Arc::new(SightBlockers::from_map(file)),
         }
     }
 }
@@ -104,8 +109,12 @@ impl FpsBot {
             };
             (Some(msg), weapon)
         };
+        let mut bot = Bot::new(level, seed);
+        if !map.sight.is_empty() {
+            bot.set_sight_blockers(Some(map.sight.clone()));
+        }
         Self {
-            bot: Bot::new(level, seed),
+            bot,
             map,
             weapon,
             class: class_msg,

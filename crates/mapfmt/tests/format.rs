@@ -1,8 +1,9 @@
 //! Acceptance tests of the map format against `assets/testdata/example.ron`.
 
+use faset_mapfmt::vegetation::scatter;
 use faset_mapfmt::{
-    expand_prefabs, expand_symmetry, fingerprint, parse, to_ron, Brush, MapError, Symmetry, Team,
-    Terrain, FORMAT_VERSION, MAX_MAP_BYTES,
+    expand_prefabs, expand_symmetry, fingerprint, parse, to_ron, Brush, DensityRule, MapError,
+    Plant, Species, Symmetry, Team, Terrain, Vegetation, FORMAT_VERSION, MAX_MAP_BYTES,
 };
 
 const EXAMPLE: &[u8] = include_bytes!("../../../assets/testdata/example.ron");
@@ -60,16 +61,65 @@ fn future_version_is_rejected() {
 }
 
 #[test]
-fn version_one_files_still_load() {
-    let v1 = String::from_utf8(EXAMPLE.to_vec()).unwrap().replacen(
-        "format_version: 2",
-        "format_version: 1",
-        1,
+fn version_one_and_two_files_still_load() {
+    for old in [1, 2] {
+        let text = String::from_utf8(EXAMPLE.to_vec()).unwrap().replacen(
+            &format!("format_version: {FORMAT_VERSION}"),
+            &format!("format_version: {old}"),
+            1,
+        );
+        let map = parse(text.as_bytes()).unwrap();
+        assert_eq!(map.format_version, FORMAT_VERSION);
+        assert_eq!(map, parse(EXAMPLE).unwrap());
+        assert!(map.terrain.is_none());
+        assert!(map.vegetation.is_none());
+    }
+}
+
+#[test]
+fn vegetation_round_trips_mirrors_and_is_validated() {
+    let mut map = parse(EXAMPLE).unwrap();
+    let veg = Vegetation {
+        seed: 11,
+        rules: vec![DensityRule {
+            on: "concrete".into(),
+            species: Species::Grass,
+            density: 20.0,
+        }],
+        plants: vec![Plant {
+            species: Species::Oak,
+            at: [3.0, 0.0, -4.0],
+            yaw: 30.0,
+            scale: 1.2,
+        }],
+        symmetry: Symmetry::None,
+    };
+    map.vegetation = Some(veg.clone());
+    let text = to_ron(&map);
+    assert!(
+        text.contains("vegetation:") && text.contains("seed: 11"),
+        "{text}"
     );
-    let map = parse(v1.as_bytes()).unwrap();
-    assert_eq!(map.format_version, FORMAT_VERSION);
-    assert_eq!(map, parse(EXAMPLE).unwrap());
-    assert!(map.terrain.is_none());
+    let back = parse(text.as_bytes()).unwrap();
+    assert_eq!(back.vegetation.as_ref(), Some(&veg));
+    assert_eq!(to_ron(&back), text);
+    // Hand-placed plants are mirrored like props; the expansion records the
+    // symmetry the rules scatter with and still round-trips.
+    let full = expand_symmetry(&back);
+    let v = full.vegetation.as_ref().unwrap();
+    assert_eq!(v.plants.len(), 2);
+    assert_eq!(v.plants[1].at, [-3.0, 0.0, 4.0]);
+    assert_eq!(v.symmetry, back.symmetry);
+    assert_eq!(parse(to_ron(&full).as_bytes()).unwrap(), full);
+    assert_eq!(scatter(&full), scatter(&back));
+    assert!(scatter(&back).len() > 2);
+
+    let mut bad = map;
+    bad.vegetation.as_mut().unwrap().rules[0].density = 1000.0;
+    assert!(matches!(
+        parse(to_ron(&bad).as_bytes()),
+        Err(MapError::Invalid(_))
+    ));
 }
 
 #[test]

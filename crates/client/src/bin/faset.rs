@@ -507,6 +507,7 @@ impl Client {
         let mut world = RenderWorld {
             camera,
             instances: self.instances.clone(),
+            foliage: true,
             ..RenderWorld::default()
         };
         self.look

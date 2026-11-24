@@ -1,7 +1,7 @@
 //! Every shipped map drawn headless with its own look (ambience, sky,
-//! weather, water, lights) from a spawn point and from above, on Mesa
-//! lavapipe. The validation layers must stay silent. `FASET_MAP_SHOTS=<dir>`
-//! keeps the captures.
+//! weather, water, lights, props and vegetation) from a spawn point and from
+//! above, on Mesa lavapipe. The validation layers must stay silent.
+//! `FASET_MAP_SHOTS=<dir>` keeps the captures.
 
 use std::path::{Path, PathBuf};
 
@@ -60,6 +60,7 @@ fn every_shipped_map_renders_with_its_look() {
             let mut world = RenderWorld {
                 camera: camera(eye, target),
                 instances: instances.clone(),
+                foliage: true,
                 ..RenderWorld::default()
             };
             look.apply(&mut world, 3.0);

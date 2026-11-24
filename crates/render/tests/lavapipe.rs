@@ -730,6 +730,7 @@ fn render_profile(name: &str, path: &Path) {
         underwater: name == "underwater",
         screen: ScreenEffects::default(),
         post: None,
+        foliage: false,
     };
     renderer.render_frame(&world).unwrap();
     renderer.read_back_png(path).unwrap();
@@ -1007,8 +1008,9 @@ fn hot_reload_swaps_valid_shaders_and_keeps_old_on_error() {
 
         // Valid edit: paint everything red. One frame per poll.
         let red = original.replace(
-            "out.color = vec4<f32>(apply_fog(mix(lit, wet.reflection, wet.weight), in.world_pos), 1.0);",
-            "out.color = vec4<f32>(1.0, 0.0, 0.0, 1.0);",
+            "return shade_fragment(in.color, in.normal, in.clip, in.prev_clip, in.world_pos, in.material);",
+            "var out = shade_fragment(in.color, in.normal, in.clip, in.prev_clip, in.world_pos, \
+             in.material);\n    out.color = vec4<f32>(1.0, 0.0, 0.0, 1.0);\n    return out;",
         );
         assert_ne!(red, original, "edit target found");
         std::fs::write(&opaque, &red).unwrap();

@@ -55,3 +55,29 @@ Prefer the pixel materials of `mapfmt::geometry::MATERIAL_NAMES` (`brick`,
 name every light of a night map in `lights`. Level changes need stairs or ramps
 (a rise of at most 0.45 m per step or per 0.5 m of run); a step of 0.5 m or more
 is only reachable by jumping and counts as unreachable for the validator.
+
+## Props and vegetation
+
+Props (`props`, recipes of `assets/props`) are drawn by the client standing on
+their position. Vegetation (format version 3) is an optional block:
+
+```ron
+vegetation: (seed: 61, rules: [(on: "grass", species: Grass, density: 45.0)],
+             plants: [(species: Oak, at: (3.0, 0.0, -4.0), yaw: 30.0)],
+             symmetry: Rotate180),
+```
+
+- `rules` scatter `density` plants per 100 m^2 (at most 400) on every flat
+  top of a box or prism brush of material `on`, or on terrain samples of that
+  ground (`grass`, `sand`, `rock`, `snow`, `dirt`; slopes over 35 degrees are
+  `rock`); `terrain:<ground>` matches the terrain only. Plants never grow under
+  a brush, in water, on slopes too steep for the species or within 1.5 m of a
+  spawn or pickup. The same seed always gives the same plants.
+- Species: `Oak`, `Pine`, `Birch`, `Palm`, `Bush`, `Rock`, `Grass`, `Fern`,
+  coloured by the map palette (`snow`, `desert`, else `nature`).
+- Plants have no collision: players and bullets go through them. Trees,
+  bushes and rocks block the bots' line of sight; grass and ferns do not.
+- Maps built as two half-turn halves set `symmetry: Rotate180` so both teams
+  get the same cover (a map that declares its own `symmetry` uses that one).
+- Keep dense grass (tens per 100 m^2) to areas that need it: thousands of
+  plants are cheap to draw, but bushes and trees change sightlines.

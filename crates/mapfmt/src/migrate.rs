@@ -14,12 +14,18 @@ use crate::{MapError, MapFile, FORMAT_VERSION};
 pub type Migration = fn(&str) -> Result<String, MapError>;
 
 /// `MIGRATIONS[i]` migrates version `i + 1` to `i + 2`.
-const MIGRATIONS: [Migration; (FORMAT_VERSION - 1) as usize] = [v1_to_v2];
+const MIGRATIONS: [Migration; (FORMAT_VERSION - 1) as usize] = [v1_to_v2, v2_to_v3];
 
 /// Version 2 only adds the optional `terrain` field: a version 1 file is the
 /// same file with its version number rewritten.
 fn v1_to_v2(text: &str) -> Result<String, MapError> {
     set_version(text, 2)
+}
+
+/// Version 3 only adds the optional `vegetation` field: a version 2 file is
+/// the same file with its version number rewritten.
+fn v2_to_v3(text: &str) -> Result<String, MapError> {
+    set_version(text, 3)
 }
 
 /// Rewrites the number after the first `format_version:` key.
@@ -105,6 +111,11 @@ mod tests {
         let map = migrate("Map(format_version: 1, meta: (name: \"m\", modes: [], players: (1, 2)), theme: (ambience: \"day\", palette: \"x\"))").unwrap();
         assert_eq!(map.format_version, FORMAT_VERSION);
         assert!(map.terrain.is_none());
+        assert!(map.vegetation.is_none());
+        assert_eq!(
+            super::v2_to_v3("Map(format_version: 2)").unwrap(),
+            "Map(format_version: 3)"
+        );
     }
 
     #[test]

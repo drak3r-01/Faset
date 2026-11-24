@@ -12,7 +12,7 @@
 //   +-----------------------------------------------+
 //        sea (deadly)  ~~~~~~~~ ship (S) ~~~~~~~~
 Map(
-    format_version: 2,
+    format_version: 3,
     meta: (name: "Rust Harbor", author: "Faset", description: "A container quay at night between two dark basins: moored ships, a gantry crane and warehouses.", modes: ["fps"], players: (2, 14)),
     theme: (ambience: "night", sky: "stars", weather: [(from_s: 0.0, weather: "clear")], palette: "industrial"),
     physics: (gravity: 9.81),
@@ -425,4 +425,5 @@ Map(
         (at: (1.0, 8.0, 36.0), color: (0.6, 0.8, 1.0), intensity: 1.6, range: 14.0),
         (at: (0.0, 14.0, 0.0), color: (1.0, 0.9, 0.7), intensity: 1.8, range: 22.0),
     ],
+    vegetation: (seed: 23, rules: [(on: "asphalt", species: Grass, density: 2.0)], symmetry: Rotate180),
 )

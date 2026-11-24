@@ -31,6 +31,7 @@ class Map:
         self.brushes, self.spawns, self.pickups, self.zones, self.lights = [], [], [], [], []
         self.solids = []  # (x0, y0, z0, x1, y1, z1) of every box-like brush, for placement checks
         self.terrain = None  # RON of the height field, see `set_terrain`
+        self.vegetation = None  # RON of the vegetation block, see `set_vegetation`
 
     # ---- helpers --------------------------------------------------------
     def _both(self, f):
@@ -166,7 +167,7 @@ class Map:
         t = self.theme
         weather = ", ".join(f'(from_s: {a}, weather: "{b}")' for a, b in t.get("weather", [(0.0, "clear")]))
         out = [self.header.rstrip(), "Map("]
-        out.append("    format_version: 2,")
+        out.append("    format_version: 3,")
         out.append(f'    meta: (name: "{self.name}", author: "Faset", description: "{self.description}", modes: ["fps"], players: ({self.players[0]}, {self.players[1]})),')
         out.append(f'    theme: (ambience: "{t["ambience"]}", sky: "{t.get("sky", "clear")}", weather: [{weather}], palette: "{t["palette"]}"),')
         if self.gravity:
@@ -177,6 +178,8 @@ class Map:
             out.append("    ],")
         if self.terrain:
             out.append(f"    terrain: {self.terrain},")
+        if self.vegetation:
+            out.append(f"    vegetation: {self.vegetation},")
         out.append(")")
         return "\n".join(out) + "\n"
 
@@ -194,6 +197,15 @@ class Map:
         cell_field = "" if cell_units == 4 else f"cell: {cell_units}, "
         self.terrain = f'(origin: ({g(x0)}, {g(z0)}), {cell_field}size: ({nx}, {nz}), heights: "{data}")'
         return cms
+
+    # ---- vegetation (lot 6.11) --------------------------------------------------
+    def set_vegetation(self, seed, rules):
+        """Density rules `(ground, species, plants per 100 m^2)`, scattered by
+        the game from `seed`. The maps are built as two half-turn halves, so
+        the rules scatter with the same symmetry (both teams get the same
+        cover)."""
+        rs = ", ".join(f'(on: "{on}", species: {sp}, density: {d:.1f})' for on, sp, d in rules)
+        self.vegetation = f"(seed: {seed}, rules: [{rs}], symmetry: Rotate180)"
 
     def save(self, path):
         with open(path, "w", newline="\n") as fh:

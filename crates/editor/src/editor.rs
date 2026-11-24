@@ -77,6 +77,7 @@ pub fn new_map(name: &str) -> MapFile {
         zones: Vec::new(),
         lights: Vec::new(),
         terrain: None,
+        vegetation: None,
     }
 }
 

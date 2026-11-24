@@ -40,6 +40,10 @@
 //! interface on the finished frame at the display resolution; the `faset-ui`
 //! crate implements it.
 //! With the `hot-reload` feature, [`ShaderWatcher`] swaps in edited shaders.
+//! Lot 6.11 adds a vegetation layer ([`Renderer::set_foliage`],
+//! [`RenderWorld::foliage`]): plants drawn by GPU instancing from a static
+//! buffer, culled and given a level of detail per 16 m cell, swaying in the
+//! wind and dissolving at their draw distance (see [`FoliageKind`]).
 
 mod ambience;
 mod camera;
@@ -47,6 +51,7 @@ mod context;
 mod cull;
 mod deferred;
 mod extensions;
+mod foliage;
 mod frame;
 mod gpu;
 mod hook;
@@ -74,6 +79,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use context::{Context, WindowHandles};
 use cull::{DrawBatch, GpuInstance};
 use deferred::{DeferredQueue, FRAMES_IN_FLIGHT};
+use foliage::{FoliageLayer, FoliageLayout, FoliagePipelines};
 use frame::{FrameData, Garbage};
 use gpu::{image_barriers, GpuBuffer, ImageBarrier};
 use lighting::{pack_lighting, LightingBindings, LIGHTING_ALIGN, LIGHTING_SIZE};
@@ -97,6 +103,9 @@ pub use camera::{
 pub use cull::Instance;
 pub use extensions::DeviceExtensions;
 pub use faset_core::glam;
+pub use foliage::{
+    sway_offset, FoliageInstance, FoliageKind, FADE_BAND, FOLIAGE_CELL_M, MAX_FOLIAGE_INSTANCES,
+};
 pub use hook::{FrameCtx, GpuHandles, ImageHandle, UiPass, UpscaleInputs, UpscalePass};
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::ShaderWatcher;
@@ -204,6 +213,9 @@ pub struct RenderWorld {
     /// Replaces the post parameters otherwise derived from the ambience
     /// profile ([`PostParams::from_profile`]) and `screen`.
     pub post: Option<PostParams>,
+    /// Draws the vegetation layer given to [`Renderer::set_foliage`] (lot
+    /// 6.11). Off by default.
+    pub foliage: bool,
 }
 
 impl RenderWorld {
@@ -234,6 +246,7 @@ impl Default for RenderWorld {
             underwater: false,
             screen: ScreenEffects::default(),
             post: None,
+            foliage: false,
         }
     }
 }
@@ -247,6 +260,11 @@ pub struct FrameStats {
     pub instances_drawn: u32,
     /// Instances rejected by frustum culling.
     pub instances_culled: u32,
+    /// Instanced draws of the vegetation in the view (one per visible cell
+    /// and plant kind).
+    pub foliage_draw_calls: u32,
+    /// Plants drawn in the view.
+    pub foliage_instances: u32,
 }
 
 /// Renderer errors.
@@ -278,6 +296,8 @@ pub enum RenderError {
     ArenaFull,
     #[error("invalid mesh: index count not a multiple of 3, or index out of range")]
     InvalidMesh,
+    #[error("invalid foliage: {0}")]
+    InvalidFoliage(String),
 }
 
 struct Windowed {
@@ -340,6 +360,13 @@ pub struct Renderer {
     gbuffer: Option<GBuffer>,
     /// Created at the first mesh upload.
     arena: Option<MeshArena>,
+    /// The vegetation layer (lot 6.11), see [`Renderer::set_foliage`].
+    foliage: Option<FoliageLayer>,
+    /// Created with the first vegetation layer.
+    foliage_pipelines: Option<FoliagePipelines>,
+    /// The frame's vegetation draws, in the view and per cascade.
+    foliage_draws: Vec<DrawBatch>,
+    foliage_shadow_draws: [Vec<DrawBatch>; CASCADE_COUNT],
     /// Scratch lists reused every frame.
     gpu_instances: Vec<GpuInstance>,
     draws: Vec<DrawBatch>,
@@ -476,6 +503,10 @@ impl Renderer {
                 light_overflow_warned: false,
                 gbuffer: None,
                 arena: None,
+                foliage: None,
+                foliage_pipelines: None,
+                foliage_draws: Vec::new(),
+                foliage_shadow_draws: Default::default(),
                 gpu_instances: Vec::new(),
                 draws: Vec::new(),
                 stats: FrameStats::default(),
@@ -623,6 +654,112 @@ impl Renderer {
         result.map(|()| id)
     }
 
+    /// Replaces the vegetation layer (lot 6.11): plant `kinds` whose meshes
+    /// were uploaded with [`Renderer::upload_mesh`], and every plant. The
+    /// plants are drawn by instancing when [`RenderWorld::foliage`] is set.
+    /// Waits for the GPU to go idle (load time only). Returns the number of
+    /// plants.
+    ///
+    /// # Errors
+    /// [`RenderError::InvalidFoliage`] for an inconsistent layer (unknown
+    /// kind or mesh, distances not increasing, a non-finite plant); Vulkan
+    /// and allocation errors.
+    pub fn set_foliage(
+        &mut self,
+        kinds: Vec<FoliageKind>,
+        instances: &[FoliageInstance],
+    ) -> Result<usize, RenderError> {
+        let meshes = self.arena.as_ref().map_or(&[][..], |a| &a.meshes[..]);
+        let layout = FoliageLayout::new(kinds, instances, meshes)?;
+        self.clear_foliage();
+        if self.foliage_pipelines.is_none() {
+            self.foliage_pipelines =
+                Some(FoliagePipelines::new(&self.ctx.device, self.opaque.layout)?);
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(&layout.gpu);
+        let buffer = if bytes.is_empty() {
+            None
+        } else {
+            let size = bytes.len() as u64;
+            let mut buffer = GpuBuffer::new(
+                &mut self.ctx,
+                "foliage-instances",
+                size,
+                vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuOnly,
+            )?;
+            let mut staging = match GpuBuffer::new(
+                &mut self.ctx,
+                "foliage-staging",
+                size,
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                MemoryLocation::CpuToGpu,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    buffer.destroy(&mut self.ctx);
+                    return Err(e);
+                }
+            };
+            staging.mapped()[..bytes.len()].copy_from_slice(bytes);
+            let (src, dst) = (staging.buffer, buffer.buffer);
+            let result = one_shot(&self.ctx, &self.frames[0], |device, cmd| {
+                let barrier = vk::BufferMemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::VERTEX_ATTRIBUTE_READ)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .buffer(dst)
+                    .size(vk::WHOLE_SIZE);
+                // SAFETY: recording command buffer; both buffers are live and
+                // `size` bytes long.
+                unsafe {
+                    device.cmd_copy_buffer(
+                        cmd,
+                        src,
+                        dst,
+                        &[vk::BufferCopy {
+                            src_offset: 0,
+                            dst_offset: 0,
+                            size,
+                        }],
+                    );
+                    device.cmd_pipeline_barrier(
+                        cmd,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::PipelineStageFlags::VERTEX_INPUT,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[barrier],
+                        &[],
+                    );
+                }
+            });
+            staging.destroy(&mut self.ctx);
+            if let Err(e) = result {
+                buffer.destroy(&mut self.ctx);
+                return Err(e);
+            }
+            Some(buffer)
+        };
+        let count = layout.len();
+        self.foliage = Some(FoliageLayer { layout, buffer });
+        Ok(count)
+    }
+
+    /// Removes the vegetation layer. Waits for the GPU to go idle.
+    pub fn clear_foliage(&mut self) {
+        if let Some(mut old) = self.foliage.take() {
+            if let Some(mut b) = old.buffer.take() {
+                // SAFETY: valid device; waiting makes the buffer unused.
+                unsafe {
+                    let _ = self.ctx.device.device_wait_idle();
+                }
+                b.destroy(&mut self.ctx);
+            }
+        }
+    }
+
     /// Renders one frame. Returns `Ok` without drawing while the target has
     /// a zero area.
     pub fn render_frame(&mut self, world: &RenderWorld) -> Result<(), RenderError> {
@@ -700,6 +837,7 @@ impl Renderer {
             draw_calls: self.draws.len() as u32,
             instances_drawn: self.gpu_instances.len() as u32,
             instances_culled: (world.instances.len() - self.gpu_instances.len() - unknown) as u32,
+            ..FrameStats::default()
         };
 
         // The first-person view model: its own batch, culled and projected
@@ -818,6 +956,33 @@ impl Renderer {
                     ..*d
                 }));
                 self.gpu_instances.extend_from_slice(scratch);
+            }
+        }
+        // Vegetation (lot 6.11): one draw per visible cell and plant kind in
+        // the view, and per cascade for the plants casting shadows. The
+        // levels of detail are the view's in both.
+        self.foliage_draws.clear();
+        for draws in &mut self.foliage_shadow_draws {
+            draws.clear();
+        }
+        if let (true, Some(layer)) = (world.foliage, self.foliage.as_ref()) {
+            if layer.buffer.is_some() {
+                let eye = camera.view.inverse().w_axis.truncate();
+                let count =
+                    layer
+                        .layout
+                        .draws(&view_proj, eye, meshes, None, &mut self.foliage_draws);
+                self.stats.foliage_draw_calls = count.draws;
+                self.stats.foliage_instances = count.instances;
+                if let Some(cascades) = &cascades {
+                    for (matrix, draws) in
+                        cascades.matrices.iter().zip(&mut self.foliage_shadow_draws)
+                    {
+                        layer
+                            .layout
+                            .draws(matrix, eye, meshes, Some(shadow_distance), draws);
+                    }
+                }
             }
         }
         let frame = &mut self.frames[slot];
@@ -1127,7 +1292,13 @@ impl Renderer {
                     min_depth: 0.0,
                     max_depth: 1.0,
                 };
-                for (view, draws) in self.shadow.layer_views.iter().zip(&self.shadow_draws) {
+                for (cascade, (view, draws)) in self
+                    .shadow
+                    .layer_views
+                    .iter()
+                    .zip(&self.shadow_draws)
+                    .enumerate()
+                {
                     let depth = vk::RenderingAttachmentInfo::default()
                         .image_view(*view)
                         .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
@@ -1177,6 +1348,64 @@ impl Renderer {
                                 d.base_vertex,
                                 d.first_instance,
                             );
+                        }
+                    }
+                    // Vegetation casting shadows: the cascade matrix comes
+                    // from the lighting block, its index from the immediates.
+                    let plants = &self.foliage_shadow_draws[cascade];
+                    if let (Some(arena), Some(layer), Some(pipelines), false) = (
+                        arena,
+                        self.foliage.as_ref(),
+                        self.foliage_pipelines.as_ref(),
+                        plants.is_empty(),
+                    ) {
+                        if let Some(buffer) = &layer.buffer {
+                            let shadow_push: [u8; opaque::PUSH_CONSTANT_SIZE as usize] =
+                                bytemuck::cast([0.0f32, 0.0, self.material_time, cascade as f32]);
+                            device.cmd_bind_pipeline(
+                                frame.cmd,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                pipelines.shadow,
+                            );
+                            device.cmd_set_viewport(frame.cmd, 0, &[map_viewport]);
+                            device.cmd_set_scissor(frame.cmd, 0, &[map_area]);
+                            device.cmd_push_constants(
+                                frame.cmd,
+                                self.opaque.layout,
+                                opaque::PUSH_CONSTANT_STAGES,
+                                0,
+                                &shadow_push,
+                            );
+                            device.cmd_bind_descriptor_sets(
+                                frame.cmd,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                self.opaque.layout,
+                                0,
+                                &[self.opaque.materials.set, lighting_set],
+                                &[lighting_offset as u32],
+                            );
+                            device.cmd_bind_vertex_buffers(
+                                frame.cmd,
+                                0,
+                                &[arena.vertices.buffer, buffer.buffer],
+                                &[0, 0],
+                            );
+                            device.cmd_bind_index_buffer(
+                                frame.cmd,
+                                arena.indices.buffer,
+                                0,
+                                vk::IndexType::UINT32,
+                            );
+                            for d in plants {
+                                device.cmd_draw_indexed(
+                                    frame.cmd,
+                                    d.index_count,
+                                    d.instance_count,
+                                    d.first_index,
+                                    d.base_vertex,
+                                    d.first_instance,
+                                );
+                            }
                         }
                     }
                     self.ctx.dynamic_rendering.cmd_end_rendering(frame.cmd);
@@ -1252,6 +1481,44 @@ impl Renderer {
                         d.base_vertex,
                         d.first_instance,
                     );
+                }
+            }
+            // Vegetation: same layout, sets and immediates as the opaque
+            // draws, its own pipeline and static instance buffer.
+            if let (Some(arena), Some(layer), Some(pipelines), false) = (
+                arena,
+                self.foliage.as_ref(),
+                self.foliage_pipelines.as_ref(),
+                self.foliage_draws.is_empty(),
+            ) {
+                if let Some(plants) = &layer.buffer {
+                    device.cmd_bind_pipeline(
+                        frame.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipelines.pipeline,
+                    );
+                    device.cmd_bind_vertex_buffers(
+                        frame.cmd,
+                        0,
+                        &[arena.vertices.buffer, plants.buffer],
+                        &[0, 0],
+                    );
+                    device.cmd_bind_index_buffer(
+                        frame.cmd,
+                        arena.indices.buffer,
+                        0,
+                        vk::IndexType::UINT32,
+                    );
+                    for d in &self.foliage_draws {
+                        device.cmd_draw_indexed(
+                            frame.cmd,
+                            d.index_count,
+                            d.instance_count,
+                            d.first_index,
+                            d.base_vertex,
+                            d.first_instance,
+                        );
+                    }
                 }
             }
             if draw_sky {
@@ -2066,6 +2333,12 @@ impl Drop for Renderer {
         }
         if let Some(mut a) = self.arena.take() {
             a.destroy(&mut self.ctx);
+        }
+        if let Some(mut b) = self.foliage.take().and_then(|f| f.buffer) {
+            b.destroy(&mut self.ctx);
+        }
+        if let Some(mut p) = self.foliage_pipelines.take() {
+            p.destroy(&self.ctx.device);
         }
         self.sky.destroy(&self.ctx.device);
         self.weather.destroy(&self.ctx.device);

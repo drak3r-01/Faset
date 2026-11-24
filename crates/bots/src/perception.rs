@@ -2,12 +2,14 @@
 //! queue that delays every observation by the level's reaction time.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use faset_core::glam::Vec3;
 use faset_core::NetId;
 use faset_sim::StaticWorld;
 
 use crate::aim::dir_of;
+use crate::sight::SightBlockers;
 use crate::view::{RawEntity, RawState, Sighting};
 
 /// Field of view of a bot, full width, degrees. The limit applies to the angle
@@ -69,6 +71,8 @@ pub struct Perception {
     queue: VecDeque<Observation>,
     known: Vec<Sighting>,
     los: Vec<(NetId, bool)>,
+    /// Vegetation that hides players without stopping the raycast.
+    sight: Option<Arc<SightBlockers>>,
 }
 
 impl Perception {
@@ -83,7 +87,14 @@ impl Perception {
             queue: VecDeque::new(),
             known: Vec::new(),
             los: Vec::new(),
+            sight: None,
         }
+    }
+
+    /// Vegetation of the map that blocks sight (lot 6.11); `None` (the
+    /// default) means only the static world does.
+    pub fn set_sight_blockers(&mut self, sight: Option<Arc<SightBlockers>>) {
+        self.sight = sight;
     }
 
     /// The limits in use.
@@ -170,7 +181,11 @@ impl Perception {
             self.los.clear();
             for e in raw.enemies {
                 if let Some((dir, dist)) = in_view(e) {
-                    let clear = world.ray_cast(me.eye, dir, dist - 0.05).is_none();
+                    let clear = world.ray_cast(me.eye, dir, dist - 0.05).is_none()
+                        && !self
+                            .sight
+                            .as_ref()
+                            .is_some_and(|s| s.blocks(me.eye, me.eye + dir * dist));
                     self.los.push((e.id, clear));
                 }
             }
@@ -304,6 +319,41 @@ mod tests {
         // Same target without the wall is seen.
         let mut p = Perception::new(PerceptionConfig::default(), 0.0, 0);
         assert!(first_known(&mut p, &s, &open_floor(), 30).is_some());
+    }
+
+    /// A map of plants only (sight is tested against an open floor).
+    fn planted(plants: &str) -> faset_mapfmt::MapFile {
+        let text = format!(
+            "Map(format_version: 3, meta: (name: \"v\", modes: [\"fps\"], players: (1, 2)), \
+             theme: (ambience: \"day\", palette: \"nature\"), \
+             vegetation: (plants: [{plants}]))"
+        );
+        faset_mapfmt::parse(text.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn vegetation_hides_the_target_but_grass_does_not() {
+        let w = open_floor();
+        let s = Scene::at_angle_deg(0.0, 12.0);
+        // A bush near the target, on the line of sight (target at z = -12,
+        // eye 1.6 m high, aimed point 1 m high).
+        let bush = SightBlockers::from_map(&planted("(species: Bush, at: (0.0, 0.0, -10.0))"));
+        assert_eq!(bush.len(), 1);
+        let mut p = Perception::new(PerceptionConfig::default(), 0.0, 0);
+        p.set_sight_blockers(Some(Arc::new(bush)));
+        assert_eq!(first_known(&mut p, &s, &w, 30), None, "behind the bush");
+        // A tree crown at eye height hides as well.
+        let oak = SightBlockers::from_map(&planted("(species: Oak, at: (0.0, -1.2, -6.0))"));
+        let mut p = Perception::new(PerceptionConfig::default(), 0.0, 0);
+        p.set_sight_blockers(Some(Arc::new(oak)));
+        assert_eq!(first_known(&mut p, &s, &w, 30), None, "behind the oak");
+        // Grass tufts block nothing; nor does a bush off the line.
+        let open = SightBlockers::from_map(&planted(
+            "(species: Grass, at: (0.0, 0.0, -6.0)), (species: Bush, at: (4.0, 0.0, -6.0))",
+        ));
+        let mut p = Perception::new(PerceptionConfig::default(), 0.0, 0);
+        p.set_sight_blockers(Some(Arc::new(open)));
+        assert!(first_known(&mut p, &s, &w, 30).is_some());
     }
 
     #[test]

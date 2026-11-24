@@ -879,6 +879,7 @@ name = "faset-assets"
 version = "0.0.1-rc.1"
 dependencies = [
  "faset-core",
+ "faset-mapfmt",
  "proptest",
  "ron",
  "serde",

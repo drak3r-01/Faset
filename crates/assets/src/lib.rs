@@ -4,6 +4,9 @@
 //! Colours are palette names resolved from a [`Palette`] at build time.
 //! Building is deterministic: the same recipe, palette and seed give the
 //! same mesh. Units are metres, Y up, -Z forward.
+//!
+//! Lot 6.11 adds [`vegetation`]: plants generated in code (no recipe file),
+//! with levels of detail and a palette per map theme.
 
 pub mod anim;
 mod build;
@@ -14,6 +17,7 @@ mod palette;
 mod prims;
 mod recipe;
 mod validate;
+pub mod vegetation;
 pub mod viewmodel;
 
 pub use build::build_mesh;
