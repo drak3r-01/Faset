@@ -18,12 +18,17 @@
 //! (density rules per ground material and hand-placed plants, scattered by
 //! [`vegetation::scatter`]); version 2 files are migrated by bumping their
 //! version (they have no vegetation).
+//!
+//! Format version 4 (lot 6.12) adds the optional [`Surroundings`] block (the
+//! landscape beyond the playable area); version 3 files are migrated by
+//! bumping their version (they have no surroundings).
 #![forbid(unsafe_code)]
 
 mod expand;
 pub mod geometry;
 mod migrate;
 mod schema;
+pub mod surroundings;
 pub mod terrain;
 pub mod vegetation;
 
@@ -33,6 +38,7 @@ pub use schema::{
     Placement, Pos, Prefab, Prop, Spawn, Symmetry, Team, Theme, WeatherSlot, Zone, ZoneKind,
     GRID_UNIT_M,
 };
+pub use surroundings::{Border, Horizon, Surroundings};
 pub use terrain::Terrain;
 pub use vegetation::{DensityRule, Plant, Species, Vegetation};
 
@@ -43,7 +49,7 @@ pub fn expand(map: &MapFile) -> MapFile {
 }
 
 /// Current version of the map format; [`parse`] migrates older files to it.
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 /// Largest accepted map file, in bytes (256 KiB).
 pub const MAX_MAP_BYTES: usize = 262_144;
@@ -177,6 +183,9 @@ fn check(map: &MapFile) -> Result<(), MapError> {
     }
     if let Some(t) = &map.terrain {
         t.validate().map_err(MapError::Invalid)?;
+    }
+    if let Some(s) = &map.surroundings {
+        s.validate().map_err(MapError::Invalid)?;
     }
     if let Some(v) = &map.vegetation {
         v.validate().map_err(MapError::Invalid)?;

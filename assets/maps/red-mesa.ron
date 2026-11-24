@@ -13,7 +13,7 @@
 // Verticality: mesas (3 m), mushroom-rock caps (3.5 m), the water tower deck
 // (5 m) and the lookout ledge on the north wall (4 m, with a mine tunnel).
 Map(
-    format_version: 3,
+    format_version: 4,
     meta: (name: "Red Mesa", author: "Faset", description: "A dry canyon at sunset: two mesas, a river bed with bridges and a field of mushroom rocks.", modes: ["fps"], players: (2, 14)),
     theme: (ambience: "sunset", sky: "dusk", weather: [(from_s: 0.0, weather: "clear")], palette: "desert"),
     physics: (gravity: 9.81),
@@ -412,4 +412,5 @@ Map(
     lights: [
     ],
     vegetation: (seed: 11, rules: [(on: "sand", species: Grass, density: 6.0), (on: "sand", species: Bush, density: 1.0), (on: "sand", species: Rock, density: 0.6), (on: "clay", species: Rock, density: 1.5), (on: "clay", species: Grass, density: 3.0)], symmetry: Rotate180),
+    surroundings: (area: (-66.0, -48.0, 66.0, 48.0), north: Cliff, east: Dunes, south: Rocks, west: Dunes, horizon: Dunes, haze: 0.6, seed: 9),
 )

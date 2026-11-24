@@ -7,6 +7,7 @@
 use faset_core::glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+use crate::surroundings::Surroundings;
 use crate::terrain::Terrain;
 use crate::vegetation::Vegetation;
 
@@ -53,6 +54,10 @@ pub struct MapFile {
     /// [`crate::vegetation`].
     #[serde(default, skip_serializing_if = "Option::is_none", with = "implicit")]
     pub vegetation: Option<Vegetation>,
+    /// Optional landscape beyond the playable area (format version 4); see
+    /// [`crate::surroundings`].
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "implicit")]
+    pub surroundings: Option<Surroundings>,
 }
 
 /// Descriptive data shown in menus and used by the rotation.

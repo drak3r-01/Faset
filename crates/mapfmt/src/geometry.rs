@@ -810,6 +810,7 @@ mod tests {
             lights: vec![],
             terrain: None,
             vegetation: None,
+            surroundings: None,
         }
     }
 
