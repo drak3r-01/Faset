@@ -292,6 +292,21 @@ pub fn expand_symmetry(map: &MapFile) -> MapFile {
     out.pickups.extend(pickups);
     out.zones.extend(zones);
     out.lights.extend(lights);
+    // Hand-placed plants are mirrored like props; the rules keep scattering
+    // with the map's symmetry (see `vegetation::scatter`).
+    if let Some(v) = &mut out.vegetation {
+        let twins: Vec<_> = v
+            .plants
+            .iter()
+            .map(|p| crate::vegetation::Plant {
+                at: t.pos(p.at),
+                yaw: t.yaw(p.yaw),
+                ..p.clone()
+            })
+            .collect();
+        v.plants.extend(twins);
+        v.symmetry = map.symmetry;
+    }
     out.symmetry = Symmetry::None;
     out
 }

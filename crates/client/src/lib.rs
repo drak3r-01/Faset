@@ -26,7 +26,8 @@
 //!   bounded pools, the recoil curve and camera shake derived from the weapon
 //!   data, the sounds synthesised in code and the surface kind a shot hits.
 //! * [`map_load`]: turns a map file into collisions and render meshes (steps 1
-//!   to 3 of the map load pipeline) and uploads the meshes.
+//!   to 3 of the map load pipeline) and uploads the meshes; [`scenery`] (lot
+//!   6.11) draws the map's props and its instanced vegetation.
 //! * [`map_sync`]: the map cache (by fingerprint) and the `MapChange` and map
 //!   download handler (lot 5.1).
 //! * [`state`], [`session`], [`app`] (lot 6.1): the stack of application states
@@ -86,6 +87,7 @@ pub mod prediction;
 pub mod preview;
 pub mod profile;
 pub mod scene;
+pub mod scenery;
 pub mod session;
 pub mod shoot_feel;
 pub mod sounds;

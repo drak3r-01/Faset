@@ -323,6 +323,11 @@ impl Bot {
         self.perception.clear();
     }
 
+    /// The map's vegetation that blocks this bot's sight (lot 6.11).
+    pub fn set_sight_blockers(&mut self, sight: Option<std::sync::Arc<crate::SightBlockers>>) {
+        self.perception.set_sight_blockers(sight);
+    }
+
     /// Perceives, thinks, and returns the input of this tick.
     pub fn tick(
         &mut self,

@@ -13,6 +13,11 @@
 //! Format version 2 (lot 6.10) adds the optional [`Terrain`] height field;
 //! version 1 files are migrated by bumping their version (they have no
 //! terrain).
+//!
+//! Format version 3 (lot 6.11) adds the optional [`Vegetation`] block
+//! (density rules per ground material and hand-placed plants, scattered by
+//! [`vegetation::scatter`]); version 2 files are migrated by bumping their
+//! version (they have no vegetation).
 #![forbid(unsafe_code)]
 
 mod expand;
@@ -20,6 +25,7 @@ pub mod geometry;
 mod migrate;
 mod schema;
 pub mod terrain;
+pub mod vegetation;
 
 pub use expand::{expand_prefabs, expand_symmetry};
 pub use schema::{
@@ -28,6 +34,7 @@ pub use schema::{
     GRID_UNIT_M,
 };
 pub use terrain::Terrain;
+pub use vegetation::{DensityRule, Plant, Species, Vegetation};
 
 /// Expands prefabs then symmetry: the map as built and played.
 #[must_use]
@@ -36,7 +43,7 @@ pub fn expand(map: &MapFile) -> MapFile {
 }
 
 /// Current version of the map format; [`parse`] migrates older files to it.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
 /// Largest accepted map file, in bytes (256 KiB).
 pub const MAX_MAP_BYTES: usize = 262_144;
@@ -170,6 +177,9 @@ fn check(map: &MapFile) -> Result<(), MapError> {
     }
     if let Some(t) = &map.terrain {
         t.validate().map_err(MapError::Invalid)?;
+    }
+    if let Some(v) = &map.vegetation {
+        v.validate().map_err(MapError::Invalid)?;
     }
     Ok(())
 }

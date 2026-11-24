@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 faset-core.workspace = true
+faset-mapfmt.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 serde = { version = "1", features = ["derive"] }

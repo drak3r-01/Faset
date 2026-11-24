@@ -8,6 +8,7 @@ use faset_core::glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::terrain::Terrain;
+use crate::vegetation::Vegetation;
 
 /// Size of one brush grid unit in metres (brush coordinates are integers).
 pub const GRID_UNIT_M: f32 = 0.5;
@@ -48,6 +49,10 @@ pub struct MapFile {
     /// Optional height field (format version 2); see [`crate::terrain`].
     #[serde(default, skip_serializing_if = "Option::is_none", with = "implicit")]
     pub terrain: Option<Terrain>,
+    /// Optional density rules and hand-placed plants (format version 3); see
+    /// [`crate::vegetation`].
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "implicit")]
+    pub vegetation: Option<Vegetation>,
 }
 
 /// Descriptive data shown in menus and used by the rotation.

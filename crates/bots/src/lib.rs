@@ -22,6 +22,9 @@
 //! * [`Level`] and [`LevelTable`]: four levels, data in `data/levels.ron`.
 //! * [`Bot`] bundles a brain with its perception: what the server loop holds
 //!   per bot. [`plan_bot_fill`] gives the number of bots wanted.
+//! * Lot 6.11: [`SightBlockers`] (the map's vegetation, which has no
+//!   collision) also blocks the line of sight once a host hands it to
+//!   [`Bot::set_sight_blockers`]; bullets are not affected.
 //!
 //! Host contract: the host copies the world into a [`RawState`] each tick
 //! (hostile living players, weapon numbers as data, pickups, the objective;
@@ -92,6 +95,7 @@ mod graph;
 mod level;
 pub mod perception;
 mod replan;
+pub mod sight;
 pub mod utility;
 mod view;
 
@@ -105,6 +109,7 @@ pub use graph::{
 pub use level::{Level, LevelError, LevelParams, LevelTable, MoveFlags, DEFAULT_LEVELS_RON};
 pub use perception::{Perception, PerceptionConfig, FOV_DEGREES, LOS_PERIOD};
 pub use replan::{Replanner, REPLAN_INTERVAL};
+pub use sight::{Blocker, SightBlockers};
 pub use utility::{Action, UtilityConfig};
 pub use view::{
     BotView, HeardShot, PickupInfo, PickupKind, RawEntity, RawState, SelfState, Sighting,

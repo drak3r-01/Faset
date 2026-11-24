@@ -19,6 +19,8 @@ mod loadout_preview;
 mod map_looks;
 #[path = "lavapipe/match_scene.rs"]
 mod match_scene;
+#[path = "lavapipe/vegetation.rs"]
+mod vegetation;
 
 const REFERENCE: &str = "tests/refs/example_map.png";
 const EXAMPLE: &str = include_str!("../../../assets/testdata/example.ron");

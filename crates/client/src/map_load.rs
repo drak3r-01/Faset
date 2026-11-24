@@ -6,6 +6,7 @@
 //! touches the renderer, so a headless build can skip it.
 
 use faset_mapfmt::geometry::{bake_occlusion, build_meshes, MeshChunk};
+use faset_mapfmt::vegetation::{scatter, PlacedPlant};
 use faset_mapfmt::{MapError, MapFile};
 use faset_render::glam::Mat4;
 use faset_render::{Instance, RenderError, Renderer, Vertex};
@@ -18,13 +19,16 @@ pub enum MapLoadError {
     Map(#[from] MapError),
 }
 
-/// A map ready to play: expanded file, collision world and mesh chunks.
+/// A map ready to play: expanded file, collision world, mesh chunks and
+/// plants.
 pub struct LoadedMap {
     /// The expanded map (prefabs and symmetry applied).
     pub map: MapFile,
     pub collision: MapCollision,
     /// One chunk per 16 m block, with ambient occlusion in the colours.
     pub chunks: Vec<MeshChunk>,
+    /// Every plant of the map (lot 6.11), the same the bots' sight uses.
+    pub plants: Vec<PlacedPlant>,
 }
 
 /// Parses, expands and builds a map file.
@@ -38,26 +42,46 @@ pub fn load_map(bytes: &[u8]) -> Result<LoadedMap, MapLoadError> {
     bake_occlusion(&mut chunks, |origin, dir, max| {
         collision.ray_cast(origin, dir, max).is_some()
     });
+    let plants = scatter(&map);
     tracing::info!(
         name = %map.meta.name,
         volumes = collision.volume_count(),
         chunks = chunks.len(),
+        props = map.props.len(),
+        plants = plants.len(),
         "map built"
     );
     Ok(LoadedMap {
         map,
         collision,
         chunks,
+        plants,
     })
 }
 
 impl LoadedMap {
+    /// Uploads every chunk and prop to the renderer and returns their static
+    /// instances (chunks first, identity transform); hands the plants to the
+    /// renderer's foliage layer (drawn when
+    /// [`RenderWorld::foliage`](faset_render::RenderWorld::foliage) is set).
+    ///
+    /// # Errors
+    /// Any [`RenderError`] of the mesh upload (for example a full arena).
+    pub fn upload(&self, renderer: &mut Renderer) -> Result<Vec<Instance>, RenderError> {
+        let mut instances = self.upload_blocks(renderer)?;
+        instances.extend(crate::scenery::prop_instances(renderer, &self.map)?);
+        let theme = crate::scenery::plant_theme(&self.map.theme.palette);
+        let (kinds, plants) = crate::scenery::foliage_layer(renderer, &self.plants, theme)?;
+        renderer.set_foliage(kinds, &plants)?;
+        Ok(instances)
+    }
+
     /// Uploads every chunk to the renderer and returns one static instance
     /// each (identity transform).
     ///
     /// # Errors
     /// Any [`RenderError`] of the mesh upload (for example a full arena).
-    pub fn upload(&self, renderer: &mut Renderer) -> Result<Vec<Instance>, RenderError> {
+    pub fn upload_blocks(&self, renderer: &mut Renderer) -> Result<Vec<Instance>, RenderError> {
         let mut instances = Vec::with_capacity(self.chunks.len());
         for chunk in &self.chunks {
             let vertices: Vec<Vertex> = chunk

@@ -203,6 +203,12 @@ def build():
     m.pickup("Ammo", 26, 0.5, 2, 20)
     m.pickup("Ammo", 6, 1.5, -9, 20)
     m.sym = False
+
+    # ---- vegetation (lot 6.11): a lush plateau, sparse tufts and palms on the beaches ----
+    m.set_vegetation(61, [
+        ("grass", "Grass", 45.0), ("grass", "Fern", 10.0), ("grass", "Bush", 1.5),
+        ("sand_white", "Grass", 3.0), ("sand_white", "Palm", 0.3), ("sand_white", "Rock", 0.4),
+    ])
     return m
 
 

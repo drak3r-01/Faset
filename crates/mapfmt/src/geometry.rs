@@ -809,6 +809,7 @@ mod tests {
             zones: vec![],
             lights: vec![],
             terrain: None,
+            vegetation: None,
         }
     }
 

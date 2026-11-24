@@ -131,6 +131,13 @@ def build():
     m.pickup("Ammo", -40, 0.5, -12, 20)
     m.sym = False
     snow_fields(m)
+
+    # ---- vegetation (lot 6.11): pines, rocks, shrubs and pale grass on the snow fields ----
+    # (`terrain:` keeps the snow roofs, banks and snowmen bare)
+    m.set_vegetation(37, [
+        ("terrain:snow", "Pine", 0.6), ("terrain:snow", "Rock", 0.5),
+        ("terrain:snow", "Bush", 0.6), ("terrain:snow", "Grass", 8.0),
+    ])
     return m
 
 

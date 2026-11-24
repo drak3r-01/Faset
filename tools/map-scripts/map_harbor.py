@@ -156,6 +156,9 @@ def build():
     m.pickup("Ammo", -37, 0.5, 6, 20)
     m.pickup("Ammo", -12, 0.5, -20, 20)
     m.sym = False
+
+    # ---- vegetation (lot 6.11): weeds in the cracks of the quay ----
+    m.set_vegetation(23, [("asphalt", "Grass", 2.0)])
     return m
 
 

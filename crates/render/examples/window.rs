@@ -142,6 +142,7 @@ impl App {
             underwater: false,
             screen: ScreenEffects::default(),
             post: None,
+            foliage: false,
         };
         if let Err(e) = renderer.render_frame(&world) {
             tracing::error!("frame failed: {e}");
