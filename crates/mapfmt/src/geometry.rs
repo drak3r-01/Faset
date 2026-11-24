@@ -5,7 +5,9 @@
 //! Faces of boxes are cut where another box touches or contains them, so a
 //! face shared by two touching boxes produces no triangle. Faces of the other
 //! brushes (wedges, cylinders, prisms, stairs) are always emitted. Polygons
-//! are split on the 16 m block planes, one [`MeshChunk`] per block.
+//! are split on the 16 m block planes, one [`MeshChunk`] per block. The
+//! terrain (lot 6.10) adds smooth-shaded triangles in the block of their
+//! centroid, after the brush faces, plus vertical skirts on its borders.
 //!
 //! Decision: materials are names in the file; [`material_style`] maps a name
 //! to a renderer material id and a base colour. Unknown names give id 0 and
@@ -16,6 +18,7 @@ use std::collections::BTreeMap;
 use faset_core::glam::Vec3;
 
 use crate::schema::{grid_to_metres, Axis, Brush, Dir, GridPos, MapFile};
+use crate::terrain::Terrain;
 
 /// Edge of a mesh block in metres.
 pub const BLOCK_SIZE_M: f32 = 16.0;
@@ -618,7 +621,102 @@ pub fn build_meshes(map: &MapFile) -> Vec<MeshChunk> {
             }
         }
     }
+    if let Some(t) = &map.terrain {
+        terrain_mesh(t, &map.theme.palette, &mut chunks);
+    }
     chunks.into_values().collect()
+}
+
+/// Renderer material ids of the terrain grounds (`render/data/materials.ron`,
+/// pattern `Terrain`): each blends its flat ground to a rock on steep slopes.
+/// Index = paint value - 1 (grass, sand, rock, snow, dirt).
+pub const TERRAIN_MATERIALS: [u8; 5] = [54, 55, 56, 57, 58];
+
+/// Material id of a terrain sample: its paint, or for paint 0 (auto) the
+/// ground of the map palette (snow, desert, nature, industrial; grass for
+/// the others).
+#[must_use]
+pub fn terrain_material(palette: &str, paint: u8) -> u8 {
+    let ground = match paint {
+        0 => match palette {
+            "desert" => 2,
+            "snow" => 4,
+            "industrial" | "urban" => 5,
+            _ => 1,
+        },
+        p => p,
+    };
+    TERRAIN_MATERIALS[usize::from(ground.clamp(1, 5)) - 1]
+}
+
+/// Appends the terrain triangles (smooth normals, one vertex per sample and
+/// chunk) and the border skirts to the chunks; a triangle belongs to the
+/// block of its centroid.
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn terrain_mesh(t: &Terrain, palette: &str, chunks: &mut BTreeMap<[i32; 3], MeshChunk>) {
+    let (nx, nz) = t.dims();
+    let mut shared: BTreeMap<([i32; 3], usize), u32> = BTreeMap::new();
+    for tri in t.triangles() {
+        let p = tri.map(|(i, j)| t.sample_pos(i, j));
+        let block = block_of((p[0] + p[1] + p[2]) / 3.0);
+        let chunk = chunks.entry(block).or_insert_with(|| MeshChunk {
+            block,
+            ..MeshChunk::default()
+        });
+        for (k, &(i, j)) in tri.iter().enumerate() {
+            let index = *shared.entry((block, t.index(i, j))).or_insert_with(|| {
+                let n = t.normal(i, j);
+                chunk.vertices.push(Vertex {
+                    position: p[k].to_array(),
+                    normal: [snorm8(n.x), snorm8(n.y), snorm8(n.z), 0],
+                    color_material: [255, 255, 255, terrain_material(palette, t.paint_at(i, j))],
+                });
+                chunk.vertices.len() as u32 - 1
+            });
+            chunk.indices.push(index);
+        }
+    }
+    // Skirts: the four borders, from the surface down to the base.
+    let base = t.base_y();
+    let rock = terrain_material(palette, 3);
+    // Border edges: two samples `(i, j)` and the outward normal.
+    type Edge = ((usize, usize), (usize, usize), Vec3);
+    let mut edges: Vec<Edge> = Vec::new();
+    for i in 0..nx - 1 {
+        edges.push(((i + 1, 0), (i, 0), Vec3::NEG_Z));
+        edges.push(((i, nz - 1), (i + 1, nz - 1), Vec3::Z));
+    }
+    for j in 0..nz - 1 {
+        edges.push(((0, j), (0, j + 1), Vec3::NEG_X));
+        edges.push(((nx - 1, j + 1), (nx - 1, j), Vec3::X));
+    }
+    for (a, b, normal) in edges {
+        let (pa, pb) = (t.sample_pos(a.0, a.1), t.sample_pos(b.0, b.1));
+        let (qa, qb) = (Vec3::new(pa.x, base, pa.z), Vec3::new(pb.x, base, pb.z));
+        let Some(face) = poly(&[pa, pb, qb, qa], normal, (rock, [255, 255, 255])) else {
+            continue;
+        };
+        let centroid = face.pts.iter().copied().sum::<Vec3>() / face.pts.len() as f32;
+        let block = block_of(centroid);
+        let chunk = chunks.entry(block).or_insert_with(|| MeshChunk {
+            block,
+            ..MeshChunk::default()
+        });
+        let first = chunk.vertices.len() as u32;
+        let n = [snorm8(normal.x), snorm8(normal.y), snorm8(normal.z), 0];
+        for v in &face.pts {
+            chunk.vertices.push(Vertex {
+                position: v.to_array(),
+                normal: n,
+                color_material: [255, 255, 255, rock],
+            });
+        }
+        for i in 1..face.pts.len() as u32 - 1 {
+            chunk
+                .indices
+                .extend_from_slice(&[first, first + i, first + i + 1]);
+        }
+    }
 }
 
 /// Rays per vertex.
@@ -710,6 +808,7 @@ mod tests {
             pickups: vec![],
             zones: vec![],
             lights: vec![],
+            terrain: None,
         }
     }
 
@@ -859,6 +958,68 @@ mod tests {
         heights.sort_unstable();
         heights.dedup();
         assert_eq!(heights, [100, 200, 300]);
+    }
+
+    fn hill() -> Terrain {
+        // 40 x 40 m, 2 m cells, a smooth bump of 3 m in the middle.
+        let mut t = Terrain::flat([-40, -40], 4, [21, 21], 0);
+        for j in 0..21 {
+            for i in 0..21 {
+                let p = t.sample_pos(i, j);
+                let k = t.index(i, j);
+                t.heights[k] = (300.0 * (-(p.x * p.x + p.z * p.z) / 60.0).exp()).round() as i16;
+            }
+        }
+        t
+    }
+
+    #[test]
+    fn terrain_mesh_is_smooth_chunked_and_faces_up() {
+        let mut m = map(vec![]);
+        m.theme.palette = "snow".into();
+        m.terrain = Some(hill());
+        let chunks = build_meshes(&m);
+        // 400 cells, 2 triangles each, plus 80 skirt quads.
+        assert_eq!(triangles(&chunks), 800 + 160);
+        // 40 m spans several 16 m blocks.
+        assert!(chunks.len() >= 9, "{}", chunks.len());
+        let snow = terrain_material("snow", 0);
+        assert_eq!(snow, TERRAIN_MATERIALS[3]);
+        let mut smooth = 0;
+        for ch in &chunks {
+            for t in ch.indices.chunks(3) {
+                let v = |i: usize| &ch.vertices[t[i] as usize];
+                if v(0).color_material[3] != snow {
+                    continue;
+                }
+                let p = |i: usize| Vec3::from_array(v(i).position);
+                let n = (p(1) - p(0)).cross(p(2) - p(0)).normalize();
+                assert!(n.y > 0.0, "terrain triangle faces down");
+                // Vertex normals differ from the face normal: smooth shading.
+                if (0..3).any(|i| v(i).normal_vec().dot(n) < 0.999) {
+                    smooth += 1;
+                }
+            }
+        }
+        assert!(smooth > 100, "{smooth}");
+        // Paint overrides the palette.
+        let mut painted = hill();
+        painted.paint = vec![2; painted.heights.len()];
+        m.terrain = Some(painted);
+        let chunks = build_meshes(&m);
+        assert!(chunks
+            .iter()
+            .flat_map(|c| &c.vertices)
+            .any(|v| v.color_material[3] == terrain_material("snow", 2)));
+    }
+
+    #[test]
+    fn terrain_material_follows_the_palette() {
+        assert_eq!(terrain_material("nature", 0), 54);
+        assert_eq!(terrain_material("desert", 0), 55);
+        assert_eq!(terrain_material("snow", 0), 57);
+        assert_eq!(terrain_material("industrial", 0), 58);
+        assert_eq!(terrain_material("desert", 3), 56);
     }
 
     #[test]

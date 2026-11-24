@@ -9,12 +9,17 @@
 //! and [`fingerprint`] hashes that form: the map id used on the network.
 //! Symmetry and prefabs are declared in the file and expanded on load with
 //! [`expand_symmetry`] and [`expand_prefabs`].
+//!
+//! Format version 2 (lot 6.10) adds the optional [`Terrain`] height field;
+//! version 1 files are migrated by bumping their version (they have no
+//! terrain).
 #![forbid(unsafe_code)]
 
 mod expand;
 pub mod geometry;
 mod migrate;
 mod schema;
+pub mod terrain;
 
 pub use expand::{expand_prefabs, expand_symmetry};
 pub use schema::{
@@ -22,6 +27,7 @@ pub use schema::{
     Placement, Pos, Prefab, Prop, Spawn, Symmetry, Team, Theme, WeatherSlot, Zone, ZoneKind,
     GRID_UNIT_M,
 };
+pub use terrain::Terrain;
 
 /// Expands prefabs then symmetry: the map as built and played.
 #[must_use]
@@ -30,7 +36,7 @@ pub fn expand(map: &MapFile) -> MapFile {
 }
 
 /// Current version of the map format; [`parse`] migrates older files to it.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Largest accepted map file, in bytes (256 KiB).
 pub const MAX_MAP_BYTES: usize = 262_144;
@@ -161,6 +167,9 @@ fn check(map: &MapFile) -> Result<(), MapError> {
     }
     if !finite(map) {
         return bad("a number is NaN or infinite".to_owned());
+    }
+    if let Some(t) = &map.terrain {
+        t.validate().map_err(MapError::Invalid)?;
     }
     Ok(())
 }

@@ -24,6 +24,7 @@ use crate::element::{
 use crate::handles::{handle_length, pick_handle, Drag, HandleMode};
 use crate::math::{ray_aabb, Aabb, Ray};
 use crate::mesh::{Block, MeshCache};
+use crate::sculpt::{dab, ray_terrain, terrain_for, SculptOp, SculptSettings, Stroke, TerrainEdit};
 use crate::snap::SnapSettings;
 
 /// The active tool.
@@ -44,6 +45,8 @@ pub enum Tool {
     Zone,
     /// Place point lights.
     Light,
+    /// Sculpt and paint the terrain (lot 6.10).
+    Sculpt,
 }
 
 /// A valid, empty map to start editing from.
@@ -73,6 +76,7 @@ pub fn new_map(name: &str) -> MapFile {
         pickups: Vec::new(),
         zones: Vec::new(),
         lights: Vec::new(),
+        terrain: None,
     }
 }
 
@@ -114,7 +118,10 @@ pub struct Editor {
     pub test: Option<TestSession>,
     /// State of the validation and file panels.
     pub workflow: WorkflowUi,
+    /// Parameters of the sculpt tool.
+    pub sculpt: SculptSettings,
     drag: Option<Drag>,
+    stroke: Option<Stroke>,
 }
 
 /// The editor under the name the lot's interface lists.
@@ -143,7 +150,9 @@ impl Editor {
             files: None,
             test: None,
             workflow: WorkflowUi::default(),
+            sculpt: SculptSettings::default(),
             drag: None,
+            stroke: None,
         }
     }
 
@@ -217,6 +226,7 @@ impl Editor {
     /// Reverts the last command. Returns false when there was none.
     pub fn undo(&mut self) -> bool {
         self.cancel_drag();
+        self.cancel_stroke();
         let Some(touched) = self.history.undo(&mut self.map) else {
             return false;
         };
@@ -228,6 +238,7 @@ impl Editor {
     /// Re-applies the last undone command. Returns false when there was none.
     pub fn redo(&mut self) -> bool {
         self.cancel_drag();
+        self.cancel_stroke();
         let Some(touched) = self.history.redo(&mut self.map) else {
             return false;
         };
@@ -385,6 +396,134 @@ impl Editor {
                 }
                 self.selection = self.pick(ray);
             }
+            Tool::Sculpt => {
+                if let Some(p) = self.terrain_point(ray) {
+                    self.begin_stroke(p);
+                }
+            }
+        }
+    }
+
+    // ---- terrain (lot 6.10) ----
+
+    /// Where `ray` meets the terrain, if there is one under it.
+    #[must_use]
+    pub fn terrain_point(&self, ray: &Ray) -> Option<Vec3> {
+        ray_terrain(self.map.terrain.as_ref()?, ray)
+    }
+
+    /// Adds a flat terrain covering the brushes (one command).
+    pub fn add_terrain(&mut self) {
+        if self.map.terrain.is_some() {
+            return;
+        }
+        let t = terrain_for(&self.map);
+        self.execute(Box::new(TerrainEdit::new("add terrain", None, Some(t))));
+    }
+
+    /// Removes the terrain (one command).
+    pub fn remove_terrain(&mut self) {
+        let old = self.map.terrain.clone();
+        if old.is_some() {
+            self.execute(Box::new(TerrainEdit::new("remove terrain", old, None)));
+        }
+    }
+
+    /// The dab of the current settings at `p`, and at its mirror twin when a
+    /// symmetry mode is on. Returns whether the terrain changed.
+    fn dab_at(&mut self, p: Vec3, flatten_to: f32) -> bool {
+        let settings = self.sculpt;
+        let Some(t) = self.map.terrain.as_mut() else {
+            return false;
+        };
+        let mut changed = dab(t, p.x, p.z, &settings, flatten_to);
+        let twin = match self.symmetry {
+            Symmetry::None => None,
+            Symmetry::MirrorX => Some((-p.x, p.z)),
+            Symmetry::MirrorZ => Some((p.x, -p.z)),
+            Symmetry::Rotate180 => Some((-p.x, -p.z)),
+        };
+        if let Some((x, z)) = twin {
+            changed |= dab(t, x, z, &settings, flatten_to);
+        }
+        changed
+    }
+
+    /// Starts a sculpt stroke at the terrain point `p` with one dab.
+    pub fn begin_stroke(&mut self, p: Vec3) {
+        self.cancel();
+        let Some(before) = self.map.terrain.clone() else {
+            return;
+        };
+        self.stroke = Some(Stroke {
+            before,
+            flatten_to: p.y,
+        });
+        self.stroke_to(p);
+    }
+
+    /// Adds a dab at `p` to the stroke in progress (the document shows it at
+    /// once; the history records the stroke on [`Editor::end_stroke`]).
+    pub fn stroke_to(&mut self, p: Vec3) {
+        let Some(flatten_to) = self.stroke.as_ref().map(|s| s.flatten_to) else {
+            return;
+        };
+        let before = self.map.terrain.clone();
+        if self.dab_at(p, flatten_to) {
+            if let (Some(a), Some(b)) = (before, self.map.terrain.clone()) {
+                let preview = TerrainEdit::new("sculpt", Some(a), Some(b));
+                let touched = preview.touched();
+                self.mark(&touched);
+            }
+        }
+    }
+
+    /// Ends the stroke: the whole stroke becomes one history step.
+    pub fn end_stroke(&mut self) {
+        let Some(stroke) = self.stroke.take() else {
+            return;
+        };
+        let after = self.map.terrain.clone();
+        if after.as_ref() == Some(&stroke.before) {
+            return;
+        }
+        let name = format!("sculpt ({})", self.sculpt.op.label());
+        self.map.terrain = Some(stroke.before.clone());
+        self.execute(Box::new(TerrainEdit::new(
+            &name,
+            Some(stroke.before),
+            after,
+        )));
+    }
+
+    /// One complete stroke of a single dab at `(x, z)` (on the terrain
+    /// surface): a scripted sculpt, one history step.
+    pub fn sculpt_at(&mut self, x: f32, z: f32) {
+        let Some(y) = self.map.terrain.as_ref().and_then(|t| t.height_at(x, z)) else {
+            return;
+        };
+        self.begin_stroke(Vec3::new(x, y, z));
+        self.end_stroke();
+    }
+
+    /// Whether a sculpt stroke is in progress.
+    #[must_use]
+    pub fn is_sculpting(&self) -> bool {
+        self.stroke.is_some()
+    }
+
+    /// The operation of the sculpt tool.
+    pub fn set_sculpt_op(&mut self, op: SculptOp) {
+        self.sculpt.op = op;
+    }
+
+    fn cancel_stroke(&mut self) {
+        if let Some(stroke) = self.stroke.take() {
+            let current = self.map.terrain.clone();
+            let back = TerrainEdit::new("cancel", current, Some(stroke.before.clone()));
+            let touched = back.touched();
+            self.map.terrain = Some(stroke.before);
+            self.mark(&touched);
         }
     }
 
@@ -425,6 +564,10 @@ impl Editor {
             self.drag = Some(drag);
         } else if matches!(self.tool, Tool::Create | Tool::Zone) {
             self.creation.drag(ray, &self.snap);
+        } else if self.stroke.is_some() {
+            if let Some(p) = self.terrain_point(ray) {
+                self.stroke_to(p);
+            }
         }
     }
 
@@ -432,6 +575,8 @@ impl Editor {
     pub fn pointer_release(&mut self) {
         if let Some(drag) = self.drag.take() {
             self.finish_drag(&drag);
+        } else if self.stroke.is_some() {
+            self.end_stroke();
         } else if matches!(self.tool, Tool::Create | Tool::Zone) {
             let top = self.camera.mode == CameraMode::TopOrtho;
             if let Some(brush) = self.creation.release(top) {
@@ -444,6 +589,7 @@ impl Editor {
     /// volume being drawn is dropped.
     pub fn cancel(&mut self) {
         self.cancel_drag();
+        self.cancel_stroke();
         self.creation.cancel();
     }
 

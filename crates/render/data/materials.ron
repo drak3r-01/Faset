@@ -63,4 +63,12 @@
     (id: 51, pattern: Emissive, color_a: (2.5, 2.5, 2.5), color_b: (2.5, 2.5, 2.5), scale: 1.0), // white lamp
     (id: 52, pattern: Emissive, color_a: (3.0, 0.4, 0.3), color_b: (3.0, 0.4, 0.3), scale: 1.0), // red lamp
     (id: 53, pattern: Emissive, color_a: (0.4, 3.0, 0.8), color_b: (0.4, 3.0, 0.8), scale: 1.0), // green lamp
+    // Terrain grounds (ids 54..=58, lot 6.10): colour A holds the ids of the
+    // flat ground and of the rock shown on slopes, colour B the slope band
+    // (1 - normal y) over which a pixel dither blends them (26 to 40 degrees).
+    (id: 54, pattern: Terrain, color_a: (16.0, 18.0, 0.0), color_b: (0.10, 0.24, 0.0), scale: 1.0), // grass, stone slopes
+    (id: 55, pattern: Terrain, color_a: (17.0, 31.0, 0.0), color_b: (0.10, 0.24, 0.0), scale: 1.0), // sand, sandstone slopes
+    (id: 56, pattern: Terrain, color_a: (18.0, 41.0, 0.0), color_b: (0.10, 0.24, 0.0), scale: 1.0), // stone, basalt slopes
+    (id: 57, pattern: Terrain, color_a: (24.0, 18.0, 0.0), color_b: (0.10, 0.24, 0.0), scale: 1.0), // snow, stone slopes
+    (id: 58, pattern: Terrain, color_a: (23.0, 18.0, 0.0), color_b: (0.10, 0.24, 0.0), scale: 1.0), // dirt, stone slopes
 ]

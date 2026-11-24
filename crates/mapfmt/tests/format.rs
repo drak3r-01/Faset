@@ -2,7 +2,7 @@
 
 use faset_mapfmt::{
     expand_prefabs, expand_symmetry, fingerprint, parse, to_ron, Brush, MapError, Symmetry, Team,
-    FORMAT_VERSION, MAX_MAP_BYTES,
+    Terrain, FORMAT_VERSION, MAX_MAP_BYTES,
 };
 
 const EXAMPLE: &[u8] = include_bytes!("../../../assets/testdata/example.ron");
@@ -49,13 +49,58 @@ fn fingerprint_is_stable_and_sensitive() {
 #[test]
 fn future_version_is_rejected() {
     let text = String::from_utf8(EXAMPLE.to_vec()).unwrap().replacen(
-        "format_version: 1",
+        &format!("format_version: {FORMAT_VERSION}"),
         &format!("format_version: {}", FORMAT_VERSION + 1),
         1,
     );
     assert!(matches!(
         parse(text.as_bytes()),
         Err(MapError::UnknownVersion { found }) if found == FORMAT_VERSION + 1
+    ));
+}
+
+#[test]
+fn version_one_files_still_load() {
+    let v1 = String::from_utf8(EXAMPLE.to_vec()).unwrap().replacen(
+        "format_version: 2",
+        "format_version: 1",
+        1,
+    );
+    let map = parse(v1.as_bytes()).unwrap();
+    assert_eq!(map.format_version, FORMAT_VERSION);
+    assert_eq!(map, parse(EXAMPLE).unwrap());
+    assert!(map.terrain.is_none());
+}
+
+#[test]
+fn terrain_round_trips_and_is_validated() {
+    let mut map = parse(EXAMPLE).unwrap();
+    let mut t = Terrain::flat([-20, -20], 4, [11, 6], 0);
+    for (k, h) in t.heights.iter_mut().enumerate() {
+        *h = (k as i16 * 37) % 400 - 120;
+    }
+    t.paint = (0..t.heights.len()).map(|k| (k % 6) as u8).collect();
+    map.terrain = Some(t.clone());
+    let text = to_ron(&map);
+    assert!(text.contains("terrain:"), "{text}");
+    let back = parse(text.as_bytes()).unwrap();
+    assert_eq!(back.terrain.as_ref(), Some(&t));
+    assert_eq!(to_ron(&back), text);
+    // Symmetry and prefabs leave the terrain alone.
+    assert_eq!(expand_symmetry(&back).terrain, Some(t.clone()));
+
+    // A paint value out of range, or a wrong sample count, is rejected.
+    let mut bad = map.clone();
+    bad.terrain.as_mut().unwrap().paint[3] = 7;
+    assert!(matches!(
+        parse(to_ron(&bad).as_bytes()),
+        Err(MapError::Invalid(_))
+    ));
+    let mut bad = map;
+    bad.terrain.as_mut().unwrap().size = [12, 6];
+    assert!(matches!(
+        parse(to_ron(&bad).as_bytes()),
+        Err(MapError::Invalid(_))
     ));
 }
 

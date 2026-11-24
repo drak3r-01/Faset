@@ -8,6 +8,7 @@ use crate::camera::{CameraInput, CameraMode};
 use crate::create::BrushKind;
 use crate::editor::{Editor, Tool};
 use crate::handles::HandleMode;
+use crate::sculpt::SculptOp;
 
 /// What the viewport saw this frame, gathered from egui before acting.
 struct Frame {
@@ -122,6 +123,35 @@ impl Editor {
         }
     }
 
+    /// Sculpt tool settings: operation, radius, strength, and adding or
+    /// removing the terrain.
+    fn sculpt_settings(&mut self, ui: &mut egui::Ui) {
+        if self.map.terrain.is_none() {
+            if ui.button("Add terrain").clicked() {
+                self.add_terrain();
+            }
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            for op in SculptOp::all() {
+                ui.selectable_value(&mut self.sculpt.op, op, op.label());
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Radius (m)");
+            ui.add(egui::DragValue::new(&mut self.sculpt.radius_m).range(0.5..=64.0));
+            ui.label("Strength");
+            ui.add(
+                egui::DragValue::new(&mut self.sculpt.strength)
+                    .range(0.01..=4.0)
+                    .speed(0.01),
+            );
+        });
+        if ui.button("Remove terrain").clicked() {
+            self.remove_terrain();
+        }
+    }
+
     /// The toolbar window: tools, brush kind, camera mode, snapping, undo.
     pub fn toolbar(&mut self, ctx: &egui::Context) {
         egui::Window::new("Editor")
@@ -138,6 +168,7 @@ impl Editor {
                     ui.selectable_value(&mut self.tool, Tool::Pickup, "Pickup");
                     ui.selectable_value(&mut self.tool, Tool::Zone, "Zone");
                     ui.selectable_value(&mut self.tool, Tool::Light, "Light");
+                    ui.selectable_value(&mut self.tool, Tool::Sculpt, "Terrain");
                 });
                 self.symmetry_combo(ui);
                 ui.horizontal(|ui| {
@@ -172,6 +203,8 @@ impl Editor {
                         ui.selectable_value(&mut self.handle_mode, HandleMode::Rotate, "Rotate");
                         ui.selectable_value(&mut self.handle_mode, HandleMode::Scale, "Scale");
                     });
+                } else if self.tool == Tool::Sculpt {
+                    self.sculpt_settings(ui);
                 }
                 ui.separator();
                 let top = self.camera.mode == CameraMode::TopOrtho;

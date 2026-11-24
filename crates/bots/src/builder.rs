@@ -36,6 +36,15 @@ const VOID_MARGIN: f32 = 8.0;
 /// Highest difference between a landing height and a node height, metres.
 const LAND_TOL_Y: f32 = 0.4;
 
+/// Extra walk time per unit of grade on terrain links (decision, lot 6.10):
+/// a 45 degree slope takes twice as long as flat ground.
+const SLOPE_COST: f32 = 1.0;
+
+/// Horizontal distance between two points.
+fn horizontal(a: Vec3, b: Vec3) -> f32 {
+    ((b.x - a.x).powi(2) + (b.z - a.z).powi(2)).sqrt()
+}
+
 /// A floor hit of one column.
 struct Floor {
     y: f32,
@@ -333,7 +342,8 @@ impl Ctx<'_> {
                         if !self.walk_link(a as NodeId, b) {
                             continue;
                         }
-                        let time = na.pos.distance(self.node(b).pos) / self.params.run_speed;
+                        let time = na.pos.distance(self.node(b).pos) / self.params.run_speed
+                            * self.slope_factor(a as NodeId, b);
                         let edge = |to| Edge {
                             to,
                             kind: EdgeKind::Walk,
@@ -359,7 +369,13 @@ impl Ctx<'_> {
         let (na, nb) = (self.node(a), self.node(b));
         let dy = nb.pos.y - na.pos.y;
         let step = dy.abs() <= self.params.max_step + STEP_TOL;
-        if !step {
+        if !step && self.on_terrain(na, nb) {
+            // Terrain: one continuous surface, walkable while the slope
+            // between the two nodes stays within the controller's limit.
+            if dy.abs() > horizontal(na.pos, nb.pos) * self.max_grade() + STEP_TOL {
+                return false;
+            }
+        } else if !step {
             let n = na.normal;
             let plane_y =
                 na.pos.y - (n.x * (nb.pos.x - na.pos.x) + n.z * (nb.pos.z - na.pos.z)) / n.y;
@@ -380,6 +396,28 @@ impl Ctx<'_> {
                 .world
                 .shape_cast(from, to - from, PLAYER_HEIGHT)
                 .is_none()
+    }
+
+    /// Whether both nodes stand on terrain triangles.
+    fn on_terrain(&self, na: &Node, nb: &Node) -> bool {
+        self.world.is_terrain(na.volume as usize) && self.world.is_terrain(nb.volume as usize)
+    }
+
+    /// Steepest walkable grade (rise over run) of the controller.
+    fn max_grade(&self) -> f32 {
+        let ny = self.params.min_ground_normal_y().max(1e-3);
+        (1.0 - ny * ny).max(0.0).sqrt() / ny
+    }
+
+    /// Walk time multiplier of a terrain link: `1 + SLOPE_COST * grade`, so
+    /// bots prefer to walk around hills (1 elsewhere).
+    fn slope_factor(&self, a: NodeId, b: NodeId) -> f32 {
+        let (na, nb) = (self.node(a), self.node(b));
+        if !self.on_terrain(na, nb) {
+            return 1.0;
+        }
+        let run = horizontal(na.pos, nb.pos).max(1e-3);
+        1.0 + SLOPE_COST * (nb.pos.y - na.pos.y).abs() / run
     }
 
     /// Per node, a bit per direction (index of [`directions`]) that has a

@@ -8,7 +8,9 @@ HEADER = """// Pine Hollow: a snowed-in alpine valley. Team map, 14 players, Rot
 // front, rooftop reachable by a ramp), a ridge with a watch hut on the north
 // side (and, by the half turn, one on the south side), pines and boulders as
 // cover. The valley is closed by mountain walls of stone, ice and snow caps
-// up to 24 m: no way out.
+// up to 24 m: no way out. The snow is a terrain (lot 6.10): rolling fields
+// and banks rising at the foot of the mountains, flat around everything
+// built on the ground.
 //
 //   z=-36 ^^^^^^^^^^^^^ mountains ^^^^^^^^^^^^^^^^
 //         |  cabin W (A)  .   frozen lake   .  cabin E (B)  |
@@ -45,13 +47,9 @@ def build():
             HEADER, gravity=9.81)
     r = random.Random(5)
 
-    # ---- ground: snow with a frozen lake in the middle (same level, tiled around it) ----------------
+    # ---- ground: a frozen lake in the middle; the snow around it is the terrain (see the end) -------
     m.box(-64, -4, -48, 64, -2, 48, "dirt")
     m.zone(-68, -12, -52, 68, -2, 52, "KillVolume")
-    m.box(-52, -2, -36, 52, 0, -10, "snow")
-    m.box(-52, -2, 10, 52, 0, 36, "snow")
-    m.box(-52, -2, -10, -14, 0, 10, "snow")
-    m.box(14, -2, -10, 52, 0, 10, "snow")
     m.box(-14, -2, -10, 14, 0, 10, "ice")                              # the lake
     # snow banks around the lake (low wedges)
     m.box(-14, 0, -10.5, 14, 0.5, -10, "snow")
@@ -132,7 +130,61 @@ def build():
     m.pickup("Ammo", -20, 0.5, 1, 20)
     m.pickup("Ammo", -40, 0.5, -12, 20)
     m.sym = False
+    snow_fields(m)
     return m
+
+
+def smoothstep(a, b, x):
+    t = min(max((x - a) / (b - a), 0.0), 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def snow_fields(m):
+    """Terrain (lot 6.10): rolling snow fields over the valley floor, rising
+    into banks at the foot of the mountains. Everything standing on the
+    ground (cabins, ridge, pines, rocks, spawns, pickups) keeps a flat patch
+    at y = 0 that blends into the hills over 1 to 5 m; under the lake the
+    terrain hides below the ice. Symmetric under the half turn, like the map.
+    """
+    import re
+    rects = []
+    for (a, b, c, d, e, f_) in m.solids:
+        cx, cz = (a + d) / 2, (c + f_) / 2
+        if abs(b) <= 0.05 and abs(cx) < 52 and abs(cz) < 36:
+            rects.append((a, c, d, f_))
+    for s in m.spawns + m.pickups:
+        x, _, z = (float(v) for v in re.search(r"at: \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", s).groups())
+        rects.append((x - 0.5, z - 0.5, x + 0.5, z + 0.5))
+    rects.append((-14, -10, 14, 10))  # the lake
+
+    def clearance(x, z):
+        best = 1e9
+        for (a, c, d, f_) in rects:
+            dx = max(a - x, 0.0, x - d)
+            dz = max(c - z, 0.0, z - f_)
+            best = min(best, math.hypot(dx, dz))
+        return best
+
+    def raw(x, z):
+        hills = 0.8 * math.cos(0.19 * x + 0.11 * z) + 0.6 * math.cos(0.07 * x - 0.23 * z) \
+            + 0.4 * math.cos(0.29 * x + 0.25 * z)
+        bank = 0.45 * max(0.0, abs(z) - 27) + 0.45 * max(0.0, abs(x) - 45)
+        return 0.6 + 0.7 * hills + bank
+
+    def height(x, z):
+        if -14 < x < 14 and -10 < z < 10:
+            return -0.5  # under the ice
+        mask = smoothstep(1.0, 5.0, min(clearance(x, z), clearance(-x, -z)))
+        return mask * raw(x, z)
+
+    cms = m.set_terrain(-52, -36, 2.0, 53, 37, height)
+    steep = 0
+    for j in range(36):
+        for i in range(52):
+            h = lambda a, b: cms[b * 53 + a] / 100
+            grade = max(abs(h(i + 1, j) - h(i, j)), abs(h(i, j + 1) - h(i, j)), abs(h(i + 1, j + 1) - h(i, j)) / 1.414) / 2
+            steep += grade > 1.0
+    print(f"pine-hollow terrain: {min(cms) / 100} to {max(cms) / 100} m, {steep} cells steeper than 45 degrees")
 
 
 if __name__ == "__main__":

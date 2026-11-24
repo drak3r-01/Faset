@@ -150,6 +150,9 @@ fn build_block(map: &MapFile, block: Block) -> Option<MeshChunk> {
         pickups: Vec::new(),
         zones: Vec::new(),
         lights: Vec::new(),
+        // The terrain is cheap to build whole; only its triangles of this
+        // block are kept.
+        terrain: map.terrain.clone(),
     };
     build_meshes(&sub).into_iter().find(|c| c.block == block)
 }

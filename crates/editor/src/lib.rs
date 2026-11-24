@@ -30,6 +30,11 @@
 //! camera), the immediate test ([`TestSession`]: an integrated server on the
 //! document, the player at the camera) and files ([`FileService`]: save to
 //! `maps/`, export, import, autosave every 60 s to a separate folder).
+//!
+//! Lot 6.10 adds terrain sculpting ([`Tool::Sculpt`], [`SculptSettings`]):
+//! raise, lower, smooth, flatten and paint the map's height field with a
+//! round brush; a stroke is one [`TerrainEdit`] in the history, mirrored
+//! with the symmetry mode, and the terrain is saved in the map file.
 #![forbid(unsafe_code)]
 
 mod camera;
@@ -45,6 +50,7 @@ mod library;
 mod math;
 mod mesh;
 mod panels;
+mod sculpt;
 mod snap;
 mod symmetry;
 mod test_session;
@@ -80,6 +86,7 @@ pub use library::{
 pub use math::{axis_drag_param, ray_aabb, ray_horizontal_plane, Aabb, Ray};
 pub use mesh::{Block, MeshCache};
 pub use panels::{LibraryTab, PanelState};
+pub use sculpt::{dab, ray_terrain, terrain_for, SculptOp, SculptSettings, TerrainEdit};
 pub use snap::SnapSettings;
 pub use symmetry::Mirror;
 pub use test_session::{TestError, TestSession};

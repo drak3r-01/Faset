@@ -43,6 +43,16 @@
 //!   the motion and the four horizontal axes at the end of the tick) is
 //!   settled back to the 1 mm skin with exact rays. Remaining penetration is
 //!   bounded by 5 mm in the tests (edges and rotated faces).
+//! - Terrain (lot 6.10): on terrain triangles the capsule often touches the
+//!   edge between two faces, where the sweep normal lies between them. A
+//!   grounded player touching a terrain triangle whose own face is walkable
+//!   slides along that face instead of meeting a wall, and the ground under
+//!   a terrain contact is the face hit by an exact ray straight down from
+//!   the bottom sphere centre (long enough for a 45 degree slope), else the
+//!   touched triangle's face. In the air, a terrain face steeper than the
+//!   walkable limit never adds upward speed (air control would otherwise
+//!   climb it). Brush contacts keep the rules above, so maps
+//!   without terrain move exactly as before.
 //! - Soft brake: above 15 m/s, a landing removes 25 % of the horizontal speed
 //!   in excess.
 //! - Slide and slide-hop live in [`crate::slide`] (lot 4.3).
@@ -69,7 +79,7 @@ use faset_protocol::quant::ANGLE_STEP;
 use faset_protocol::InputCommand;
 use serde::{Deserialize, Serialize};
 
-use crate::collision::StaticWorld;
+use crate::collision::{StaticWorld, SweepHit};
 use crate::map_collision::{MapCollision, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS};
 use crate::slide;
 
@@ -682,6 +692,20 @@ fn surface_normal(world: &StaticWorld, centre: Vec3, height: f32, n: Vec3) -> Ve
     }
 }
 
+/// Normal of the surface a downward sweep `hit` stands on: see
+/// [`surface_normal`] for brushes; on terrain, the face under the bottom
+/// sphere centre (exact ray), else the touched triangle's face.
+fn contact_normal(world: &StaticWorld, centre: Vec3, height: f32, hit: &SweepHit) -> Vec3 {
+    let Some(face) = world.terrain_normal(hit.volume) else {
+        return surface_normal(world, centre, height, hit.normal);
+    };
+    let bottom = centre - Vec3::Y * half_segment(height);
+    // 2 r reaches the surface under the centre on any slope up to 60 degrees.
+    world
+        .ray_cast(bottom, Vec3::NEG_Y, 2.0 * PLAYER_RADIUS)
+        .map_or(face, |h| h.normal)
+}
+
 /// Drop for a gap measured by a sweep: the gap minus [`SKIN`], or nothing
 /// when that is within [`SKIN`]. Parry sweeps near the large boxes of a map
 /// report contacts a few millimetres off; ignoring sub-millimetre drops keeps
@@ -725,7 +749,7 @@ fn probe_ground(world: &StaticWorld, state: &PlayerState, dist: f32, min_ny: f32
     }
     let hit = sweep?;
     let at = state.pos - Vec3::Y * (hit.toi * dist);
-    let n = surface_normal(world, at, height, hit.normal);
+    let n = contact_normal(world, at, height, &hit);
     (n.y >= min_ny).then(|| ground_drop(hit.toi * dist))
 }
 
@@ -859,7 +883,7 @@ fn move_with_steps(
 ) -> (Vec3, Vec3, Option<Vec3>) {
     let upright = grounded.then_some(min_ny);
     let (down_pos, down_vel, blocked, wall) =
-        slide_move(world, pos, vel, height, dt, upright, p.wall_max_ny);
+        slide_move(world, pos, vel, height, dt, upright, min_ny, p.wall_max_ny);
     if !grounded || !blocked || p.max_step <= 0.0 {
         return (down_pos, down_vel, wall);
     }
@@ -873,15 +897,23 @@ fn move_with_steps(
     }
     let up_pos = pos + Vec3::Y * raised;
     let flat = Vec3::new(vel.x, 0.0, vel.z);
-    let (step_pos, step_vel, _, _) =
-        slide_move(world, up_pos, flat, height, dt, upright, p.wall_max_ny);
+    let (step_pos, step_vel, _, _) = slide_move(
+        world,
+        up_pos,
+        flat,
+        height,
+        dt,
+        upright,
+        min_ny,
+        p.wall_max_ny,
+    );
     // Lower back to the starting level at most.
     let lower = step_pos.y - pos.y;
     let Some(hit) = world.shape_cast(step_pos, Vec3::NEG_Y * lower, height) else {
         return (down_pos, down_vel, wall);
     };
     let at = step_pos - Vec3::Y * (hit.toi * lower);
-    if surface_normal(world, at, height, hit.normal).y < min_ny {
+    if contact_normal(world, at, height, &hit).y < min_ny {
         return (down_pos, down_vel, wall);
     }
     let landed = step_pos - Vec3::Y * ground_drop(hit.toi * lower);
@@ -934,6 +966,7 @@ fn resolve(vel: Vec3, planes: &[Vec3]) -> Vec3 {
 /// `upright` (grounded players: the walkable limit) turns non-walkable
 /// contacts into vertical walls, so a grounded player never rides up a steep
 /// slope or a step edge: steps are climbed by the step-up retry only.
+#[allow(clippy::too_many_arguments)]
 fn slide_move(
     world: &StaticWorld,
     mut pos: Vec3,
@@ -941,6 +974,7 @@ fn slide_move(
     height: f32,
     dt: f32,
     upright: Option<f32>,
+    min_ny: f32,
     wall_ny: f32,
 ) -> (Vec3, Vec3, bool, Option<Vec3>) {
     let start = pos;
@@ -973,9 +1007,14 @@ fn slide_move(
         let mut n = hit.normal;
         if let Some(min_ny) = upright {
             if n.y > 0.0 && n.y < min_ny {
-                n = Vec3::new(n.x, 0.0, n.z).try_normalize().unwrap_or(n);
+                n = match world.terrain_normal(hit.volume) {
+                    // The edge of a walkable terrain triangle: follow its face.
+                    Some(face) if face.y >= min_ny => face,
+                    _ => Vec3::new(n.x, 0.0, n.z).try_normalize().unwrap_or(n),
+                };
             }
         }
+        let rise_before = vel.y.max(0.0);
         if let Some(&same) = planes[..n_planes].iter().find(|m| m.dot(n) > 0.999) {
             vel = clip(vel, same);
         } else if n_planes < planes.len() {
@@ -984,6 +1023,16 @@ fn slide_move(
             vel = resolve(vel, &planes[..n_planes]);
         } else {
             vel = Vec3::ZERO;
+        }
+        // A terrain face too steep to stand on never lifts the player: the
+        // air control pushing into it would otherwise climb it tick by tick.
+        if upright.is_none()
+            && vel.y > rise_before
+            && world
+                .terrain_normal(hit.volume)
+                .is_some_and(|face| face.y < min_ny)
+        {
+            vel.y = rise_before;
         }
         if vel.dot(primal) <= 0.0 {
             vel = Vec3::ZERO;

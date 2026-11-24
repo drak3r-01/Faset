@@ -73,6 +73,11 @@ pub struct RayHit {
 pub struct StaticWorld {
     volumes: Vec<Volume>,
     bvh: Bvh,
+    /// Volumes from this index on are terrain triangles (lot 6.10): one
+    /// continuous surface, which navigation may walk across freely.
+    terrain_from: usize,
+    /// Upward face normal of each terrain triangle, from `terrain_from` on.
+    terrain_normals: Vec<Vec3>,
 }
 
 impl Default for StaticWorld {
@@ -113,18 +118,55 @@ pub fn player_capsule(height: f32) -> Capsule {
 impl StaticWorld {
     #[must_use]
     pub fn new(volumes: Vec<Volume>) -> Self {
+        Self::with_terrain(volumes, Vec::new())
+    }
+
+    /// A world whose last `terrain_normals.len()` volumes are terrain
+    /// triangles (lot 6.10) with these upward face normals (see
+    /// [`StaticWorld::is_terrain`]). Queries treat them like any other volume;
+    /// the character controller reads the face normals to tell a slope from
+    /// a wall where the capsule touches the edge between two triangles.
+    ///
+    /// # Panics
+    /// If there are more normals than volumes.
+    #[must_use]
+    pub fn with_terrain(volumes: Vec<Volume>, terrain_normals: Vec<Vec3>) -> Self {
         let bvh = if volumes.is_empty() {
             Bvh::new()
         } else {
             let leaves: Vec<Aabb> = volumes.iter().map(Volume::aabb).collect();
             Bvh::from_leaves(BvhBuildStrategy::Ploc, &leaves)
         };
-        Self { volumes, bvh }
+        let terrain_from = volumes
+            .len()
+            .checked_sub(terrain_normals.len())
+            .expect("one volume per terrain normal");
+        Self {
+            volumes,
+            bvh,
+            terrain_from,
+            terrain_normals,
+        }
     }
 
     #[must_use]
     pub fn volumes(&self) -> &[Volume] {
         &self.volumes
+    }
+
+    /// Whether volume `index` is a terrain triangle.
+    #[must_use]
+    pub fn is_terrain(&self, index: usize) -> bool {
+        index >= self.terrain_from && index < self.volumes.len()
+    }
+
+    /// Upward face normal of terrain triangle `index`, `None` for any other
+    /// volume.
+    #[must_use]
+    pub fn terrain_normal(&self, index: usize) -> Option<Vec3> {
+        self.terrain_normals
+            .get(index.checked_sub(self.terrain_from)?)
+            .copied()
     }
 
     /// Test arena: 100 m floor with top at y = 0 and a wall at x = 10.
