@@ -14,7 +14,7 @@ use faset_minigame_api::{GameEvent, MatchMirror, ModeEntry, Phase, Registry};
 use faset_mode_fps::hud::{HudInput, HudModel, ScoreRow};
 use faset_mode_fps::{
     cone_sigma, decay_beta, fps_client, state_multiplier, ClientPickup, ClientPlayer, FpsClient,
-    ServerMsg, Stance, MOVING_SPEED,
+    HitZone, ServerMsg, Stance, WeaponDef, MOVING_SPEED,
 };
 use faset_protocol::Event;
 use faset_ui::display_name;
@@ -60,6 +60,25 @@ pub struct Blast {
     pub born: f64,
 }
 
+/// Feedback the local player should see or hear, drained with
+/// [`MatchView::take_feedback`] (lot 6.9).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Feedback {
+    /// The magazine of the weapon in hand was refilled.
+    Reloaded,
+    /// The local player's shot hurt someone.
+    HitConfirmed { headshot: bool },
+    /// The local player killed someone.
+    KillConfirmed,
+    /// The local player was hurt by `attacker`.
+    Damaged { attacker: NetId },
+    /// A blast went off.
+    Explosion { centre: Vec3 },
+}
+
+/// Feedback kept when nobody drains it.
+const MAX_FEEDBACK: usize = 64;
+
 /// What the local player does this frame, for the HUD.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct LocalFrame {
@@ -88,6 +107,7 @@ pub struct MatchView {
     shots: u32,
     /// Latest server tick seen.
     server_tick: Tick,
+    feedback: Vec<Feedback>,
 }
 
 impl MatchView {
@@ -105,6 +125,7 @@ impl MatchView {
             beta: 0.0,
             shots: 0,
             server_tick: Tick(0),
+            feedback: Vec::new(),
         }
     }
 
@@ -119,6 +140,7 @@ impl MatchView {
         self.tallies.clear();
         self.projectiles.clear();
         self.blasts.clear();
+        self.feedback.clear();
     }
 
     /// Whether a mode is mirrored.
@@ -189,15 +211,34 @@ impl MatchView {
                     centre: *centre,
                     born: now,
                 });
+                self.note(Feedback::Explosion { centre: *centre });
             }
-            GameEvent::Mode(bytes) => {
-                if let Some(ServerMsg::Kill { attacker, victim }) = ServerMsg::decode(bytes) {
+            GameEvent::Mode(bytes) => match ServerMsg::decode(bytes) {
+                Some(ServerMsg::Kill { attacker, victim }) => {
                     if attacker != victim {
                         self.tallies.entry(attacker).or_default().0 += 1;
+                        if Some(attacker) == self.local {
+                            self.note(Feedback::KillConfirmed);
+                        }
                     }
                     self.tallies.entry(victim).or_default().1 += 1;
                 }
-            }
+                Some(ServerMsg::Hit {
+                    attacker,
+                    victim,
+                    zone,
+                    ..
+                }) if attacker != victim => {
+                    if Some(attacker) == self.local {
+                        self.note(Feedback::HitConfirmed {
+                            headshot: zone == HitZone::Head,
+                        });
+                    } else if Some(victim) == self.local {
+                        self.note(Feedback::Damaged { attacker });
+                    }
+                }
+                _ => {}
+            },
             GameEvent::PhaseChanged {
                 phase: Phase::Playing,
                 ..
@@ -208,6 +249,24 @@ impl MatchView {
             m.on_event(game);
         }
         true
+    }
+
+    fn note(&mut self, feedback: Feedback) {
+        if self.feedback.len() == MAX_FEEDBACK {
+            self.feedback.remove(0);
+        }
+        self.feedback.push(feedback);
+    }
+
+    /// The feedback since the last call: reloads, hit and kill confirmations,
+    /// damage taken and blasts.
+    pub fn take_feedback(&mut self) -> Vec<Feedback> {
+        std::mem::take(&mut self.feedback)
+    }
+
+    /// The definition of weapon `index` of the match's list.
+    pub fn weapon_def(&mut self, index: usize) -> Option<WeaponDef> {
+        self.client().and_then(|c| c.weapons().get(index).cloned())
     }
 
     fn projectile_def(&mut self, weapon: u8) -> (f32, f32) {
@@ -335,6 +394,8 @@ impl MatchView {
                     if let Some(def) = &weapon {
                         self.beta += def.spread.delta_beta;
                     }
+                } else if was_index == i && p.ammo > was {
+                    self.note(Feedback::Reloaded);
                 }
             }
             self.last_ammo = Some((i, p.ammo));
@@ -491,5 +552,68 @@ mod tests {
         assert!(v.players().is_empty());
         assert!(v.movement_allowed() && v.local_alive());
         assert_eq!(v.move_scale(), (1.0, 1.0));
+    }
+
+    fn mode_event(msg: ServerMsg) -> Event {
+        GameEvent::Mode(msg.encode()).to_protocol()
+    }
+
+    #[test]
+    fn hits_kills_and_damage_become_feedback_for_the_local_player_only() {
+        let mut v = view();
+        let hit = |attacker, victim, zone| {
+            mode_event(ServerMsg::Hit {
+                attacker: NetId(attacker),
+                victim: NetId(victim),
+                amount: 20.0,
+                zone,
+            })
+        };
+        v.on_event(&hit(1, 2, HitZone::Head), 0.0);
+        v.on_event(&hit(1, 2, HitZone::Body), 0.0);
+        v.on_event(&hit(3, 1, HitZone::Body), 0.0);
+        v.on_event(&hit(3, 2, HitZone::Body), 0.0);
+        v.on_event(&hit(1, 1, HitZone::Body), 0.0);
+        v.on_event(
+            &mode_event(ServerMsg::Kill {
+                attacker: NetId(1),
+                victim: NetId(2),
+            }),
+            0.0,
+        );
+        v.on_event(
+            &mode_event(ServerMsg::Kill {
+                attacker: NetId(1),
+                victim: NetId(1),
+            }),
+            0.0,
+        );
+        let blast = GameEvent::Explosion {
+            owner: NetId(2),
+            weapon: 0,
+            centre: Vec3::X,
+        }
+        .to_protocol();
+        v.on_event(&blast, 0.0);
+        assert_eq!(
+            v.take_feedback(),
+            vec![
+                Feedback::HitConfirmed { headshot: true },
+                Feedback::HitConfirmed { headshot: false },
+                Feedback::Damaged { attacker: NetId(3) },
+                Feedback::KillConfirmed,
+                Feedback::Explosion { centre: Vec3::X },
+            ]
+        );
+        assert!(v.take_feedback().is_empty(), "drained");
+    }
+
+    #[test]
+    fn undrained_feedback_is_bounded() {
+        let mut v = view();
+        for _ in 0..1000 {
+            v.note(Feedback::Reloaded);
+        }
+        assert_eq!(v.take_feedback().len(), MAX_FEEDBACK);
     }
 }

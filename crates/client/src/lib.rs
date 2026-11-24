@@ -21,6 +21,10 @@
 //!   roll, landing dip), its TOML-compatible [`FeelParams`] and the mouse
 //!   sensitivity conversions.
 //! * [`hud`]: draws the FPS HUD model with egui.
+//! * [`effects`], [`shoot_feel`], [`sounds`], [`surface`] (lot 6.9): the feel of
+//!   shooting. Muzzle flash, tracers, material impacts and bullet decals in
+//!   bounded pools, the recoil curve and camera shake derived from the weapon
+//!   data, the sounds synthesised in code and the surface kind a shot hits.
 //! * [`map_load`]: turns a map file into collisions and render meshes (steps 1
 //!   to 3 of the map load pipeline) and uploads the meshes.
 //! * [`map_sync`]: the map cache (by fingerprint) and the `MapChange` and map
@@ -63,6 +67,7 @@ pub mod app;
 pub mod camera;
 pub mod clock;
 pub mod discovery;
+pub mod effects;
 pub mod egui_input;
 pub mod favorites;
 pub mod feel;
@@ -82,7 +87,10 @@ pub mod preview;
 pub mod profile;
 pub mod scene;
 pub mod session;
+pub mod shoot_feel;
+pub mod sounds;
 pub mod state;
+pub mod surface;
 pub mod weapon_models;
 
 pub use app::{App, MapCatalogue, CONNECT_TIMEOUT};
@@ -114,7 +122,7 @@ pub use join::JoinTarget;
 pub use look::MapLook;
 pub use map_load::{load_map, LoadedMap, MapLoadError};
 pub use map_sync::{MapCache, MapEvent, MapSync, MapSyncError};
-pub use match_view::{Blast, LiveProjectile, LocalFrame, MatchView};
+pub use match_view::{Blast, Feedback, LiveProjectile, LocalFrame, MatchView};
 pub use prediction::{
     AuthoritativeState, HistoryEntry, PredictedState, Prediction, PredictionError,
     PredictionHistory, ReconcileOutcome, Tolerance, VisualOffset, COMMANDS_PER_PACKET,
@@ -122,6 +130,11 @@ pub use prediction::{
 };
 pub use preview::CharacterPreview;
 pub use profile::{Appearance, Profile, ProfileError, SavedClass, PROFILE_VERSION};
-pub use scene::{MatchScene, SceneFrame};
+pub use scene::{MatchScene, SceneFrame, SceneOutput};
 pub use session::{map_config, Session, SessionError};
+pub use shoot_feel::{
+    blast_trauma, recoil_pattern, shot_trauma, CameraShake, DamageArc, DamageIndicators,
+};
+pub use sounds::{shot_recipe, Cue};
 pub use state::{AppState, StateError, StateStack, Transition};
+pub use surface::{Surface, SurfaceMap};

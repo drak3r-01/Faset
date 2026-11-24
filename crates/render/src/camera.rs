@@ -111,6 +111,27 @@ pub fn jittered_projection(proj: Mat4, jitter_ndc: Vec2) -> Mat4 {
     p
 }
 
+/// Lowest depth the first-person view model reaches (lot 6.9). Its depth is
+/// squeezed into `VIEWMODEL_DEPTH_MIN..=1` (reverse-Z: 1 is the near plane),
+/// so every world surface farther than `near / VIEWMODEL_DEPTH_MIN` (about
+/// 0.11 m for a 0.1 m near plane) lies behind it.
+pub const VIEWMODEL_DEPTH_MIN: f32 = 0.9;
+
+/// The projection of the first-person view model: `proj` with its depth
+/// remapped from `d` to `VIEWMODEL_DEPTH_MIN + (1 - VIEWMODEL_DEPTH_MIN) d`
+/// (clip `z' = a w + (1 - a) z` with `a = VIEWMODEL_DEPTH_MIN`). The x and y
+/// rows are untouched, so the weapon keeps the camera's field of view.
+pub fn viewmodel_projection(proj: &Mat4) -> Mat4 {
+    let a = VIEWMODEL_DEPTH_MIN;
+    let squeeze = Mat4::from_cols(
+        Vec4::new(1.0, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 1.0, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, 1.0 - a, 0.0),
+        Vec4::new(0.0, 0.0, a, 1.0),
+    );
+    squeeze * *proj
+}
+
 /// Motion vector of a point from its current and previous unjittered clip
 /// positions: m = (c.xy / c.w - c'.xy / c'.w) / 2, in UV units (the opaque
 /// shader computes the same per pixel).
@@ -254,5 +275,36 @@ mod tests {
         // The world appears to move left: m.x = -0.5 * (f / a) * d / depth.
         assert!((m.x - (-0.5 * d / depth)).abs() < 1e-6, "{m}");
         assert!(m.y.abs() < 1e-7);
+    }
+}
+
+#[cfg(test)]
+mod viewmodel_tests {
+    use super::*;
+    use faset_core::glam::Vec3;
+
+    fn depth(m: &Mat4, z: f32) -> f32 {
+        let c = *m * Vec3::new(0.0, 0.0, -z).extend(1.0);
+        c.z / c.w
+    }
+
+    #[test]
+    fn view_model_depth_stays_in_the_squeezed_range() {
+        let proj = perspective_reverse_z(75f32.to_radians(), 1.5, 0.1);
+        let vm = viewmodel_projection(&proj);
+        for z in [0.1_f32, 0.3, 1.0, 10.0, 1.0e4] {
+            let d = depth(&vm, z);
+            assert!(
+                (VIEWMODEL_DEPTH_MIN..=1.0 + 1e-6).contains(&d),
+                "depth {d} at {z} m"
+            );
+            // Every world surface farther than 0.12 m is behind it.
+            assert!(d > depth(&proj, 0.12), "view model in front at {z} m");
+        }
+        assert!(depth(&vm, 0.3) > depth(&vm, 0.6), "order is preserved");
+        // The image position is the camera's.
+        let p = Vec3::new(0.2, -0.1, -0.5).extend(1.0);
+        let (a, b) = (proj * p, vm * p);
+        assert!((a.x / a.w - b.x / b.w).abs() < 1e-6 && (a.y / a.w - b.y / b.w).abs() < 1e-6);
     }
 }

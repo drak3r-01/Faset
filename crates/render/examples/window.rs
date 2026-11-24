@@ -128,6 +128,7 @@ impl App {
             clear_color: [fog[0], fog[1], fog[2], 1.0],
             camera,
             instances,
+            viewmodel: Vec::new(),
             lights: vec![PointLight {
                 position: Vec3::new(3.0 * t.cos(), 1.5, 3.0 * t.sin()),
                 color: Vec3::new(3.0, 1.5, 0.5),
