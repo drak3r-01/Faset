@@ -21,6 +21,22 @@ Internal lots outside the plan, run before phase 7 (series 6.9 to 6.13, one PR e
 - 6.12 landscape beyond bounds (Sonnet high) - [6.12-landscape-beyond-bounds.md](6.12-landscape-beyond-bounds.md)
 - 6.13 level design (Opus high) - [6.13-level-design.md](6.13-level-design.md)
 
+Phase 8, world (twelve internal lots, one PR each; order versus phase 7 to be decided by Gabriel, if it runs before `v0.1.0` then 7.1 profiling is re-run after 8.12):
+- 8.1 large terrain, format v5, streaming (Opus high) - [8.1-terrain-streaming.md](8.1-terrain-streaming.md)
+- 8.2 far landscape, LOD, landmarks (Opus high) - [8.2-far-landscape-lod.md](8.2-far-landscape-lod.md)
+- 8.3 world generator and sculpt tools (Sonnet high) - [8.3-world-generator-sculpt.md](8.3-world-generator-sculpt.md)
+- 8.4 natural boundaries (Sonnet high) - [8.4-natural-boundaries.md](8.4-natural-boundaries.md)
+- 8.5 organic prop primitives (Opus high) - [8.5-organic-prop-primitives.md](8.5-organic-prop-primitives.md)
+- 8.6 prop content, outdoor (Sonnet medium) - [8.6-prop-content-outdoor.md](8.6-prop-content-outdoor.md)
+- 8.7 prop content, built (Sonnet medium) - [8.7-prop-content-built.md](8.7-prop-content-built.md)
+- 8.8 vegetation v2 and lighting (Sonnet high) - [8.8-vegetation-v2.md](8.8-vegetation-v2.md)
+- 8.9 rebuild Pine Hollow, Mossgate (Opus high) - [8.9-maps-forest-village.md](8.9-maps-forest-village.md)
+- 8.10 rebuild Driftwood Cove, Rust Harbor (Opus high) - [8.10-maps-coast.md](8.10-maps-coast.md)
+- 8.11 rebuild Red Mesa, Greyfold Quarry, Nightjar Market (Opus high) - [8.11-maps-canyon-quarry-market.md](8.11-maps-canyon-quarry-market.md)
+- 8.12 world performance and validation (Sonnet medium) - [8.12-world-perf-validation.md](8.12-world-perf-validation.md)
+
+Parallel waves: 8.1 first; then 8.2, 8.3 and 8.5 together; then 8.4, 8.6, 8.7, 8.8; then 8.9 to 8.11; then 8.12.
+
 Items the plan leaves unspecified are marked as decisions inside each file: record the chosen value in your report.
 
 Synthèse de tous les lots (numéro, titre, résumé, modèle, statut) : [OVERVIEW.md](OVERVIEW.md)
