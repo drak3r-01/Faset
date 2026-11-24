@@ -17,6 +17,8 @@ use faset_ui::egui::{
 };
 use faset_ui::{Screen, Theme};
 
+use crate::shoot_feel::DamageArc;
+
 /// Height in points the layout constants are designed for.
 const DESIGN_HEIGHT: f32 = 720.0;
 
@@ -85,6 +87,8 @@ pub struct FpsHud {
     pub fov_y: f32,
     /// How to draw it.
     pub options: HudOptions,
+    /// Where the damage the player just took came from (lot 6.9).
+    pub damage: Vec<DamageArc>,
 }
 
 impl FpsHud {
@@ -96,6 +100,7 @@ impl FpsHud {
             model,
             fov_y,
             options: HudOptions::default(),
+            damage: Vec::new(),
         }
     }
 
@@ -103,6 +108,13 @@ impl FpsHud {
     #[must_use]
     pub fn with_options(mut self, options: HudOptions) -> Self {
         self.options = options;
+        self
+    }
+
+    /// The same HUD with direction indicators for incoming damage.
+    #[must_use]
+    pub fn with_damage(mut self, damage: Vec<DamageArc>) -> Self {
+        self.damage = damage;
         self
     }
 }
@@ -131,6 +143,7 @@ impl Screen for FpsHud {
                 m.reticle_radius_px(self.fov_y, rect.height() * ppp) / ppp,
             );
         }
+        hud.damage_arcs(&self.damage);
         hud.markers(m);
         if o.damage_numbers {
             hud.numbers(m);
@@ -231,6 +244,26 @@ impl Hud<'_> {
                 1.2 * self.k
             };
             self.p.circle_filled(c, r, colour);
+        }
+    }
+
+    /// Arcs on a ring around the reticle pointing at whoever hurt the
+    /// player: ahead is up, to the right is right.
+    fn damage_arcs(&self, arcs: &[DamageArc]) {
+        let c = self.rect.center();
+        let radius = self.rect.height() * 0.2;
+        let half_span = 0.35_f32;
+        let steps = 12;
+        for arc in arcs {
+            let points: Vec<Pos2> = (0..=steps)
+                .map(|i| {
+                    let a = arc.angle - half_span + 2.0 * half_span * i as f32 / steps as f32;
+                    c + Vec2::new(a.sin(), -a.cos()) * radius
+                })
+                .collect();
+            let colour = self.theme.danger.gamma_multiply(arc.alpha.clamp(0.0, 1.0));
+            self.p
+                .add(egui::Shape::line(points, Stroke::new(7.0 * self.k, colour)));
         }
     }
 

@@ -325,6 +325,13 @@ impl Session {
         self.host.as_mut()
     }
 
+    /// The static collision of the map the session plays on (what a shot
+    /// meets before it reaches anything else).
+    #[must_use]
+    pub fn statics(&self) -> &StaticWorld {
+        &self.statics
+    }
+
     /// The local player's prediction.
     #[must_use]
     pub fn prediction(&self) -> Option<&Prediction> {

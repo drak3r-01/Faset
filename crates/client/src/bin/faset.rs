@@ -14,19 +14,20 @@
 //! pause menu during a match.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use faset_client::{
     App, EguiInput, FirstPersonCamera, FpsHud, GameInput, HudOptions, LocalFrame, MapCatalogue,
-    MapLook, MatchScene, RawInput, SceneFrame,
+    MapLook, MatchScene, RawInput, SceneFrame, SurfaceMap,
 };
 use faset_core::bindings::Input;
 use faset_core::settings::{self, ConfirmState, ResolutionConfirm, Settings};
 use faset_minigame_api::Registry;
 use faset_mode_fps::{register_modes, FpsMode};
 use faset_mode_race::RaceMode;
-use faset_render::glam::{Mat4, Vec3};
+use faset_render::glam::{Mat4, Quat, Vec3};
 use faset_render::{perspective_reverse_z, Camera, Instance, RenderConfig, RenderWorld, Renderer};
 use faset_ui::egui::{self, Event};
 use faset_ui::{
@@ -79,6 +80,12 @@ struct Client {
     preview: Option<faset_client::CharacterPreview>,
     /// Boxes of the match scene, uploaded on first use.
     scene: Option<MatchScene>,
+    /// What each collision volume of the map is made of (impacts, footsteps).
+    surfaces: Arc<SurfaceMap>,
+    /// Camera shake of the last frame (shots, blasts, damage).
+    shake: Quat,
+    /// Directions of the damage taken, for the HUD.
+    damage: Vec<faset_client::DamageArc>,
     prev_view_proj: Option<Mat4>,
     // Field order: UI and renderer are dropped before the window.
     ui: Option<Ui>,
@@ -287,9 +294,10 @@ impl Client {
                 Some(state)
             })
             .map(|state| self.camera.update(dt, &state, self.game.look()));
+        let shake = if calm { Quat::IDENTITY } else { self.shake };
         let (view, fov_y) = match pose {
             Some(pose) => (
-                Mat4::from_rotation_translation(pose.orientation, pose.eye).inverse(),
+                Mat4::from_rotation_translation(pose.orientation * shake, pose.eye).inverse(),
                 pose.fov_y,
             ),
             None => {
@@ -354,6 +362,13 @@ impl Client {
         if let Some(map) = self.app.take_map() {
             self.look = MapLook::of(&map.map);
             self.look_since = Instant::now();
+            self.surfaces = Arc::new(
+                SurfaceMap::from_map(&map.map, map.collision.volume_count())
+                    .with_water(self.look.water.as_ref().map(|w| w.height)),
+            );
+            if let Some(scene) = &mut self.scene {
+                scene.set_surfaces(self.surfaces.clone());
+            }
             match map.upload(renderer) {
                 Ok(instances) => self.instances = instances,
                 Err(e) => tracing::error!("cannot upload the map: {e}"),
@@ -366,7 +381,10 @@ impl Client {
             && self.app.session().is_some_and(|s| s.in_game());
         if in_match && self.scene.is_none() {
             match MatchScene::upload(renderer) {
-                Ok(scene) => self.scene = Some(scene),
+                Ok(mut scene) => {
+                    scene.set_surfaces(self.surfaces.clone());
+                    self.scene = Some(scene);
+                }
                 Err(e) => tracing::error!("cannot upload the match scene: {e}"),
             }
         }
@@ -399,8 +417,14 @@ impl Client {
             self.app
                 .session_mut()
                 .and_then(|s| s.view_mut().hud_model(&frame, dt_s))
-                .map(|model| FpsHud::new(model, fov_y).with_options(options))
+                .map(|model| {
+                    FpsHud::new(model, fov_y)
+                        .with_options(options)
+                        .with_damage(self.damage.clone())
+                })
         } else {
+            self.shake = Quat::IDENTITY;
+            self.damage.clear();
             None
         };
 
@@ -566,7 +590,19 @@ impl Client {
             weapon_position: self.settings.game.weapon_position,
             look: self.game.look(),
         };
-        world.instances.extend(scene.instances(session, &frame));
+        let out = scene.instances(session, &frame);
+        world.instances.extend(out.world);
+        world.viewmodel = out.viewmodel;
+        world.lights.extend(out.lights);
+        self.shake = out.shake;
+        self.damage = out.damage;
+        if let Some(engine) = self.live.as_mut().and_then(apply::Live::audio_mut) {
+            engine.set_listener(eye, orientation * Vec3::NEG_Z, orientation * Vec3::Y);
+            engine.set_underwater(world.underwater);
+            for (cue, at) in out.cues {
+                faset_client::sounds::play(engine, cue, at);
+            }
+        }
     }
 }
 
@@ -663,6 +699,9 @@ fn main() -> Result<()> {
         look_since: Instant::now(),
         preview: None,
         scene: None,
+        surfaces: Arc::new(SurfaceMap::default()),
+        shake: Quat::IDENTITY,
+        damage: Vec::new(),
         prev_view_proj: None,
         ui: None,
         renderer: None,

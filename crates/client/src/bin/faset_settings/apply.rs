@@ -63,9 +63,12 @@ pub struct Live {
 }
 
 fn new_audio(settings: &Settings) -> Option<Engine> {
-    Engine::new(crate::audio::audio_config(settings))
+    let mut engine = Engine::new(crate::audio::audio_config(settings))
         .map_err(|e| tracing::warn!("no audio engine: {e}"))
-        .ok()
+        .ok()?;
+    // The game's sounds are synthesised from recipes at registration.
+    faset_client::sounds::register(&mut engine);
+    Some(engine)
 }
 
 fn kind_of(choice: UpscalerChoice) -> UpscalerKind {
@@ -119,6 +122,11 @@ fn rcas_stops(sharpness: f32) -> f32 {
 }
 
 impl Live {
+    /// The audio engine, if a device could be opened.
+    pub fn audio_mut(&mut self) -> Option<&mut Engine> {
+        self.audio.as_mut()
+    }
+
     /// Detects the usable upscalers and starts from the given settings.
     pub fn new(renderer: &Renderer, settings: &Settings) -> Self {
         let registry = Registry::builtin();

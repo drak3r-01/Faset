@@ -718,6 +718,7 @@ fn render_profile(name: &str, path: &Path) {
         clear_color: [fog[0], fog[1], fog[2], 1.0],
         camera: Camera::new(view, proj),
         instances,
+        viewmodel: Vec::new(),
         lights,
         ambience,
         weather: WeatherState::CLEAR,
@@ -2382,4 +2383,57 @@ fn screen_effects_follow_the_world_and_survive_a_resize() {
     renderer.render_frame(&world).unwrap();
     assert_eq!(renderer.validation_message_count(), 0);
     assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Lot 6.9: the first-person view model keeps its own depth range, so a
+/// weapon that would sink into a wall is still drawn in front of it.
+#[test]
+fn viewmodel_is_never_hidden_by_a_wall() {
+    let (messages, _guard) = capture_messages();
+    let out = out_path("viewmodel_wall.png");
+    {
+        let mut renderer = headless((32, 32));
+        let wall = wall(&mut renderer);
+        // A red block 12 m away, i.e. behind the wall at 9.5 m.
+        let (v, i) = cube_mesh(0.5, &[[220, 20, 20]; 6], 0);
+        let red = renderer.upload_mesh(&v, &i).unwrap();
+        let held = Instance::new(
+            red,
+            0,
+            Mat4::from_translation(Vec3::new(0.0, 0.0, -12.0)) * Mat4::from_scale(Vec3::splat(2.0)),
+        );
+        let camera = Camera::new(
+            faset_render::glam::camera::rh::view::look_at_mat4(
+                Vec3::ZERO,
+                Vec3::new(0.0, 0.0, -10.0),
+                Vec3::Y,
+            ),
+            perspective_reverse_z(90f32.to_radians(), 1.0, 0.1),
+        );
+
+        // As a normal instance the wall hides it.
+        renderer
+            .render_frame(&world_with(camera, vec![wall, held]))
+            .unwrap();
+        renderer.read_back_png(&out).unwrap();
+        let hidden = load_rgba(&out).get_pixel(16, 16).0;
+        assert!(
+            !(hidden[0] > 150 && hidden[1] < 90 && hidden[2] < 90),
+            "the wall hides a normal instance: {hidden:?}"
+        );
+
+        // In the view model it is drawn in front of the wall.
+        let mut world = world_with(camera, vec![wall]);
+        world.viewmodel = vec![held];
+        renderer.render_frame(&world).unwrap();
+        renderer.read_back_png(&out).unwrap();
+        let shown = load_rgba(&out).get_pixel(16, 16).0;
+        assert!(
+            shown[0] > 150 && shown[1] < 90 && shown[2] < 90,
+            "the view model shows through the wall: {shown:?}"
+        );
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+    let _ = std::fs::remove_file(out);
 }

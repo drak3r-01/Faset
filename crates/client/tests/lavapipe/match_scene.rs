@@ -104,12 +104,15 @@ fn a_live_match_renders_with_players_weapon_and_hud() {
     };
     let extra = scene.instances(session, &scene_frame);
     assert!(
-        extra.len() >= 3,
-        "the weapon in hand and the other players are drawn: {} instances",
-        extra.len()
+        extra.world.len() + extra.viewmodel.len() >= 3,
+        "the weapon in hand and the other players are drawn: {} + {} instances",
+        extra.world.len(),
+        extra.viewmodel.len()
     );
+    assert!(!extra.viewmodel.is_empty(), "the weapon is a view model");
     let mut instances = map_instances;
-    instances.extend(extra);
+    instances.extend(extra.world);
+    let viewmodel = extra.viewmodel;
     let hud_frame = LocalFrame::default();
     let model = session
         .view_mut()
@@ -120,6 +123,7 @@ fn a_live_match_renders_with_players_weapon_and_hud() {
     let world = RenderWorld {
         camera,
         instances,
+        viewmodel,
         ambience: AmbienceProfile::builtin("day").unwrap(),
         draw_sky: true,
         ..RenderWorld::default()

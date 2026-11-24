@@ -98,12 +98,35 @@ fn encode_octahedral(n: vec3<f32>) -> vec2<f32> {
     return e * 0.5 + 0.5;
 }
 
+// First-person view model (lot 6.9): its depth is squeezed into
+// VIEWMODEL_DEPTH_MIN..1 on the CPU (render::viewmodel_projection). A fragment
+// in that band is lit with a fixed key light and an ambient term, with no
+// shadow, wetness, caustics or fog, so the weapon looks the same on every map.
+// World surfaces closer than near / VIEWMODEL_DEPTH_MIN take the same path.
+const VIEWMODEL_DEPTH_MIN: f32 = 0.9;
+
+fn shade_viewmodel(albedo: vec3<f32>, emissive: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let key = max(dot(n, normalize(vec3<f32>(0.4, 0.8, 0.45))), 0.0);
+    let ambient = 0.55 + 0.25 * (0.5 * n.y + 0.5);
+    return albedo * (ambient + 0.35 * key) + emissive;
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> FragmentOut {
     // Derivatives first, in uniform control flow.
     let dpos = fwidth(in.world_pos);
     let normal = normalize(in.normal);
     let surface = material_surface(in.material, in.world_pos, normal, dpos, imm.time);
+    if in.clip.z / in.clip.w >= VIEWMODEL_DEPTH_MIN {
+        var held: FragmentOut;
+        held.color = vec4<f32>(
+            shade_viewmodel(in.color * surface.albedo, in.color * surface.emissive, normal),
+            1.0,
+        );
+        held.motion = 0.5 * (in.clip.xy / in.clip.w - in.prev_clip.xy / in.prev_clip.w);
+        held.normal = encode_octahedral(normal);
+        return held;
+    }
     // Humidity darkens the surface and adds reflections (a no-op when dry).
     let wet = wet_surface(in.color * surface.albedo, normal, in.world_pos, imm.time);
     let lit = shade(

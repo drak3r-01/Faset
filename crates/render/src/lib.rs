@@ -91,8 +91,8 @@ pub use ambience::{
     SunSource, Water, Weather, WeatherKind, BUILTIN_PROFILES,
 };
 pub use camera::{
-    halton, jitter, jitter_ndc, jittered_projection, motion_vector, perspective_reverse_z, Camera,
-    JITTER_SAMPLES,
+    halton, jitter, jitter_ndc, jittered_projection, motion_vector, perspective_reverse_z,
+    viewmodel_projection, Camera, JITTER_SAMPLES, VIEWMODEL_DEPTH_MIN,
 };
 pub use cull::Instance;
 pub use extensions::DeviceExtensions;
@@ -168,6 +168,13 @@ pub struct RenderWorld {
     pub camera: Camera,
     /// Static mesh instances; per-instance data is rewritten every frame.
     pub instances: Vec<Instance>,
+    /// First-person view model (lot 6.9): instances placed in world space
+    /// (the camera-relative offset already applied) but drawn with their
+    /// depth squeezed into the nearest part of the depth range
+    /// ([`VIEWMODEL_DEPTH_MIN`]..1), so they never sink into a wall. They are
+    /// shaded with a fixed, map-independent light, get no fog and cast no
+    /// shadows. Empty by default.
+    pub viewmodel: Vec<Instance>,
     /// Point lights; the first [`MAX_POINT_LIGHTS`] are used, the rest are
     /// dropped with a warning.
     pub lights: Vec<PointLight>,
@@ -217,6 +224,7 @@ impl Default for RenderWorld {
             clear_color: [0.0, 0.0, 0.0, 1.0],
             camera: Camera::default(),
             instances: Vec::new(),
+            viewmodel: Vec::new(),
             lights: Vec::new(),
             ambience: AmbienceProfile::default(),
             sky: SkyParams::default(),
@@ -693,6 +701,27 @@ impl Renderer {
             instances_drawn: self.gpu_instances.len() as u32,
             instances_culled: (world.instances.len() - self.gpu_instances.len() - unknown) as u32,
         };
+
+        // The first-person view model: its own batch, culled and projected
+        // with the squeezed depth range, drawn in the same opaque pass.
+        if !world.viewmodel.is_empty() {
+            let vm_view_proj = viewmodel_projection(&camera.proj) * camera.view;
+            let (scratch, scratch_draws) = &mut self.shadow_scratch;
+            cull::cull_and_batch(
+                &vm_view_proj,
+                &vm_view_proj,
+                &world.viewmodel,
+                meshes,
+                scratch,
+                scratch_draws,
+            );
+            let base = self.gpu_instances.len() as u32;
+            self.draws.extend(scratch_draws.iter().map(|d| DrawBatch {
+                first_instance: d.first_instance + base,
+                ..*d
+            }));
+            self.gpu_instances.extend_from_slice(scratch);
+        }
 
         // Sun shadow cascades, and the casters of each one (culled against
         // the cascade volume, so casters outside the view are kept). Their
