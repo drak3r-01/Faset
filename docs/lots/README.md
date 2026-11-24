@@ -14,6 +14,13 @@ Internal lot outside the plan: 6.7, the art direction (pixel materials, weapon m
 
 Internal lot outside the plan: 6.8, the map redesign (four themed maps with natural borders, the map's look in the client; [6.8-map-redesign.md](6.8-map-redesign.md)).
 
+Internal lots outside the plan, run before phase 7 (series 6.9 to 6.13, one PR each):
+- 6.9 shooting feel (Sonnet high) - [6.9-shooting-feel.md](6.9-shooting-feel.md)
+- 6.10 terrain with relief (Opus high) - [6.10-terrain-relief.md](6.10-terrain-relief.md)
+- 6.11 props and vegetation (Opus high) - [6.11-props-vegetation.md](6.11-props-vegetation.md)
+- 6.12 landscape beyond bounds (Sonnet high) - [6.12-landscape-beyond-bounds.md](6.12-landscape-beyond-bounds.md)
+- 6.13 level design (Opus high) - [6.13-level-design.md](6.13-level-design.md)
+
 Items the plan leaves unspecified are marked as decisions inside each file: record the chosen value in your report.
 
 Synthèse de tous les lots (numéro, titre, résumé, modèle, statut) : [OVERVIEW.md](OVERVIEW.md)
