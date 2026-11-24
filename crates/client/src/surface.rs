@@ -10,6 +10,8 @@
 //! to [`Surface::Concrete`] everywhere rather than guess. Water is a height:
 //! a ray that crosses the sea level before it reaches a volume splashes.
 
+use faset_mapfmt::geometry::{terrain_material, TERRAIN_MATERIALS};
+use faset_mapfmt::terrain::PAINTS;
 use faset_mapfmt::{Brush, MapFile};
 
 /// The kind of surface an impact lands on.
@@ -97,12 +99,27 @@ impl SurfaceMap {
     /// volumes. Props are wooden (their collision is a placeholder crate).
     #[must_use]
     pub fn from_map(map: &MapFile, volume_count: usize) -> Self {
-        let expected = map.brushes.len() + map.props.len();
+        // Terrain triangles come last (lot 6.10), one volume each: the ground
+        // of their first corner (its paint, or the palette's ground).
+        let terrain: Vec<Surface> = map
+            .terrain
+            .iter()
+            .flat_map(|t| {
+                t.triangles().map(move |tri| {
+                    let (i, j) = tri[0];
+                    let id = terrain_material(&map.theme.palette, t.paint_at(i, j));
+                    let ground = TERRAIN_MATERIALS.iter().position(|m| *m == id);
+                    Surface::from_material(PAINTS[ground.map_or(1, |k| k + 1)])
+                })
+            })
+            .collect();
+        let expected = map.brushes.len() + map.props.len() + terrain.len();
         let volumes = if volume_count == expected {
             map.brushes
                 .iter()
                 .map(|b| Surface::from_material(brush_material(b)))
                 .chain(map.props.iter().map(|_| Surface::Wood))
+                .chain(terrain)
                 .collect()
         } else {
             tracing::warn!(
@@ -214,6 +231,23 @@ mod tests {
         assert_eq!(surfaces.of_volume(count + 5), Surface::Concrete);
         let off = SurfaceMap::from_map(&map, count + 1);
         assert!((0..count).all(|i| off.of_volume(i) == Surface::Concrete));
+    }
+
+    #[test]
+    fn terrain_triangles_take_the_ground_of_their_paint() {
+        let text = include_str!("../../../assets/maps/pine-hollow.ron");
+        let mut map = faset_mapfmt::expand(&faset_mapfmt::parse(text.as_bytes()).unwrap());
+        let col = faset_sim::MapCollision::build(&map);
+        let surfaces = SurfaceMap::from_map(&map, col.volume_count());
+        let first = map.brushes.len() + map.props.len();
+        // Pine Hollow's palette is snow.
+        assert_eq!(surfaces.of_volume(first), Surface::Snow);
+        assert_eq!(surfaces.of_volume(col.volume_count() - 1), Surface::Snow);
+        // Paint 3 (rock) on every sample.
+        let t = map.terrain.as_mut().unwrap();
+        t.paint = vec![3; t.heights.len()];
+        let rock = SurfaceMap::from_map(&map, col.volume_count());
+        assert_eq!(rock.of_volume(first), Surface::Stone);
     }
 
     #[test]

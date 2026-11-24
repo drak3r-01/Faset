@@ -68,6 +68,12 @@ pub enum Pattern {
     PixelHazard = 26,
     /// Pixel foliage clumps, gaps in colour B.
     PixelLeaves = 27,
+    /// Terrain ground (lot 6.10): two pixel materials blended by slope.
+    /// `color_a` holds their ids (x: flat ground, y: steep slopes, both of a
+    /// pixel pattern), `color_b` the slope band in `1 - n_y` (x: start,
+    /// y: end); inside the band a per-texel dither picks the layer. Not in
+    /// [`Pattern::ALL`], which lists the patterns with a swatch of their own.
+    Terrain = 28,
 }
 
 impl Pattern {
@@ -131,6 +137,9 @@ pub enum MaterialError {
     DuplicateId(u8),
     #[error("material {0}: scale must be finite and > 0, colours and speed finite")]
     InvalidValue(u8),
+    /// A `Terrain` material whose layers are not ids of pixel materials.
+    #[error("terrain material {0}: color_a x and y must be ids of pixel-pattern materials")]
+    InvalidTerrainLayer(u8),
 }
 
 /// Materials by id (0..=255). Ids without an entry render as flat white,
@@ -170,7 +179,22 @@ impl MaterialTable {
             }
             *slot = Some(m);
         }
-        Ok(Self { entries })
+        let table = Self { entries };
+        for m in table.iter().filter(|m| m.pattern == Pattern::Terrain) {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let pixel = |v: f32| {
+                v.fract() == 0.0
+                    && (0.0..=255.0).contains(&v)
+                    && table.get(v as u8).is_some_and(|l| {
+                        l.pattern as u32 >= Pattern::PixelBrick as u32
+                            && l.pattern != Pattern::Terrain
+                    })
+            };
+            if !pixel(m.color_a[0]) || !pixel(m.color_a[1]) {
+                return Err(MaterialError::InvalidTerrainLayer(m.id));
+            }
+        }
+        Ok(table)
     }
 
     /// The built-in table: ids 0..=27 show one pattern each, 28..=49 are
@@ -282,6 +306,34 @@ mod tests {
             bytemuck::cast_slice::<_, u8>(&gpu).len() as u64,
             MATERIAL_TABLE_SIZE
         );
+    }
+
+    #[test]
+    fn terrain_materials_blend_two_pixel_layers() {
+        let table = MaterialTable::builtin();
+        let terrain: Vec<_> = table
+            .iter()
+            .filter(|m| m.pattern == Pattern::Terrain)
+            .collect();
+        assert_eq!(terrain.len(), 5);
+        for m in terrain {
+            assert!((54..=58).contains(&m.id));
+            assert!(m.color_b[0] < m.color_b[1], "slope band of {}", m.id);
+        }
+        let bad = |layer: f32| {
+            MaterialTable::from_ron(&format!(
+                "[(id: 3, pattern: Checker, color_a: (1.0, 1.0, 1.0), color_b: (1.0, 1.0, 1.0), scale: 1.0), \
+                  (id: 16, pattern: PixelGrass, color_a: (1.0, 1.0, 1.0), color_b: (1.0, 1.0, 1.0), scale: 1.0), \
+                  (id: 54, pattern: Terrain, color_a: (16.0, {layer:.1}, 0.0), color_b: (0.1, 0.2, 0.0), scale: 1.0)]"
+            ))
+        };
+        assert!(bad(16.0).is_ok());
+        for layer in [3.0, 7.0, 54.0, 16.5, 300.0] {
+            assert!(
+                matches!(bad(layer), Err(MaterialError::InvalidTerrainLayer(54))),
+                "{layer}"
+            );
+        }
     }
 
     #[test]

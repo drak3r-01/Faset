@@ -21,7 +21,9 @@ use faset_net::{
     NetworkConditions,
 };
 use faset_protocol::{InputCommand, Message, PROTOCOL_VERSION};
-use faset_server::{build_fingerprint, InputPacket, Server, ServerConfig, SnapshotDecoder};
+use faset_server::{
+    build_fingerprint, InputPacket, MapConfig, Server, ServerConfig, SnapshotDecoder,
+};
 use faset_sim::StaticWorld;
 
 mod fleet;
@@ -260,10 +262,18 @@ impl Rig {
     /// Both directions degraded by `conditions` (independent random
     /// streams).
     pub fn new(conditions: NetworkConditions) -> Self {
+        Self::with_map(conditions, ServerConfig::default().map)
+    }
+
+    /// [`Rig::new`] on another map (lot 6.10: terrain).
+    pub fn with_map(conditions: NetworkConditions, map: MapConfig) -> Self {
         let net = MemoryNetwork::new();
         let server_end = net.endpoint();
         let addr = server_end.addr();
-        let config = ServerConfig::default();
+        let config = ServerConfig {
+            map,
+            ..ServerConfig::default()
+        };
         let (seed, statics) = (config.seed, config.map.statics.clone());
         let server_link = ConditionedTransport::new(
             server_end,

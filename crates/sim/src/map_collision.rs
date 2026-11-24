@@ -4,6 +4,8 @@
 //! The map must be expanded already (`faset_mapfmt::expand`). Boxes are
 //! cuboids; wedges, cylinders, prisms are convex hulls of their vertices and
 //! stairs give one ramp volume (their bounding wedge), as in plan section 5.
+//! The terrain (lot 6.10) adds one prism per triangle after the brushes and
+//! props, so a map without terrain keeps exactly its former volumes.
 //!
 //! Decision: until recipes declare prop collision (lot 2.13 data is not read
 //! here), each prop is a 1 m cube standing on its position, scaled by `scale`
@@ -11,7 +13,7 @@
 
 use faset_core::glam::Vec3;
 use faset_mapfmt::geometry::brush_hull_points;
-use faset_mapfmt::{grid_to_metres, Brush, MapFile};
+use faset_mapfmt::{grid_to_metres, Brush, MapFile, Terrain};
 use parry3d::math::{Pose, Rotation, Vector};
 use parry3d::shape::SharedShape;
 
@@ -57,9 +59,24 @@ impl MapCollision {
                 pose: Pose::from_parts(v3(centre), rot),
             });
         }
-        Self {
-            world: StaticWorld::new(volumes),
+        let mut normals = Vec::new();
+        if let Some(t) = &map.terrain {
+            for (volume, normal) in terrain_volumes(t) {
+                volumes.push(volume);
+                normals.push(normal);
+            }
         }
+        Self {
+            world: StaticWorld::with_terrain(volumes, normals),
+        }
+    }
+
+    /// Number of terrain volumes (one per terrain triangle).
+    #[must_use]
+    pub fn terrain_volume_count(&self) -> usize {
+        (0..self.volume_count())
+            .filter(|&i| self.world.is_terrain(i))
+            .count()
     }
 
     /// The underlying static world.
@@ -101,6 +118,35 @@ impl MapCollision {
     pub fn overlaps_capsule(&self, center: Vec3, height: f32) -> bool {
         self.world.intersects(center, height)
     }
+}
+
+/// One convex volume per terrain triangle: the triangle extruded straight
+/// down to the terrain base, in the order of `Terrain::triangles`.
+///
+/// Decision: neighbouring prisms share their top edges exactly, so a capsule
+/// sliding over the seam meets the next top face (or the shared edge, whose
+/// normal lies between the two faces) and never a vertical side, which
+/// starts below the surface: no step and no jitter between triangles. The
+/// prisms are built from the same sample positions as the render mesh.
+fn terrain_volumes(t: &Terrain) -> impl Iterator<Item = (Volume, Vec3)> + '_ {
+    let base = t.base_y();
+    t.triangles().filter_map(move |tri| {
+        let top = tri.map(|(i, j)| t.sample_pos(i, j));
+        let normal = (top[1] - top[0]).cross(top[2] - top[0]).normalize();
+        let points: Vec<Vector> = top
+            .iter()
+            .flat_map(|p| [v3(*p), Vector::new(p.x, base, p.z)])
+            .collect();
+        SharedShape::convex_hull(&points).map(|shape| {
+            (
+                Volume {
+                    shape,
+                    pose: Pose::IDENTITY,
+                },
+                normal,
+            )
+        })
+    })
 }
 
 fn brush_volume(brush: &Brush) -> Option<Volume> {

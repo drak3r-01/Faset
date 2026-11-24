@@ -234,8 +234,8 @@ fn check_sight(map: &MapFile, col: &MapCollision, settings: &Settings, report: &
     }
 }
 
-/// Bounding rectangle of the brushes' footprints, per brush, and the lowest
-/// solid point.
+/// Bounding rectangle of the brushes' footprints, per brush (and of the
+/// terrain), and the lowest solid point.
 fn footprints(map: &MapFile) -> (Vec<(Vec3, Vec3)>, f32) {
     let mut boxes = Vec::new();
     let mut lowest = f32::INFINITY;
@@ -252,6 +252,16 @@ fn footprints(map: &MapFile) -> (Vec<(Vec3, Vec3)>, f32) {
             .fold(Vec3::splat(f32::NEG_INFINITY), |m, p| m.max(*p));
         lowest = lowest.min(lo.y);
         boxes.push((lo, hi));
+    }
+    // The terrain (lot 6.10) is solid down to its base.
+    if let Some(t) = &map.terrain {
+        let (lo, hi) = t.extent_xz();
+        let base = t.base_y();
+        lowest = lowest.min(base);
+        boxes.push((
+            Vec3::new(lo[0], base, lo[1]),
+            Vec3::new(hi[0], t.height_range().1, hi[1]),
+        ));
     }
     (boxes, lowest)
 }

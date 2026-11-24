@@ -26,6 +26,8 @@ const PATTERN_EMISSIVE: u32 = 12u;
 const PATTERN_HOLOGRAM: u32 = 13u;
 // Pixel-art patterns 14..=27 live in pixel.wgsl.
 const PATTERN_PIXEL_FIRST: u32 = 14u;
+// Terrain ground (lot 6.10): two pixel materials blended by slope.
+const PATTERN_TERRAIN: u32 = 28u;
 
 const TAU: f32 = 6.283185307;
 
@@ -177,6 +179,20 @@ fn diffuse(albedo: vec3<f32>) -> Surface {
     return Surface(albedo, vec3<f32>(0.0));
 }
 
+// Terrain ground: colour A holds two material ids (x: flat ground, y: the
+// rock of steep slopes, both pixel patterns), colour B the slope band in
+// 1 - n.y (x: start, y: end). Inside the band a hash per 1/16 m texel picks
+// one layer or the other, so the transition reads as scattered pixels.
+fn terrain_surface(m: Material, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3<f32>, time: f32) -> Surface {
+    let w = smoothstep(m.color_b.x, m.color_b.y, 1.0 - normal.y);
+    let q = vec2<i32>(floor(world_pos.xz * 16.0));
+    let steep = hash2(q + vec2<i32>(4099, 7907)) < w;
+    let layer = materials.entries[min(u32(select(m.color_a.x, m.color_a.y, steep)), 255u)];
+    let scale = max(layer.scale, 1.0e-3);
+    let v = pixel_surface(layer.pattern, world_pos / scale, normal, dpos / scale, time * layer.speed);
+    return diffuse(mix(layer.color_a.rgb, layer.color_b.rgb, clamp(v.x, 0.0, 1.0)) * v.y);
+}
+
 // Albedo and emission of a material at a world position. Lava glow,
 // emissive and hologram patterns emit; everything else is lit.
 //
@@ -191,6 +207,9 @@ fn material_surface(id: u32, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3
     let a = m.color_a.rgb;
     let b = m.color_b.rgb;
 
+    if m.pattern == PATTERN_TERRAIN {
+        return terrain_surface(m, world_pos, normal, dpos, time);
+    }
     if m.pattern >= PATTERN_PIXEL_FIRST {
         let v = pixel_surface(m.pattern, p, normal, dp, phase);
         return diffuse(mix(a, b, clamp(v.x, 0.0, 1.0)) * v.y);

@@ -74,6 +74,13 @@ impl Editor {
                 }
             }
         }
+        // The terrain, when nearer: snapped across, on its surface in height.
+        if let (Some(p), Some(t)) = (self.terrain_point(ray), self.map.terrain.as_ref()) {
+            if best.is_none_or(|bt| (p - ray.origin).length() < bt) {
+                let s = self.snap.snap_position(p);
+                return Some(Vec3::new(s.x, t.height_at(s.x, s.z).unwrap_or(p.y), s.z));
+            }
+        }
         let t = best.or_else(|| ray_horizontal_plane(ray, self.place.ground_y))?;
         Some(self.snap.snap_position(ray.at(t)))
     }

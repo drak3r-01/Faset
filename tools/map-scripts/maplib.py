@@ -30,6 +30,7 @@ class Map:
         self.sym = False
         self.brushes, self.spawns, self.pickups, self.zones, self.lights = [], [], [], [], []
         self.solids = []  # (x0, y0, z0, x1, y1, z1) of every box-like brush, for placement checks
+        self.terrain = None  # RON of the height field, see `set_terrain`
 
     # ---- helpers --------------------------------------------------------
     def _both(self, f):
@@ -165,7 +166,7 @@ class Map:
         t = self.theme
         weather = ", ".join(f'(from_s: {a}, weather: "{b}")' for a, b in t.get("weather", [(0.0, "clear")]))
         out = [self.header.rstrip(), "Map("]
-        out.append("    format_version: 1,")
+        out.append("    format_version: 2,")
         out.append(f'    meta: (name: "{self.name}", author: "Faset", description: "{self.description}", modes: ["fps"], players: ({self.players[0]}, {self.players[1]})),')
         out.append(f'    theme: (ambience: "{t["ambience"]}", sky: "{t.get("sky", "clear")}", weather: [{weather}], palette: "{t["palette"]}"),')
         if self.gravity:
@@ -174,8 +175,25 @@ class Map:
             out.append(f"    {key}: [")
             out.extend(f"        {i}," for i in items)
             out.append("    ],")
+        if self.terrain:
+            out.append(f"    terrain: {self.terrain},")
         out.append(")")
         return "\n".join(out) + "\n"
+
+    # ---- terrain (lot 6.10) ---------------------------------------------------
+    def set_terrain(self, x0, z0, cell, nx, nz, height):
+        """Height field: `nx` x `nz` samples `cell` metres apart from (x0, z0),
+        `height(x, z)` in metres (stored in centimetres, base64 of i16 LE)."""
+        import base64, struct
+        cms = []
+        for j in range(nz):
+            for i in range(nx):
+                cms.append(int(math.floor(height(x0 + i * cell, z0 + j * cell) * 100 + 0.5)))
+        data = base64.b64encode(struct.pack("<%dh" % len(cms), *cms)).decode()
+        cell_units = g(cell)
+        cell_field = "" if cell_units == 4 else f"cell: {cell_units}, "
+        self.terrain = f'(origin: ({g(x0)}, {g(z0)}), {cell_field}size: ({nx}, {nz}), heights: "{data}")'
+        return cms
 
     def save(self, path):
         with open(path, "w", newline="\n") as fh:
