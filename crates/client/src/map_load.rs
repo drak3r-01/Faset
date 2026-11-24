@@ -5,6 +5,7 @@
 //! collision world. [`load_map`] needs no GPU; only [`LoadedMap::upload`]
 //! touches the renderer, so a headless build can skip it.
 
+use crate::landscape::{self, Landscape};
 use faset_mapfmt::geometry::{bake_occlusion, build_meshes, MeshChunk};
 use faset_mapfmt::vegetation::{scatter, PlacedPlant};
 use faset_mapfmt::{MapError, MapFile};
@@ -29,6 +30,9 @@ pub struct LoadedMap {
     pub chunks: Vec<MeshChunk>,
     /// Every plant of the map (lot 6.11), the same the bots' sight uses.
     pub plants: Vec<PlacedPlant>,
+    /// The far terrain and woods beyond the playable area (lot 6.12), if the
+    /// map has `surroundings`.
+    pub landscape: Option<Landscape>,
 }
 
 /// Parses, expands and builds a map file.
@@ -43,6 +47,7 @@ pub fn load_map(bytes: &[u8]) -> Result<LoadedMap, MapLoadError> {
         collision.ray_cast(origin, dir, max).is_some()
     });
     let plants = scatter(&map);
+    let landscape = landscape::build(&map);
     tracing::info!(
         name = %map.meta.name,
         volumes = collision.volume_count(),
@@ -56,6 +61,7 @@ pub fn load_map(bytes: &[u8]) -> Result<LoadedMap, MapLoadError> {
         collision,
         chunks,
         plants,
+        landscape,
     })
 }
 
@@ -71,8 +77,15 @@ impl LoadedMap {
         let mut instances = self.upload_blocks(renderer)?;
         instances.extend(crate::scenery::prop_instances(renderer, &self.map)?);
         let theme = crate::scenery::plant_theme(&self.map.theme.palette);
-        let (kinds, plants) = crate::scenery::foliage_layer(renderer, &self.plants, theme)?;
+        // The woods beside forest borders join the map's own plants.
+        let woods = self.landscape.as_ref().map_or(&[][..], |l| &l.plants[..]);
+        let all: Vec<PlacedPlant> = self.plants.iter().chain(woods).copied().collect();
+        let (kinds, plants) = crate::scenery::foliage_layer(renderer, &all, theme)?;
         renderer.set_foliage(kinds, &plants)?;
+        if let Some(land) = self.landscape.as_ref().filter(|l| !l.indices.is_empty()) {
+            let mesh = renderer.upload_mesh(&land.vertices, &land.indices)?;
+            instances.push(Instance::new(mesh, 0, Mat4::IDENTITY));
+        }
         Ok(instances)
     }
 

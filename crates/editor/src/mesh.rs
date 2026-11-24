@@ -154,6 +154,7 @@ fn build_block(map: &MapFile, block: Block) -> Option<MeshChunk> {
         // block are kept.
         terrain: map.terrain.clone(),
         vegetation: None,
+        surroundings: None,
     };
     build_meshes(&sub).into_iter().find(|c| c.block == block)
 }

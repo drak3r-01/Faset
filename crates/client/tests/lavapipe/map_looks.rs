@@ -48,14 +48,35 @@ fn every_shipped_map_renders_with_its_look() {
             .expect("a team A spawn");
         let feet = Vec3::from_array(spawn.at);
         let forward = Vec3::new(-feet.x, 0.0, -feet.z).normalize_or_zero();
-        let views = [
+        let mut views = vec![
             (
-                "eye",
+                "eye".to_owned(),
                 feet + Vec3::Y * 1.6,
                 feet + Vec3::Y * 1.6 + forward * 20.0,
             ),
-            ("high", Vec3::new(0.0, 55.0, 62.0), Vec3::new(0.0, 0.0, 0.0)),
+            (
+                "high".to_owned(),
+                Vec3::new(0.0, 55.0, 62.0),
+                Vec3::new(0.0, 0.0, 0.0),
+            ),
         ];
+        // From each border, looking out at the landscape (lot 6.12): a
+        // raised camera at the edge of the playable area.
+        let s = map.map.surroundings.as_ref().expect("surroundings");
+        let [x0, z0, x1, z1] = s.area;
+        let up = s.ground + 9.0;
+        for (label, eye, out) in [
+            ("north", Vec3::new(0.0, up, z0 + 2.0), -Vec3::Z),
+            ("east", Vec3::new(x1 - 2.0, up, 0.0), Vec3::X),
+            ("south", Vec3::new(0.0, up, z1 - 2.0), Vec3::Z),
+            ("west", Vec3::new(x0 + 2.0, up, 0.0), -Vec3::X),
+        ] {
+            views.push((
+                format!("border-{label}"),
+                eye,
+                eye + out * 60.0 + Vec3::Y * 4.0,
+            ));
+        }
         for (label, eye, target) in views {
             let mut world = RenderWorld {
                 camera: camera(eye, target),

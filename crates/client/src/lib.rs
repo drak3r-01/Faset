@@ -28,6 +28,8 @@
 //! * [`map_load`]: turns a map file into collisions and render meshes (steps 1
 //!   to 3 of the map load pipeline) and uploads the meshes; [`scenery`] (lot
 //!   6.11) draws the map's props and its instanced vegetation.
+//! * [`landscape`] (lot 6.12): the far terrain, horizon and woods beyond the
+//!   playable area, generated from the map's `surroundings` block.
 //! * [`map_sync`]: the map cache (by fingerprint) and the `MapChange` and map
 //!   download handler (lot 5.1).
 //! * [`state`], [`session`], [`app`] (lot 6.1): the stack of application states
@@ -78,6 +80,7 @@ pub mod hud;
 pub mod input;
 pub mod interpolation;
 pub mod join;
+pub mod landscape;
 pub mod loadout_flow;
 pub mod look;
 pub mod map_load;

@@ -9,7 +9,9 @@
 //! Decisions: the weather follows the calendar in steps (no blend between
 //! two slots); the sea level is the highest top of the map's `Water` zones;
 //! the sky hour comes from the ambience name (a night map shows stars, a
-//! sunset map a low sun).
+//! sunset map a low sun). Lot 6.12: the `surroundings` block of a map scales
+//! the profile's fog density (`haze`) and gives the sea level of a coast that
+//! has no water zone.
 
 use faset_mapfmt::{grid_to_metres, MapFile, Zone, ZoneKind};
 use faset_render::glam::{Vec2, Vec3};
@@ -154,7 +156,14 @@ impl MapLook {
             .filter(|Zone::Box { kind, .. }| matches!(kind, ZoneKind::Water))
             .map(|Zone::Box { max, .. }| grid_to_metres(*max).y)
             .reduce(f32::max);
-        look.water = level.map(calm_sea);
+        // A coast without a water zone still has its sea (lot 6.12).
+        let sea = level.or_else(|| map.surroundings.as_ref().and_then(|s| s.sea_level));
+        look.water = sea.map(calm_sea);
+        // The haze of the surroundings thickens or thins the profile's fog,
+        // so the far landscape fades the way the theme wants.
+        if let Some(s) = &map.surroundings {
+            look.ambience.fog.density *= s.haze;
+        }
         look.lights = map
             .lights
             .iter()

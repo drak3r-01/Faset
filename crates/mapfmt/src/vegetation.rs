@@ -783,6 +783,7 @@ mod tests {
                 plants: Vec::new(),
                 symmetry: Symmetry::None,
             }),
+            surroundings: None,
         }
     }
 

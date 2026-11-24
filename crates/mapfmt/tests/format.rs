@@ -237,3 +237,59 @@ fn prefab_placements_are_expanded() {
     };
     assert_eq!((*min, *max), ([-20, 0, -2], [-15, 5, 10]));
 }
+
+#[test]
+fn surroundings_round_trip_and_are_validated() {
+    use faset_mapfmt::{Border, Horizon, Surroundings};
+    let mut map = parse(EXAMPLE).unwrap();
+    assert!(map.surroundings.is_none());
+    let s = Surroundings {
+        area: [-20.0, -10.0, 20.0, 10.0],
+        ground: 0.5,
+        sea_level: Some(-1.0),
+        north: Border::Forest,
+        east: Border::Cliff,
+        south: Border::Sea,
+        west: Border::Slope,
+        horizon: Horizon::Mountains,
+        haze: 0.5,
+        seed: 4,
+    };
+    map.surroundings = Some(s.clone());
+    let text = to_ron(&map);
+    assert!(text.contains("surroundings:") && text.contains("horizon: Mountains"));
+    assert_eq!(
+        parse(text.as_bytes()).unwrap().surroundings,
+        Some(s.clone())
+    );
+    // Defaults are left out of the canonical form.
+    map.surroundings = Some(Surroundings {
+        ground: 0.0,
+        sea_level: None,
+        horizon: Horizon::Flat,
+        haze: 1.0,
+        seed: 0,
+        ..s
+    });
+    let text = to_ron(&map);
+    assert!(!text.contains("haze") && !text.contains("horizon") && !text.contains("seed"));
+    assert!(parse(text.as_bytes()).is_ok());
+    // A bad block is rejected at parse time.
+    let bad = text.replace(
+        "area: (-20.0, -10.0, 20.0, 10.0)",
+        "area: (0.0, 0.0, 1.0, 1.0)",
+    );
+    assert!(matches!(parse(bad.as_bytes()), Err(MapError::Invalid(_))));
+}
+
+#[test]
+fn version_three_files_still_load() {
+    let text = String::from_utf8(EXAMPLE.to_vec()).unwrap().replacen(
+        &format!("format_version: {FORMAT_VERSION}"),
+        "format_version: 3",
+        1,
+    );
+    let map = parse(text.as_bytes()).unwrap();
+    assert_eq!(map.format_version, FORMAT_VERSION);
+    assert!(map.surroundings.is_none());
+}

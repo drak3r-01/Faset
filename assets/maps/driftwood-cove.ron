@@ -13,7 +13,7 @@
 // (ruined walls and crates for cover), the ziggurat (height, sniper nest) and
 // two watchtowers (4 m platforms) overlooking the beaches.
 Map(
-    format_version: 3,
+    format_version: 4,
     meta: (name: "Driftwood Cove", author: "Faset", description: "A tropical island in a turquoise lagoon: beaches, ruins and a shrine on the hill.", modes: ["fps"], players: (2, 12)),
     theme: (ambience: "day", sky: "clear", weather: [(from_s: 0.0, weather: "clear")], palette: "nature"),
     physics: (gravity: 9.81),
@@ -742,4 +742,5 @@ Map(
     lights: [
     ],
     vegetation: (seed: 61, rules: [(on: "grass", species: Grass, density: 45.0), (on: "grass", species: Fern, density: 10.0), (on: "grass", species: Bush, density: 1.5), (on: "sand_white", species: Grass, density: 3.0), (on: "sand_white", species: Palm, density: 0.3), (on: "sand_white", species: Rock, density: 0.4)], symmetry: Rotate180),
+    surroundings: (area: (-60.0, -60.0, 60.0, 60.0), ground: -1.0, sea_level: Some(-1.0), north: Sea, east: Sea, south: Sea, west: Sea, horizon: Treeline, haze: 0.8, seed: 3),
 )

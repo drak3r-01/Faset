@@ -81,3 +81,29 @@ vegetation: (seed: 61, rules: [(on: "grass", species: Grass, density: 45.0)],
   get the same cover (a map that declares its own `symmetry` uses that one).
 - Keep dense grass (tens per 100 m^2) to areas that need it: thousands of
   plants are cheap to draw, but bushes and trees change sightlines.
+
+## Landscape beyond the bounds
+
+The world continues past the playable area (format version 4, optional
+`surroundings` block). It is scenery only: the walls and `KillVolume`s of the
+map still hold the players, and no collision is built for the far terrain.
+
+```ron
+surroundings: (area: (-64.0, -48.0, 64.0, 48.0), sea_level: Some(-1.0),
+               north: Slope, east: Cliff, south: Slope, west: Forest,
+               horizon: Mountains, haze: 0.3, seed: 7),
+```
+
+- `area` is the playable rectangle in metres `(min_x, min_z, max_x, max_z)`
+  (every spawn and pickup must be inside, and one `KillVolume` should span
+  it); `ground` is the floor height at its edge (default 0); `sea_level`
+  gives the sea of a coast that has no `Water` zone.
+- Each side (`north` is -Z, `east` +X, `south` +Z, `west` -X) is a `Border`:
+  `Forest` (hills and trees), `Cliff` (a drop to a beach or a low plain),
+  `Sea`, `Slope` (steep climb), `Dunes` or `Rocks`. Pick borders that make
+  leaving the area look like a bad idea: no visible wall is needed.
+- `horizon` is the far silhouette: `Flat` (default), `Mountains`, `Treeline`
+  or `Dunes`. `haze` scales the fog density of the ambience (default 1; use
+  less than 1 under a thick fog such as `snow` so the silhouette shows).
+- The far terrain is generated at load time from this block and `seed`
+  (about 3 000 vertices); forest borders add up to 2 400 instanced trees.
