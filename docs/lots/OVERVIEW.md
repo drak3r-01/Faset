@@ -59,6 +59,11 @@ Tableau de synthèse des 58 lots. Modèle et effort sont repris de l'en-tête de
 | 6.3 | Classes et équipements, budget, aperçu, validation serveur | Construire une tenue dans un budget de points, la voir en 3D, et faire valider côté serveur. | Sonnet, medium | À faire |
 | 6.4 | Paramètres : structure, métadonnées, persistance, affichage, qualité | Une seule structure de paramètres, un menu généré par métadonnées, application sans redémarrage. | Sonnet, medium | À faire |
 | 6.5 | Paramètres : commandes, audio, réseau, accessibilité, traduction | Finir les paramètres, détecter les conflits de touches, avoir une interface FR/EN complète. | Sonnet medium puis Haiku (textes) | À faire |
+| 6.9 | Sensation de tir (lot interne) | Flash, traceurs, recul, impacts par matériau, marqueurs, sons, arme FPS sans clipping. | Sonnet, high | À faire |
+| 6.10 | Terrain avec relief (lot interne) | Heightmap lisse, mélange par pente, collisions de pente, navigation bots, sculpture dans l'éditeur. | Opus, high | À faire |
+| 6.11 | Props et végétation (lot interne) | Rendu des props, végétation low-poly générée, instanciation GPU, vent, LOD. | Opus, high | À faire |
+| 6.12 | Paysage hors limites (lot interne) | Terrain et décor au-delà de la zone jouable, bordures naturelles par carte, brouillard et ciel. | Sonnet, high | À faire |
+| 6.13 | Level design (lot interne) | Trois cartes non carrées conçues sur plan puis testées avec les bots. | Opus, high | À faire |
 | 7.1 | Profilage et optimisation rendu et réseau | Mesurer et atteindre chaque budget de la section 20 sans changer les interfaces publiques. | Sonnet, medium | À faire |
 | 7.2 | Validation des plateformes et packaging | Vérifier que chaque cible compile et produire une archive avec sommes par cible. | Sonnet, medium | À faire |
 | 7.3 | Documentation en anglais, notes de version, tag v0.1.0 | Finaliser la documentation et publier `v0.1.0` par le pipeline de release. | Haiku, low | À faire |
