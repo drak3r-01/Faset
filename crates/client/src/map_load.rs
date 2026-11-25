@@ -5,8 +5,11 @@
 //! collision world. [`load_map`] needs no GPU; only [`LoadedMap::upload`]
 //! touches the renderer, so a headless build can skip it.
 
+use std::sync::Arc;
+
 use crate::landscape::{self, Landscape};
-use faset_mapfmt::geometry::{bake_occlusion, build_meshes, MeshChunk};
+use crate::world_terrain::{TerrainStream, WorldTerrain};
+use faset_mapfmt::geometry::{bake_occlusion, build_block_meshes, build_meshes, MeshChunk};
 use faset_mapfmt::vegetation::{scatter, PlacedPlant};
 use faset_mapfmt::{MapError, MapFile};
 use faset_render::glam::Mat4;
@@ -26,13 +29,18 @@ pub struct LoadedMap {
     /// The expanded map (prefabs and symmetry applied).
     pub map: MapFile,
     pub collision: MapCollision,
-    /// One chunk per 16 m block, with ambient occlusion in the colours.
+    /// One chunk per 16 m block, with ambient occlusion in the colours. A map
+    /// with a world (lot 8.1) has no terrain in them: see `world`.
     pub chunks: Vec<MeshChunk>,
     /// Every plant of the map (lot 6.11), the same the bots' sight uses.
     pub plants: Vec<PlacedPlant>,
     /// The far terrain and woods beyond the playable area (lot 6.12), if the
     /// map has `surroundings`.
     pub landscape: Option<Landscape>,
+    /// The world terrain (lot 8.1), if the map has a `world` block: drawn by
+    /// a [`TerrainStream`] (see [`LoadedMap::terrain_stream`]) instead of the
+    /// chunks.
+    pub world: Option<Arc<WorldTerrain>>,
 }
 
 /// Parses, expands and builds a map file.
@@ -42,7 +50,12 @@ pub struct LoadedMap {
 pub fn load_map(bytes: &[u8]) -> Result<LoadedMap, MapLoadError> {
     let map = faset_mapfmt::expand(&faset_mapfmt::parse(bytes)?);
     let collision = MapCollision::build(&map);
-    let mut chunks = build_meshes(&map);
+    let world = WorldTerrain::build(&map).map(Arc::new);
+    let mut chunks = if world.is_some() {
+        build_block_meshes(&map)
+    } else {
+        build_meshes(&map)
+    };
     bake_occlusion(&mut chunks, |origin, dir, max| {
         collision.ray_cast(origin, dir, max).is_some()
     });
@@ -62,10 +75,28 @@ pub fn load_map(bytes: &[u8]) -> Result<LoadedMap, MapLoadError> {
         chunks,
         plants,
         landscape,
+        world,
     })
 }
 
 impl LoadedMap {
+    /// Reserves the streamed slots in `renderer` and starts the stream of the
+    /// world terrain (lot 8.1); `None` for a map without a world. Call
+    /// [`TerrainStream::update`] every frame before rendering and add its
+    /// [`TerrainStream::instances`] to the frame's instances.
+    ///
+    /// # Errors
+    /// [`RenderError`] of the slot reservation (a full arena).
+    pub fn terrain_stream(
+        &self,
+        renderer: &mut Renderer,
+    ) -> Result<Option<TerrainStream>, RenderError> {
+        self.world
+            .clone()
+            .map(|w| TerrainStream::with_renderer(w, renderer))
+            .transpose()
+    }
+
     /// Uploads every chunk and prop to the renderer and returns their static
     /// instances (chunks first, identity transform); hands the plants to the
     /// renderer's foliage layer (drawn when

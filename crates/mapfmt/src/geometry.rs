@@ -568,8 +568,20 @@ fn block_of(p: Vec3) -> [i32; 3] {
 /// Builds the render meshes of an expanded map, one chunk per 16 m block,
 /// ordered by block index.
 #[must_use]
-#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 pub fn build_meshes(map: &MapFile) -> Vec<MeshChunk> {
+    build(map, true)
+}
+
+/// [`build_meshes`] without the terrain (lot 8.1): the brushes only. A map
+/// with a [`World`](crate::World) block draws its terrain as streamed chunks
+/// instead.
+#[must_use]
+pub fn build_block_meshes(map: &MapFile) -> Vec<MeshChunk> {
+    build(map, false)
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn build(map: &MapFile, with_terrain: bool) -> Vec<MeshChunk> {
     let mut boxes = Vec::new();
     let mut polys = Vec::new();
     for b in &map.brushes {
@@ -621,7 +633,7 @@ pub fn build_meshes(map: &MapFile) -> Vec<MeshChunk> {
             }
         }
     }
-    if let Some(t) = &map.terrain {
+    if let Some(t) = map.terrain.as_ref().filter(|_| with_terrain) {
         terrain_mesh(t, &map.theme.palette, &mut chunks);
     }
     chunks.into_values().collect()
@@ -647,6 +659,24 @@ pub fn terrain_material(palette: &str, paint: u8) -> u8 {
         p => p,
     };
     TERRAIN_MATERIALS[usize::from(ground.clamp(1, 5)) - 1]
+}
+
+/// Renderer material ids of the layered terrain sets (lot 8.1, pattern
+/// `TerrainLayers` in `render/data/materials.ron`): nature, desert, snow,
+/// industrial.
+pub const TERRAIN_LAYER_MATERIALS: [u8; 4] = [59, 60, 61, 62];
+
+/// Layered terrain material of a palette (lot 8.1): six ground layers
+/// (the palette ground, dirt, sand, snow or mud, painted rock, cliff rock)
+/// blended per vertex and by slope.
+#[must_use]
+pub fn terrain_layer_material(palette: &str) -> u8 {
+    match palette {
+        "desert" => TERRAIN_LAYER_MATERIALS[1],
+        "snow" => TERRAIN_LAYER_MATERIALS[2],
+        "industrial" | "urban" => TERRAIN_LAYER_MATERIALS[3],
+        _ => TERRAIN_LAYER_MATERIALS[0],
+    }
 }
 
 /// Appends the terrain triangles (smooth normals, one vertex per sample and
@@ -811,6 +841,7 @@ mod tests {
             terrain: None,
             vegetation: None,
             surroundings: None,
+            world: None,
         }
     }
 

@@ -106,7 +106,7 @@ fn bayer4(pixel: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_main(in: PlantOut) -> FragmentOut {
-    let out = shade_fragment(in.color, in.normal, in.clip, in.prev_clip, in.world_pos, in.material);
+    let out = shade_fragment(in.color, in.normal, 0.0, in.clip, in.prev_clip, in.world_pos, in.material);
     let d = distance(in.world_pos, lighting.camera_pos.xyz);
     let fade = clamp((in.fade_end - d) / (FADE_BAND * in.fade_end), 0.0, 1.0);
     if fade < bayer4(in.position.xy) {

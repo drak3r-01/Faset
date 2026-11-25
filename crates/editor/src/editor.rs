@@ -79,6 +79,7 @@ pub fn new_map(name: &str) -> MapFile {
         terrain: None,
         vegetation: None,
         surroundings: None,
+        world: None,
     }
 }
 

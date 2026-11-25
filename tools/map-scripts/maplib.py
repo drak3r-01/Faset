@@ -33,6 +33,7 @@ class Map:
         self.terrain = None  # RON of the height field, see `set_terrain`
         self.vegetation = None  # RON of the vegetation block, see `set_vegetation`
         self.surroundings = None  # RON of the landscape beyond the bounds, see `set_surroundings`
+        self.world = None  # RON of the large world around the playable zone, see `set_world`
         self.track_prisms = False  # record prism bounding boxes in `solids` (lot 6.13 maps)
 
     # ---- helpers --------------------------------------------------------
@@ -215,7 +216,7 @@ class Map:
         t = self.theme
         weather = ", ".join(f'(from_s: {a}, weather: "{b}")' for a, b in t.get("weather", [(0.0, "clear")]))
         out = [self.header.rstrip(), "Map("]
-        out.append(f"    format_version: {4 if self.surroundings else 3},")
+        out.append(f"    format_version: {5 if self.world else 4 if self.surroundings else 3},")
         out.append(f'    meta: (name: "{self.name}", author: "Faset", description: "{self.description}", modes: ["fps"], players: ({self.players[0]}, {self.players[1]})),')
         out.append(f'    theme: (ambience: "{t["ambience"]}", sky: "{t.get("sky", "clear")}", weather: [{weather}], palette: "{t["palette"]}"),')
         if self.gravity:
@@ -230,6 +231,8 @@ class Map:
             out.append(f"    vegetation: {self.vegetation},")
         if self.surroundings:
             out.append(f"    surroundings: {self.surroundings},")
+        if self.world:
+            out.append(f"    world: {self.world},")
         out.append(")")
         return "\n".join(out) + "\n"
 
@@ -338,6 +341,61 @@ class Map:
             out += f", sea_level: Some({sea_level:.1f})"
         out += f", north: {north}, east: {east}, south: {south}, west: {west}, horizon: {horizon}, haze: {haze}, seed: {seed})"
         self.surroundings = out
+
+    # ---- world (lot 8.1) ----------------------------------------------------------------
+    def set_world(self, extent, playable, cell, height, paint=None, snow_line=None):
+        """The world around the playable rectangle (format version 5): the far
+        height field over `extent` (min_x, min_z, max_x, max_z), `cell` whole
+        metres between samples, `height(x, z)` in metres (stored in
+        decimetres as base64 of the zigzag varint differences between
+        consecutive samples, row by row). `playable` is the simulated
+        rectangle (the `surroundings` area). Returns the size in bytes of the
+        encoded heights."""
+        import base64
+        x0, z0, x1, z1 = extent
+        nx = int(round((x1 - x0) / cell)) + 1
+        nz = int(round((z1 - z0) / cell)) + 1
+        assert abs(x0 + (nx - 1) * cell - x1) < 1e-6 and abs(z0 + (nz - 1) * cell - z1) < 1e-6
+
+        def varint(out, v):
+            while True:
+                b = v & 0x7F
+                v >>= 7
+                if v:
+                    out.append(b | 0x80)
+                else:
+                    out.append(b)
+                    return
+
+        raw, prev = bytearray(), 0
+        for j in range(nz):
+            for i in range(nx):
+                dm = int(math.floor(height(x0 + i * cell, z0 + j * cell) * 10 + 0.5))
+                d = dm - prev
+                varint(raw, -2 * d - 1 if d < 0 else 2 * d)  # zigzag
+                prev = dm
+        heights = base64.b64encode(bytes(raw)).decode()
+        paint_field = ""
+        if paint:
+            names = ["auto", "grass", "sand", "rock", "snow", "dirt"]
+            vals = [names.index(paint(x0 + i * cell, z0 + j * cell) or "auto") for j in range(nz) for i in range(nx)]
+            if any(vals):
+                runs, k = bytearray(), 0
+                while k < len(vals):
+                    n = 1
+                    while k + n < len(vals) and vals[k + n] == vals[k]:
+                        n += 1
+                    runs.append(vals[k])
+                    varint(runs, n)
+                    k += n
+                paint_field = f', paint: "{base64.b64encode(bytes(runs)).decode()}"'
+        snow = f", snow_line: Some({snow_line:.1f})" if snow_line is not None else ""
+        self.world = (
+            f"(extent: ({x0:.1f}, {z0:.1f}, {x1:.1f}, {z1:.1f}), "
+            f"playable: ({playable[0]:.1f}, {playable[1]:.1f}, {playable[2]:.1f}, {playable[3]:.1f}), "
+            f'far: (cell: {cell}, size: ({nx}, {nz}), heights: "{heights}"{paint_field}){snow})'
+        )
+        return len(raw)
 
     def save(self, path):
         with open(path, "w", newline="\n") as fh:

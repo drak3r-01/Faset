@@ -61,6 +61,10 @@ pub struct Landscape {
 }
 
 /// Builds the landscape of a map; `None` when it has no surroundings.
+///
+/// A map with a `world` block (lot 8.1) draws its own far terrain (see
+/// [`crate::world_terrain`]): its landscape has no mesh, and the woods stand
+/// on the world's ground.
 #[must_use]
 pub fn build(map: &MapFile) -> Option<Landscape> {
     let s = map.surroundings.as_ref()?;
@@ -68,6 +72,17 @@ pub fn build(map: &MapFile) -> Option<Landscape> {
         s,
         palette: &map.theme.palette,
     };
+    if let Some(world) = &map.world {
+        let mut plants = field.woods();
+        for p in &mut plants {
+            p.position.y = world.height_at(map.terrain.as_ref(), p.position.x, p.position.z) - 0.15;
+        }
+        return Some(Landscape {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            plants,
+        });
+    }
     let (vertices, indices) = field.mesh();
     Some(Landscape {
         vertices,

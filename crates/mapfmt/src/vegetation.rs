@@ -784,6 +784,7 @@ mod tests {
                 symmetry: Symmetry::None,
             }),
             surroundings: None,
+            world: None,
         }
     }
 

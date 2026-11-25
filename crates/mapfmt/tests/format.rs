@@ -2,8 +2,9 @@
 
 use faset_mapfmt::vegetation::scatter;
 use faset_mapfmt::{
-    expand_prefabs, expand_symmetry, fingerprint, parse, to_ron, Brush, DensityRule, MapError,
-    Plant, Species, Symmetry, Team, Terrain, Vegetation, FORMAT_VERSION, MAX_MAP_BYTES,
+    expand_prefabs, expand_symmetry, fingerprint, parse, to_ron, Brush, DensityRule, FarField,
+    MapError, Plant, Species, Symmetry, Team, Terrain, Vegetation, World, FORMAT_VERSION,
+    MAX_MAP_BYTES,
 };
 
 const EXAMPLE: &[u8] = include_bytes!("../../../assets/testdata/example.ron");
@@ -292,4 +293,63 @@ fn version_three_files_still_load() {
     let map = parse(text.as_bytes()).unwrap();
     assert_eq!(map.format_version, FORMAT_VERSION);
     assert!(map.surroundings.is_none());
+}
+
+#[test]
+fn version_four_files_load_unchanged() {
+    let text = String::from_utf8(EXAMPLE.to_vec()).unwrap().replacen(
+        &format!("format_version: {FORMAT_VERSION}"),
+        "format_version: 4",
+        1,
+    );
+    let map = parse(text.as_bytes()).unwrap();
+    assert_eq!(map.format_version, FORMAT_VERSION);
+    assert!(map.world.is_none());
+    assert_eq!(map, parse(EXAMPLE).unwrap());
+}
+
+#[test]
+fn every_shipped_map_parses() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/maps");
+    let mut count = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "ron") {
+            let bytes = std::fs::read(&path).unwrap();
+            let map = parse(&bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert_eq!(parse(to_ron(&map).as_bytes()).unwrap(), map);
+            count += 1;
+        }
+    }
+    assert!(count >= 7);
+}
+
+#[test]
+fn world_round_trips_and_is_validated() {
+    let mut map = parse(EXAMPLE).unwrap();
+    let (nx, nz) = (17u16, 13u16);
+    let heights: Vec<i32> = (0..nz)
+        .flat_map(|j| (0..nx).map(move |i| i32::from(i) * 7 - i32::from(j) * 3))
+        .collect();
+    let mut paint = vec![0u8; usize::from(nx) * usize::from(nz)];
+    paint[20..30].fill(3);
+    map.world = Some(World {
+        extent: [-128.0, -96.0, 128.0, 96.0],
+        playable: [-30.0, -20.0, 30.0, 20.0],
+        far: FarField {
+            cell: 16,
+            size: [nx, nz],
+            heights,
+            paint,
+        },
+        snow_line: Some(40.0),
+    });
+    let text = to_ron(&map);
+    assert!(text.contains("world: (extent:") || text.contains("world: ("));
+    let back = parse(text.as_bytes()).unwrap();
+    assert_eq!(back, map);
+    assert_eq!(fingerprint(&back), fingerprint(&map));
+    // A far field that does not span the extent is rejected at parse time.
+    let bad = text.replace("cell: 16", "cell: 15");
+    assert!(matches!(parse(bad.as_bytes()), Err(MapError::Invalid(_))));
 }

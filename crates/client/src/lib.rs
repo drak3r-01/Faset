@@ -30,6 +30,9 @@
 //!   6.11) draws the map's props and its instanced vegetation.
 //! * [`landscape`] (lot 6.12): the far terrain, horizon and woods beyond the
 //!   playable area, generated from the map's `surroundings` block.
+//! * [`world_terrain`] (lot 8.1): the ground of a map with a `world` block, a
+//!   chunked quadtree with levels of detail streamed into renderer slots
+//!   ([`TerrainStream`]).
 //! * [`map_sync`]: the map cache (by fingerprint) and the `MapChange` and map
 //!   download handler (lot 5.1).
 //! * [`state`], [`session`], [`app`] (lot 6.1): the stack of application states
@@ -97,6 +100,7 @@ pub mod sounds;
 pub mod state;
 pub mod surface;
 pub mod weapon_models;
+pub mod world_terrain;
 
 pub use app::{App, MapCatalogue, CONNECT_TIMEOUT};
 pub use camera::{CameraPose, FirstPersonCamera, Look};
@@ -143,3 +147,4 @@ pub use shoot_feel::{
 pub use sounds::{shot_recipe, Cue};
 pub use state::{AppState, StateError, StateStack, Transition};
 pub use surface::{Surface, SurfaceMap};
+pub use world_terrain::{TerrainStream, WorldTerrain};

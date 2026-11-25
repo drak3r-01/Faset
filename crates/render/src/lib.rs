@@ -44,6 +44,12 @@
 //! [`RenderWorld::foliage`]): plants drawn by GPU instancing from a static
 //! buffer, culled and given a level of detail per 16 m cell, swaying in the
 //! wind and dissolving at their draw distance (see [`FoliageKind`]).
+//! Lot 8.1 adds streamed mesh slots ([`Renderer::reserve_mesh_slots`],
+//! [`Renderer::write_mesh_slot`]): fixed-capacity meshes rewritten between
+//! frames without waiting for the GPU, within [`STREAM_BYTES_PER_FRAME`],
+//! for the world terrain's chunks; and the layered terrain material
+//! ([`Pattern::TerrainLayers`]): six pixel layers blended by vertex weights
+//! and slope, with a detail normal up close.
 
 mod ambience;
 mod camera;
@@ -66,6 +72,7 @@ mod select;
 mod shadow;
 mod shelter;
 mod sky;
+mod stream;
 mod target;
 mod water;
 mod weather;
@@ -88,6 +95,7 @@ use post::{PostChain, PostInputs};
 use shadow::ShadowResources;
 use shelter::ShelterBuffer;
 use sky::SkyPipeline;
+use stream::StreamQueue;
 use target::{Offscreen, Swapchain};
 use water::{GpuWater, WaterPipeline};
 use weather::{GpuWeather, WeatherPipeline};
@@ -124,6 +132,7 @@ pub use sky::{
     cell_has_star, hash_cell, henyey_greenstein, star_cell, sun_altitude_azimuth, sun_direction,
     SkyParams, STAR_COLS, STAR_ROWS, SUN_PHASE_G,
 };
+pub use stream::STREAM_BYTES_PER_FRAME;
 pub use water::{
     angular_frequency, gerstner_displace, is_underwater, mote_position, underwater_profile,
     wavenumber, GerstnerWave, WaterError, WaterParams, GRAVITY, GRID_CELLS, GRID_EXTENT, KIND_MOTE,
@@ -298,6 +307,13 @@ pub enum RenderError {
     InvalidMesh,
     #[error("invalid foliage: {0}")]
     InvalidFoliage(String),
+    /// A streamed write names a mesh that is not a reserved slot (lot 8.1).
+    #[error("mesh {0} is not a streamed slot")]
+    NotASlot(u32),
+    /// A streamed write does not fit in what is left of the frame's upload
+    /// budget ([`STREAM_BYTES_PER_FRAME`]); retry after the next frame.
+    #[error("streamed write of {bytes} bytes exceeds the {left} bytes left this frame")]
+    StreamBudget { bytes: usize, left: usize },
 }
 
 struct Windowed {
@@ -360,6 +376,8 @@ pub struct Renderer {
     gbuffer: Option<GBuffer>,
     /// Created at the first mesh upload.
     arena: Option<MeshArena>,
+    /// Streamed mesh slots and their queued writes (lot 8.1).
+    stream: StreamQueue,
     /// The vegetation layer (lot 6.11), see [`Renderer::set_foliage`].
     foliage: Option<FoliageLayer>,
     /// Created with the first vegetation layer.
@@ -503,6 +521,7 @@ impl Renderer {
                 light_overflow_warned: false,
                 gbuffer: None,
                 arena: None,
+                stream: StreamQueue::default(),
                 foliage: None,
                 foliage_pipelines: None,
                 foliage_draws: Vec::new(),
@@ -654,6 +673,54 @@ impl Renderer {
         result.map(|()| id)
     }
 
+    /// Reserves `count` streamed mesh slots (lot 8.1) of `max_vertices`
+    /// vertices and `max_indices` indices each in the static arena, empty
+    /// until written. A later call with the same capacities reuses (and
+    /// empties) the same slots, adding more when `count` grew, so a map
+    /// change does not grow the arena. Load time only.
+    ///
+    /// # Errors
+    /// [`RenderError::InvalidMesh`] for a zero capacity or an index capacity
+    /// not a multiple of 3; [`RenderError::ArenaFull`]; Vulkan and allocation
+    /// errors creating the arena.
+    pub fn reserve_mesh_slots(
+        &mut self,
+        count: u32,
+        max_vertices: u32,
+        max_indices: u32,
+    ) -> Result<Vec<MeshId>, RenderError> {
+        if self.arena.is_none() {
+            self.arena = Some(MeshArena::new(&mut self.ctx)?);
+        }
+        let arena = self.arena.as_mut().expect("created above");
+        self.stream.reserve(arena, count, max_vertices, max_indices)
+    }
+
+    /// Queues new contents for a streamed slot (lot 8.1). The next rendered
+    /// frame copies them in at its start, without waiting for the GPU, and
+    /// draws them; instances of the slot draw the new mesh from then on.
+    /// Writes to the same slot before a frame replace each other in order.
+    ///
+    /// # Errors
+    /// [`RenderError::NotASlot`] for a mesh not reserved with
+    /// [`Renderer::reserve_mesh_slots`]; [`RenderError::InvalidMesh`] above
+    /// the slot's capacity or for bad indices; [`RenderError::StreamBudget`]
+    /// when the write does not fit in [`Renderer::stream_bytes_left`].
+    pub fn write_mesh_slot(
+        &mut self,
+        slot: MeshId,
+        vertices: &[Vertex],
+        indices: &[u32],
+    ) -> Result<(), RenderError> {
+        self.stream.queue(slot, vertices, indices)
+    }
+
+    /// Bytes [`Renderer::write_mesh_slot`] still accepts before the next
+    /// frame (out of [`STREAM_BYTES_PER_FRAME`]).
+    pub fn stream_bytes_left(&self) -> usize {
+        self.stream.bytes_left()
+    }
+
     /// Replaces the vegetation layer (lot 6.11): plant `kinds` whose meshes
     /// were uploaded with [`Renderer::upload_mesh`], and every plant. The
     /// plants are drawn by instancing when [`RenderWorld::foliage`] is set.
@@ -783,6 +850,11 @@ impl Renderer {
         for garbage in self.deferred.take_ready(self.frame_index) {
             garbage.destroy(&mut self.ctx);
         }
+
+        // Streamed slot writes (lot 8.1): into this frame's staging buffer
+        // (free since the fence wait), ranges updated before culling, copies
+        // recorded first in the command buffer.
+        let stream_copies = self.stage_stream_writes(slot)?;
 
         // Opaque targets follow the internal resolution: the output size, or
         // what the upscaler asks for. The old ones may still be in use by the
@@ -1261,6 +1333,63 @@ impl Renderer {
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
+            // Streamed slots (lot 8.1): wait for the earlier frames' vertex
+            // reads of the arena (same queue, submission order), copy, then
+            // make the new bytes visible to this frame's vertex input.
+            if let (Some(arena), Some(staging), false) = (
+                arena,
+                frame.staging.as_ref(),
+                stream_copies.0.is_empty() && stream_copies.1.is_empty(),
+            ) {
+                device.cmd_pipeline_barrier(
+                    frame.cmd,
+                    vk::PipelineStageFlags::VERTEX_INPUT,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[],
+                );
+                if !stream_copies.0.is_empty() {
+                    device.cmd_copy_buffer(
+                        frame.cmd,
+                        staging.buffer,
+                        arena.vertices.buffer,
+                        &stream_copies.0,
+                    );
+                }
+                if !stream_copies.1.is_empty() {
+                    device.cmd_copy_buffer(
+                        frame.cmd,
+                        staging.buffer,
+                        arena.indices.buffer,
+                        &stream_copies.1,
+                    );
+                }
+                let visible = |buffer| {
+                    vk::BufferMemoryBarrier::default()
+                        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                        .dst_access_mask(
+                            vk::AccessFlags::VERTEX_ATTRIBUTE_READ | vk::AccessFlags::INDEX_READ,
+                        )
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .buffer(buffer)
+                        .size(vk::WHOLE_SIZE)
+                };
+                device.cmd_pipeline_barrier(
+                    frame.cmd,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::VERTEX_INPUT,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[
+                        visible(arena.vertices.buffer),
+                        visible(arena.indices.buffer),
+                    ],
+                    &[],
+                );
+            }
             // Pass 1: sun shadow cascades. The maps are shared by both
             // frames in flight; the first barrier orders these writes after
             // the previous frame's reads (same queue, submission order).
@@ -1868,8 +1997,67 @@ impl Renderer {
             }
             (Target::Windowed(_), None) => unreachable!("windowed frames acquire an image"),
         }
+        self.stream.submitted();
         self.frame_index += 1;
         Ok(())
+    }
+
+    /// Copies the queued streamed writes into frame `slot`'s staging buffer
+    /// (grown on demand), points the slot ranges at them and returns the
+    /// vertex and index copy regions. The writes stay queued until a frame
+    /// is submitted, so an abandoned frame loses nothing.
+    fn stage_stream_writes(
+        &mut self,
+        slot: usize,
+    ) -> Result<(Vec<vk::BufferCopy>, Vec<vk::BufferCopy>), RenderError> {
+        let mut copies = (Vec::new(), Vec::new());
+        let Some(arena) = self.arena.as_mut() else {
+            return Ok(copies);
+        };
+        if self.stream.pending.is_empty() {
+            return Ok(copies);
+        }
+        self.stream.apply_ranges(arena);
+        let (layout, total) = self.stream.staging_layout();
+        let frame = &mut self.frames[slot];
+        let needed = total as u64;
+        if frame.staging.as_ref().is_none_or(|b| b.size < needed) {
+            if let Some(mut old) = frame.staging.take() {
+                // This slot's last submission finished (fence waited).
+                old.destroy(&mut self.ctx);
+            }
+            frame.staging = Some(GpuBuffer::new(
+                &mut self.ctx,
+                "frame-stream-staging",
+                needed.next_power_of_two().max(64 * 1024),
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                MemoryLocation::CpuToGpu,
+            )?);
+        }
+        let staging = frame.staging.as_mut().expect("allocated above");
+        let mapped = staging.mapped();
+        for (w, &(v_at, i_at)) in self.stream.pending.iter().zip(&layout) {
+            let range = &arena.meshes[w.mesh.0 as usize];
+            let v_bytes: &[u8] = bytemuck::cast_slice(&w.vertices);
+            let i_bytes: &[u8] = bytemuck::cast_slice(&w.indices);
+            mapped[v_at..v_at + v_bytes.len()].copy_from_slice(v_bytes);
+            mapped[i_at..i_at + i_bytes.len()].copy_from_slice(i_bytes);
+            if !v_bytes.is_empty() {
+                copies.0.push(vk::BufferCopy {
+                    src_offset: v_at as u64,
+                    dst_offset: range.base_vertex as u64 * std::mem::size_of::<Vertex>() as u64,
+                    size: v_bytes.len() as u64,
+                });
+            }
+            if !i_bytes.is_empty() {
+                copies.1.push(vk::BufferCopy {
+                    src_offset: i_at as u64,
+                    dst_offset: u64::from(range.first_index) * 4,
+                    size: i_bytes.len() as u64,
+                });
+            }
+        }
+        Ok(copies)
     }
 
     /// Copies the last rendered headless frame to a PNG file (RGBA, sRGB).

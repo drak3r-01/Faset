@@ -488,6 +488,185 @@ fn culling_draws_only_visible_instances() {
     assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
 }
 
+/// Lot 8.1: streamed slots take new contents between frames, without the
+/// GPU going idle, inside the per-frame upload budget.
+#[test]
+fn streamed_slots_are_rewritten_between_frames() {
+    let (messages, _guard) = capture_messages();
+    {
+        let mut renderer = headless((32, 32));
+        let plain = renderer
+            .upload_mesh(&cube_mesh(0.5, &CUBE_FACE_TINTS, 0).0, &[0, 1, 2])
+            .unwrap();
+        let slots = renderer.reserve_mesh_slots(2, 24, 36).unwrap();
+        assert_eq!(slots.len(), 2);
+        let camera = Camera::new(
+            Mat4::IDENTITY,
+            perspective_reverse_z(90f32.to_radians(), 1.0, 0.1),
+        );
+        let world = world_with(
+            camera,
+            vec![Instance::new(
+                slots[0],
+                0,
+                Mat4::from_translation(Vec3::new(0.0, 0.0, -2.0)),
+            )],
+        );
+        let out = out_path("streamed-slot.png");
+        let centre = |renderer: &mut Renderer| {
+            renderer.render_frame(&world).unwrap();
+            renderer.read_back_png(&out).unwrap();
+            load_rgba(&out).get_pixel(16, 16).0
+        };
+        // Empty: the clear colour shows.
+        let clear = [
+            srgb_encode(CLEAR[0]),
+            srgb_encode(CLEAR[1]),
+            srgb_encode(CLEAR[2]),
+        ];
+        let px = centre(&mut renderer);
+        assert!(
+            px[..3].iter().zip(clear).all(|(a, b)| a.abs_diff(b) <= 1),
+            "{px:?}"
+        );
+        for colour in [[200, 30, 30], [30, 200, 30], [30, 30, 200]] {
+            let (v, i) = cube_mesh(0.5, &[colour; 6], 0);
+            // An earlier write of the same frame is replaced by the last one.
+            renderer
+                .write_mesh_slot(slots[0], &cube_mesh(0.5, &[[1, 2, 3]; 6], 0).0, &i)
+                .unwrap();
+            renderer.write_mesh_slot(slots[0], &v, &i).unwrap();
+            assert_eq!(
+                renderer.stream_bytes_left(),
+                faset_render::STREAM_BYTES_PER_FRAME - 2 * (24 * 20 + 36 * 4)
+            );
+            let px = centre(&mut renderer);
+            assert_eq!(
+                renderer.stream_bytes_left(),
+                faset_render::STREAM_BYTES_PER_FRAME
+            );
+            let want = expected_rgb(colour);
+            assert!(
+                px[..3].iter().zip(want).all(|(a, b)| a.abs_diff(b) <= 2),
+                "{px:?} vs {want:?}"
+            );
+        }
+        // Checked writes: only slots, within capacity, within the budget.
+        let (v, i) = cube_mesh(0.5, &CUBE_FACE_TINTS, 0);
+        assert!(matches!(
+            renderer.write_mesh_slot(plain, &v, &i),
+            Err(RenderError::NotASlot(_))
+        ));
+        assert!(matches!(
+            renderer.write_mesh_slot(slots[1], &[v.clone(), v.clone()].concat(), &i),
+            Err(RenderError::InvalidMesh)
+        ));
+        let mut written = 0;
+        let full = loop {
+            match renderer.write_mesh_slot(slots[1], &v, &i) {
+                Ok(()) => written += 1,
+                Err(e) => break e,
+            }
+        };
+        assert!(matches!(full, RenderError::StreamBudget { .. }));
+        assert_eq!(
+            written,
+            faset_render::STREAM_BYTES_PER_FRAME / (24 * 20 + 36 * 4)
+        );
+        renderer.render_frame(&world).unwrap();
+        // Reserving the same slots again empties them.
+        assert_eq!(renderer.reserve_mesh_slots(2, 24, 36).unwrap(), slots);
+        let px = centre(&mut renderer);
+        assert!(
+            px[..3].iter().zip(clear).all(|(a, b)| a.abs_diff(b) <= 1),
+            "{px:?}"
+        );
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
+/// Lot 8.1: the layered terrain material reads its weights from the vertex
+/// colour (not a tint) and turns steep faces to cliff rock.
+#[test]
+fn layered_terrain_blends_its_layers() {
+    let (messages, _guard) = capture_messages();
+    {
+        let mut renderer = headless((96, 32));
+        // A quad over x0..x1 and z in -1..1 rising `rise` metres per metre
+        // toward -z, with layer weights `splat` (dirt, sand, snow, rock).
+        let mut quad = |x0: f32, x1: f32, rise: f32, splat: [u8; 4]| {
+            let n = Vec3::new(0.0, 1.0, rise).normalize();
+            let corner = |x: f32, z: f32| Vec3::new(x, -rise * z, z);
+            let v: Vec<faset_render::Vertex> = [
+                corner(x0, -1.0),
+                corner(x0, 1.0),
+                corner(x1, 1.0),
+                corner(x1, -1.0),
+            ]
+            .iter()
+            .map(|&p| {
+                let mut v = faset_render::Vertex::new(p, n, [splat[0], splat[1], splat[2]], 59);
+                v.normal[3] = splat[3] as i8;
+                v
+            })
+            .collect();
+            renderer.upload_mesh(&v, &[0, 1, 2, 0, 2, 3]).unwrap()
+        };
+        let ground = quad(-15.0, -5.5, 0.0, [0; 4]);
+        let dirt = quad(-4.5, 4.5, 0.0, [255, 0, 0, 0]);
+        // 70 degrees: past the slope band, cliff rock whatever the weights.
+        let cliff = quad(5.5, 15.0, 2.7, [255, 0, 0, 0]);
+        let view = faset_render::glam::camera::rh::view::look_at_mat4(
+            Vec3::new(0.0, 6.0, 0.01),
+            Vec3::ZERO,
+            Vec3::NEG_Z,
+        );
+        let camera = Camera::new(view, perspective_reverse_z(90f32.to_radians(), 3.0, 0.1));
+        let world = world_with(
+            camera,
+            [ground, dirt, cliff]
+                .map(|m| Instance::new(m, 0, Mat4::IDENTITY))
+                .to_vec(),
+        );
+        renderer.render_frame(&world).unwrap();
+        let out = out_path("layered-terrain.png");
+        renderer.read_back_png(&out).unwrap();
+        let img = load_rgba(&out);
+        // Mean colour of a block of pixels, so the pixel dither averages out.
+        let mean = |x0: u32, x1: u32| {
+            let mut sum = [0u32; 3];
+            let mut n = 0;
+            for x in x0..x1 {
+                for y in 14..18 {
+                    let p = img.get_pixel(x, y).0;
+                    for (s, c) in sum.iter_mut().zip(p) {
+                        *s += u32::from(c);
+                    }
+                    n += 1;
+                }
+            }
+            sum.map(|s| s / n)
+        };
+        let (g, d, c) = (mean(14, 28), mean(42, 54), mean(70, 84));
+        // Ground (grass): green, the vertex colour black did not tint it.
+        assert!(
+            g[1] > g[0] && g[1] > g[2] && g[1] > 40,
+            "grass ground {g:?}"
+        );
+        // Dirt: brown, red over blue, unlike the grass.
+        assert!(
+            d[0] > d[2] && d[0] > d[1] && d[1] < g[1],
+            "dirt {d:?}, grass {g:?}"
+        );
+        // Cliff: grey stone (near equal channels), not the painted dirt.
+        let spread = c.iter().max().unwrap() - c.iter().min().unwrap();
+        assert!(spread < 25 && c != d, "cliff {c:?}");
+        assert_eq!(renderer.validation_message_count(), 0);
+    }
+    assert_eq!(messages.load(Ordering::SeqCst), 0, "validation messages");
+}
+
 #[test]
 fn invalid_meshes_are_rejected() {
     let (messages, _guard) = capture_messages();
@@ -1008,8 +1187,8 @@ fn hot_reload_swaps_valid_shaders_and_keeps_old_on_error() {
 
         // Valid edit: paint everything red. One frame per poll.
         let red = original.replace(
-            "return shade_fragment(in.color, in.normal, in.clip, in.prev_clip, in.world_pos, in.material);",
-            "var out = shade_fragment(in.color, in.normal, in.clip, in.prev_clip, in.world_pos, \
+            "return shade_fragment(in.color, in.normal, in.splat_w, in.clip, in.prev_clip, in.world_pos, in.material);",
+            "var out = shade_fragment(in.color, in.normal, in.splat_w, in.clip, in.prev_clip, in.world_pos, \
              in.material);\n    out.color = vec4<f32>(1.0, 0.0, 0.0, 1.0);\n    return out;",
         );
         assert_ne!(red, original, "edit target found");
