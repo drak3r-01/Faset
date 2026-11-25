@@ -25,7 +25,7 @@
 //!
 //! * The *lead* of a command is how many ticks before the server consumes it
 //!   it arrives.
-//! * Measured lead: `a_mesurée = ō - rtt/Δt`, where `ō` is the filtered
+//! * Measured lead: `a_measured = ō - rtt/Δt`, where `ō` is the filtered
 //!   offset `τ - (S - 1)` sampled when each snapshot arrives (same 0.9 / 0.1
 //!   filter, propagated between snapshots by the client's own speed change).
 //!   `ō` is the client's advance on the server plus the down-link delay, so
@@ -34,7 +34,7 @@
 //! * Target lead: the plan's
 //!   `T_client = T_serveur + ⌈(rtt/2 + 2j)/Δt⌉ + m`, with `T_serveur` the
 //!   server tick being processed now (`S - 1 + rtt/(2Δt)`), gives
-//!   `a_cible = ⌈(rtt/2 + 2j)/Δt⌉ + m - rtt/(2Δt)`: a command reaches the
+//!   `a_target = ⌈(rtt/2 + 2j)/Δt⌉ + m - rtt/(2Δt)`: a command reaches the
 //!   server about `2j/Δt + m` ticks early.
 //!
 //! Synchronization (decision): the first [`ClockConfig::sync_snapshots`]
@@ -46,7 +46,7 @@
 //! skipped. From then on the client only changes speed:
 //!
 //! ```text
-//! timescale = 1 + clamp(k (a_cible - a_mesurée), -0.05, 0.05)
+//! timescale = 1 + clamp(k (a_target - a_measured), -0.05, 0.05)
 //! ```
 //!
 //! Decisions: `k` = [`DEFAULT_GAIN`] (0.02 per tick of error: 2.5 ticks of
@@ -196,7 +196,7 @@ impl ClockSync {
         self.offset.is_some()
     }
 
-    /// `a_cible` in ticks: `⌈(rtt/2 + 2j)/Δt⌉ + m - rtt/(2Δt)`.
+    /// `a_target` in ticks: `⌈(rtt/2 + 2j)/Δt⌉ + m - rtt/(2Δt)`.
     #[must_use]
     pub fn target_lead(&self) -> f64 {
         let half = self.rtt() / 2.0;
@@ -204,7 +204,7 @@ impl ClockSync {
             - half / dt()
     }
 
-    /// `a_mesurée` in ticks, once synced.
+    /// `a_measured` in ticks, once synced.
     #[must_use]
     pub fn measured_lead(&self) -> Option<f64> {
         Some(self.offset? - self.rtt() / dt())

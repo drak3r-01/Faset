@@ -7,7 +7,7 @@
 ![Rust](https://img.shields.io/badge/Rust-2024-orange?logo=rust)
 ![Vulkan](https://img.shields.io/badge/Vulkan-1.3-red?logo=vulkan)
 ![Docker](https://img.shields.io/badge/build-Docker--only-2496ED?logo=docker&logoColor=white)
-![Status](https://img.shields.io/badge/status-pre--alpha%20(phase%200)-yellow)
+![Status](https://img.shields.io/badge/status-pre--alpha-yellow)
 ![Platforms](https://img.shields.io/badge/targets-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
 
 *Bunny hops, slide hops, rotating maps every 5 minutes, up to 16 players (bots included).*
@@ -61,13 +61,24 @@ testable with hand-made scenes and the simulation testable without a GPU.
 
 > **All tooling runs in Docker. Nothing is built or installed on the host.**
 
-The dev image and the `xtask` entry points (`check`, `test`, `ci`, `build`, `package`) are
-delivered by phase 0 lots 0.2–0.3. Until then the repository only holds project metadata.
+The dev image and the `xtask` entry points are defined in `docker-compose.yml` and
+`xtask/`. The Windows wrapper `dev.ps1` forwards any command to `cargo xtask`:
 
-```bash
-# available once lot 0.2 lands
-docker compose run --rm dev cargo xtask ci
+```powershell
+.\dev.ps1 ci                      # the quality gate: check, test, render-test, maps, deny
+.\dev.ps1 run-server --port 7777  # build and run the dedicated server container
 ```
+
+The full command list and the crate map are in the [developer guide](docs/developer-guide.md).
+
+## Documentation
+
+- [Player guide](docs/player-guide.md): controls, settings, hosting and joining on the LAN.
+- [Server guide](docs/server-guide.md): `server.toml`, command-line options, console
+  commands, the `server-runtime` Docker image, ports and manual port forwarding.
+- [Developer guide](docs/developer-guide.md): Docker services, `dev.ps1` and `xtask`
+  commands, crate map, release pipeline.
+- [Map design guide](docs/map-design-guide.md) and the [lots overview](docs/lots/OVERVIEW.md).
 
 ## Roadmap
 
@@ -98,8 +109,11 @@ audio · 7 quality & release.
 
 ## Status
 
-Pre-alpha. No game code yet; the repository is being set up (phase 0).
+Pre-alpha. Current version: `0.1.0`.
 
 ## License
 
-To be decided before the first release.
+Faset is free software licensed under the GNU General Public License, version 3 only
+(`GPL-3.0-only`). See [LICENSE](LICENSE) for the full text. Third-party components keep
+their own licences, as checked by `cargo xtask deny`. The AMD FidelityFX files in
+`crates/upscale/ffx/` keep their own licence (`crates/upscale/ffx/LICENSE.txt`).

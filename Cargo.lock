@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "asset-tool"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "faset-assets",
@@ -692,7 +692,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "dedicated"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -876,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "faset-assets"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "faset-core",
  "faset-mapfmt",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "faset-audio"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "faset-core",
  "kira",
@@ -901,7 +901,7 @@ dependencies = [
 
 [[package]]
 name = "faset-bots"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "faset-core",
  "faset-mapfmt",
@@ -917,7 +917,7 @@ dependencies = [
 
 [[package]]
 name = "faset-client"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "dedicated",
@@ -951,7 +951,7 @@ dependencies = [
 
 [[package]]
 name = "faset-core"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "serde",
@@ -963,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "faset-editor"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "faset-assets",
  "faset-client",
@@ -982,7 +982,7 @@ dependencies = [
 
 [[package]]
 name = "faset-mapfmt"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "faset-core",
@@ -993,7 +993,7 @@ dependencies = [
 
 [[package]]
 name = "faset-minigame-api"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "faset-core",
  "faset-protocol",
@@ -1004,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "faset-mode-fps"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "faset-core",
@@ -1023,7 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "faset-mode-race"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "faset-core",
  "faset-minigame-api",
@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "faset-net"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "renet",
  "thiserror 2.0.21",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "faset-protocol"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "faset-core",
  "proptest",
@@ -1053,7 +1053,7 @@ dependencies = [
 
 [[package]]
 name = "faset-render"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "ash",
  "ash-window",
@@ -1074,7 +1074,7 @@ dependencies = [
 
 [[package]]
 name = "faset-server"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "faset-core",
@@ -1091,14 +1091,14 @@ dependencies = [
 
 [[package]]
 name = "faset-shaders"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "naga",
 ]
 
 [[package]]
 name = "faset-sim"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "faset-core",
  "faset-mapfmt",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "faset-ui"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "ash",
  "egui",
@@ -1132,7 +1132,7 @@ dependencies = [
 
 [[package]]
 name = "faset-upscale"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "ash",
  "bindgen",
@@ -1734,7 +1734,7 @@ dependencies = [
 
 [[package]]
 name = "map-tool"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "faset-bots",
@@ -2391,7 +2391,7 @@ checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 
 [[package]]
 name = "probe"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "ash",
 ]
@@ -3779,7 +3779,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xtask"
-version = "0.0.1-rc.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
 ]

@@ -160,20 +160,20 @@ fn ground_test_rejects_surfaces_steeper_than_45_degrees() {
             grounded_ticks += u32::from(s.on_ground);
         }
         if walkable {
-            assert!(s.on_ground, "{deg}Â°: {s:?}");
+            assert!(s.on_ground, "{deg}°: {s:?}");
             let rest = s.pos;
             for _ in 0..60 {
                 step(&mut s, IDLE, &w, &p);
-                assert!(s.on_ground, "{deg}Â°");
+                assert!(s.on_ground, "{deg}°");
             }
             assert!(
                 (s.pos - rest).length() < 2e-3,
-                "{deg}Â°: crept {}",
+                "{deg}°: crept {}",
                 s.pos - rest
             );
         } else {
-            assert_eq!(grounded_ticks, 0, "{deg}Â° counted as ground");
-            assert!(s.pos.x < x - 0.5, "{deg}Â°: did not slide down ({})", s.pos);
+            assert_eq!(grounded_ticks, 0, "{deg}° counted as ground");
+            assert!(s.pos.x < x - 0.5, "{deg}°: did not slide down ({})", s.pos);
         }
     }
 }
@@ -340,7 +340,7 @@ fn auto_hop_is_a_switchable_rule() {
 }
 
 /// Strafe-jumping bot: yaw keeps the strafe direction at the angle where
-/// `p = w_air âˆ’ s` (largest gain). `lateral` false holds forward instead.
+/// `p = w_air − s` (largest gain). `lateral` false holds forward instead.
 fn bhop_command(s: &PlayerState, tick: u32, lateral: bool, p: &MoveParams) -> MoveCmd {
     if tick < 60 {
         return FORWARD;

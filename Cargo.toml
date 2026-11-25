@@ -3,9 +3,9 @@ resolver = "2"
 members = ["xtask", "probe", "crates/core", "crates/protocol", "crates/sim", "crates/net", "crates/render", "crates/upscale", "crates/server", "crates/shaders", "crates/client", "crates/dedicated", "crates/assets", "crates/audio", "crates/ui", "crates/mapfmt", "crates/minigame-api", "crates/mode-race", "crates/mode-fps", "crates/bots", "crates/editor", "tools/asset-tool", "tools/map-tool"]
 
 [workspace.package]
-version = "0.0.1-rc.1"
+version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-only"
 publish = false
 
 [workspace.dependencies]
@@ -13,20 +13,20 @@ glam = "0.33"
 thiserror = "2"
 tracing = "0.1"
 proptest = "1"
-faset-assets = { path = "crates/assets", version = "0.0.1-rc.1" }
-faset-upscale = { path = "crates/upscale", version = "0.0.1-rc.1" }
-faset-render = { path = "crates/render", version = "0.0.1-rc.1" }
-faset-core = { path = "crates/core", version = "0.0.1-rc.1" }
-faset-protocol = { path = "crates/protocol", version = "0.0.1-rc.1" }
-faset-sim = { path = "crates/sim", version = "0.0.1-rc.1" }
-faset-mapfmt = { path = "crates/mapfmt", version = "0.0.1-rc.1" }
-faset-net = { path = "crates/net", version = "0.0.1-rc.1" }
-faset-shaders = { path = "crates/shaders", version = "0.0.1-rc.1" }
-faset-server = { path = "crates/server", version = "0.0.1-rc.1" }
-faset-minigame-api = { path = "crates/minigame-api", version = "0.0.1-rc.1" }
-faset-ui = { path = "crates/ui", version = "0.0.1-rc.1" }
-faset-audio = { path = "crates/audio", version = "0.0.1-rc.1" }
-faset-mode-fps = { path = "crates/mode-fps", version = "0.0.1-rc.1" }
-faset-mode-race = { path = "crates/mode-race", version = "0.0.1-rc.1" }
-faset-bots = { path = "crates/bots", version = "0.0.1-rc.1" }
-faset-client = { path = "crates/client", version = "0.0.1-rc.1" }
+faset-assets = { path = "crates/assets", version = "0.1.0" }
+faset-upscale = { path = "crates/upscale", version = "0.1.0" }
+faset-render = { path = "crates/render", version = "0.1.0" }
+faset-core = { path = "crates/core", version = "0.1.0" }
+faset-protocol = { path = "crates/protocol", version = "0.1.0" }
+faset-sim = { path = "crates/sim", version = "0.1.0" }
+faset-mapfmt = { path = "crates/mapfmt", version = "0.1.0" }
+faset-net = { path = "crates/net", version = "0.1.0" }
+faset-shaders = { path = "crates/shaders", version = "0.1.0" }
+faset-server = { path = "crates/server", version = "0.1.0" }
+faset-minigame-api = { path = "crates/minigame-api", version = "0.1.0" }
+faset-ui = { path = "crates/ui", version = "0.1.0" }
+faset-audio = { path = "crates/audio", version = "0.1.0" }
+faset-mode-fps = { path = "crates/mode-fps", version = "0.1.0" }
+faset-mode-race = { path = "crates/mode-race", version = "0.1.0" }
+faset-bots = { path = "crates/bots", version = "0.1.0" }
+faset-client = { path = "crates/client", version = "0.1.0" }
