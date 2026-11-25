@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::surroundings::Surroundings;
 use crate::terrain::Terrain;
 use crate::vegetation::Vegetation;
+use crate::world::World;
 
 /// Size of one brush grid unit in metres (brush coordinates are integers).
 pub const GRID_UNIT_M: f32 = 0.5;
@@ -58,6 +59,10 @@ pub struct MapFile {
     /// [`crate::surroundings`].
     #[serde(default, skip_serializing_if = "Option::is_none", with = "implicit")]
     pub surroundings: Option<Surroundings>,
+    /// Optional large world around the playable zone (format version 5); see
+    /// [`crate::world`].
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "implicit")]
+    pub world: Option<World>,
 }
 
 /// Descriptive data shown in menus and used by the rotation.

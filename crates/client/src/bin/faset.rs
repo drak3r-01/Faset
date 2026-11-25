@@ -72,6 +72,8 @@ struct Client {
     grabbed: bool,
     focused: bool,
     instances: Vec<Instance>,
+    /// The streamed world terrain of the map (lot 8.1), if it has a world.
+    terrain: Option<faset_client::TerrainStream>,
     /// What the map's theme asks of the renderer (ambience, sky, weather,
     /// water, lights), and when the map was loaded.
     look: MapLook,
@@ -373,6 +375,13 @@ impl Client {
                 Ok(instances) => self.instances = instances,
                 Err(e) => tracing::error!("cannot upload the map: {e}"),
             }
+            self.terrain = match map.terrain_stream(renderer) {
+                Ok(stream) => stream,
+                Err(e) => {
+                    tracing::error!("cannot stream the world terrain: {e}");
+                    None
+                }
+            };
         }
         if let Some(status) = self.app.take_status() {
             tracing::warn!("{status}");
@@ -510,6 +519,15 @@ impl Client {
             foliage: true,
             ..RenderWorld::default()
         };
+        // The world terrain: chunks picked for this eye, the missing ones
+        // streamed in within the frame budget.
+        if let Some(terrain) = &mut self.terrain {
+            let eye = world.camera.view.inverse().w_axis.truncate();
+            match terrain.update(eye, &world.camera.view_proj(), renderer) {
+                Ok(_) => world.instances.extend(terrain.instances()),
+                Err(e) => tracing::error!("world terrain streaming failed: {e}"),
+            }
+        }
         self.look
             .apply(&mut world, self.look_since.elapsed().as_secs_f32());
         renderer.set_material_time(elapsed.as_secs_f32());
@@ -696,6 +714,7 @@ fn main() -> Result<()> {
         grabbed: false,
         focused: true,
         instances: Vec::new(),
+        terrain: None,
         look: MapLook::default(),
         look_since: Instant::now(),
         preview: None,

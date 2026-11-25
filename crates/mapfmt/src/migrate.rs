@@ -14,7 +14,8 @@ use crate::{MapError, MapFile, FORMAT_VERSION};
 pub type Migration = fn(&str) -> Result<String, MapError>;
 
 /// `MIGRATIONS[i]` migrates version `i + 1` to `i + 2`.
-const MIGRATIONS: [Migration; (FORMAT_VERSION - 1) as usize] = [v1_to_v2, v2_to_v3, v3_to_v4];
+const MIGRATIONS: [Migration; (FORMAT_VERSION - 1) as usize] =
+    [v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5];
 
 /// Version 2 only adds the optional `terrain` field: a version 1 file is the
 /// same file with its version number rewritten.
@@ -32,6 +33,12 @@ fn v2_to_v3(text: &str) -> Result<String, MapError> {
 /// the same file with its version number rewritten.
 fn v3_to_v4(text: &str) -> Result<String, MapError> {
     set_version(text, 4)
+}
+
+/// Version 5 only adds the optional `world` field: a version 4 file is the
+/// same file with its version number rewritten.
+fn v4_to_v5(text: &str) -> Result<String, MapError> {
+    set_version(text, 5)
 }
 
 /// Rewrites the number after the first `format_version:` key.
@@ -119,6 +126,7 @@ mod tests {
         assert!(map.terrain.is_none());
         assert!(map.vegetation.is_none());
         assert!(map.surroundings.is_none());
+        assert!(map.world.is_none());
         assert_eq!(
             super::v2_to_v3("Map(format_version: 2)").unwrap(),
             "Map(format_version: 3)"
@@ -126,6 +134,10 @@ mod tests {
         assert_eq!(
             super::v3_to_v4("Map(format_version: 3)").unwrap(),
             "Map(format_version: 4)"
+        );
+        assert_eq!(
+            super::v4_to_v5("Map(format_version: 4)").unwrap(),
+            "Map(format_version: 5)"
         );
     }
 

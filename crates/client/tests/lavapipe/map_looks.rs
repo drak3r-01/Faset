@@ -77,6 +77,16 @@ fn every_shipped_map_renders_with_its_look() {
                 eye + out * 60.0 + Vec3::Y * 4.0,
             ));
         }
+        // A map with a world (lot 8.1): its ground is streamed, and one more
+        // view from above the valley shows the far landscape.
+        let mut stream = map.terrain_stream(&mut renderer).expect("slots reserved");
+        if stream.is_some() {
+            views.push((
+                "world".to_owned(),
+                Vec3::new(-20.0, 70.0, 90.0),
+                Vec3::new(60.0, 40.0, -300.0),
+            ));
+        }
         for (label, eye, target) in views {
             let mut world = RenderWorld {
                 camera: camera(eye, target),
@@ -86,8 +96,23 @@ fn every_shipped_map_renders_with_its_look() {
             };
             look.apply(&mut world, 3.0);
             renderer.set_material_time(1.5);
-            for _ in 0..3 {
+            // Until the streamed chunks for this eye are all in (three frames
+            // at least, a bounded number at most).
+            let view_proj = world.camera.view_proj();
+            for frame in 0..200 {
+                if let Some(s) = &mut stream {
+                    s.update(eye, &view_proj, &mut renderer).unwrap();
+                    world.instances = instances.clone();
+                    world.instances.extend(s.instances());
+                }
                 renderer.render_frame(&world).unwrap();
+                if frame >= 2 && stream.as_ref().is_none_or(|s| s.is_settled()) {
+                    break;
+                }
+            }
+            if let Some(s) = &stream {
+                assert!(s.is_settled(), "{name} {label}: terrain never settled");
+                println!("{name} {label}: terrain {:?}", s.last_stats());
             }
             // Lot 7.1 budget: fewer than 500 draw calls (meshes plus
             // vegetation draws) in every view of every shipped map.

@@ -108,6 +108,37 @@ surroundings: (area: (-64.0, -48.0, 64.0, 48.0), sea_level: Some(-1.0),
 - The far terrain is generated at load time from this block and `seed`
   (about 3 000 vertices); forest borders add up to 2 400 instanced trees.
 
+## World (format version 5)
+
+A map can sit in a 1 to 2 km world (optional `world` block, lot 8.1) while
+only its playable rectangle is simulated:
+
+```ron
+world: (extent: (-512.0, -512.0, 512.0, 512.0),
+        playable: (-64.0, -48.0, 64.0, 48.0),
+        far: (cell: 8, size: (129, 129), heights: "...", paint: "..."),
+        snow_line: Some(140.0)),
+```
+
+- `extent` is the world rectangle in metres; the far field covers it exactly
+  (`(size - 1) * cell` metres per axis, at most 4 096 m and 1 025 samples).
+  `playable` is the simulated rectangle, the same as the `surroundings` area.
+- The sculpted ground of the playable zone stays the `terrain` block: it is
+  the only ground the server, the client prediction and the bots collide
+  with. The far field (heights in decimetres, a varint stream in base64) is
+  scenery: the client draws the whole world as streamed chunks with levels of
+  detail, the terrain on its own grid and the far field around it, blended
+  over 16 m from the terrain's border. Keep the walls and `KillVolume`s that
+  hold the players; a map with a world needs no landscape mesh (its
+  `surroundings` still give the woods, the haze and the sea).
+- Ground layers: the palette ground, then dirt, sand, snow and rock from the
+  paint (`paint` of the far field, run-length coded; the terrain's own
+  paint), sand on the shore of `sea_level`, snow above `snow_line`, cliff
+  rock blending in from 28 to 46 degrees of slope.
+- Let the far field rise into a rim near the edge of the extent so the end of
+  the world never shows. `Map.set_world` in `tools/map-scripts/maplib.py`
+  writes the block from a height function (Pine Hollow is the example).
+
 ## Layout (lot 6.13)
 
 Plans of the lot 6.13 maps are in `docs/maps/` (Mossgate, Greyfold Quarry,

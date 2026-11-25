@@ -28,6 +28,9 @@ const PATTERN_HOLOGRAM: u32 = 13u;
 const PATTERN_PIXEL_FIRST: u32 = 14u;
 // Terrain ground (lot 6.10): two pixel materials blended by slope.
 const PATTERN_TERRAIN: u32 = 28u;
+// Layered terrain ground (lot 8.1): six pixel materials blended by vertex
+// weights and slope.
+const PATTERN_TERRAIN_LAYERS: u32 = 29u;
 
 const TAU: f32 = 6.283185307;
 
@@ -193,12 +196,105 @@ fn terrain_surface(m: Material, world_pos: vec3<f32>, normal: vec3<f32>, dpos: v
     return diffuse(mix(layer.color_a.rgb, layer.color_b.rgb, clamp(v.x, 0.0, 1.0)) * v.y);
 }
 
+// Layered terrain ground (lot 8.1). Colour A holds the ids of the ground,
+// dirt and sand layers, colour B of snow (or mud), painted rock and cliff
+// rock, all pixel patterns. `splat` holds the vertex weights of dirt, sand,
+// snow and painted rock (the ground takes what they leave); the slope
+// (1 - n.y from 0.12 to 0.30) turns any layer to cliff rock. A hash per
+// 1/16 m texel, on the plane of the dominant normal axis (so cliffs do not
+// stretch), picks one layer by weight; once texels are below a pixel the
+// layers' mean colours blend by weight instead, so far ground does not
+// shimmer. A faint large-scale tint breaks the repetition.
+fn terrain_layers_surface(m: Material, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3<f32>, time: f32, splat: vec4<f32>) -> Surface {
+    let s = clamp(splat, vec4<f32>(0.0), vec4<f32>(1.0));
+    let painted = s.x + s.y + s.z + s.w;
+    let norm = max(painted, 1.0);
+    let cliff = smoothstep(0.12, 0.30, 1.0 - normal.y);
+    let keep = 1.0 - cliff;
+    var w = array<f32, 6>(
+        max(1.0 - painted, 0.0) * keep,
+        s.x / norm * keep,
+        s.y / norm * keep,
+        s.z / norm * keep,
+        s.w / norm * keep,
+        cliff,
+    );
+    let ids = array<u32, 6>(
+        u32(m.color_a.x),
+        u32(m.color_a.y),
+        u32(m.color_a.z),
+        u32(m.color_b.x),
+        u32(m.color_b.y),
+        u32(m.color_b.z),
+    );
+    var total = 0.0;
+    for (var k = 0u; k < 6u; k++) {
+        total += w[k];
+    }
+    // The dither on the plane the pixel patterns use.
+    let an = abs(normal);
+    var uv = world_pos.xz;
+    if an.x > an.y && an.x >= an.z {
+        uv = world_pos.zy;
+    } else if an.z > an.y && an.z > an.x {
+        uv = world_pos.xy;
+    }
+    let r = hash2(vec2<i32>(floor(uv * 16.0)) + vec2<i32>(4099, 7907)) * total;
+    var pick = 0u;
+    var acc = 0.0;
+    for (var k = 0u; k < 6u; k++) {
+        if w[k] > 0.0 {
+            pick = k;
+            acc += w[k];
+            if r < acc {
+                break;
+            }
+        }
+    }
+    let layer = materials.entries[min(ids[pick], 255u)];
+    let scale = max(layer.scale, 1.0e-3);
+    let v = pixel_surface(layer.pattern, world_pos / scale, normal, dpos / scale, time * layer.speed);
+    let near = mix(layer.color_a.rgb, layer.color_b.rgb, clamp(v.x, 0.0, 1.0)) * v.y;
+    let far = smoothstep(0.7, 1.6, 16.0 * max(dpos.x, max(dpos.y, dpos.z)));
+    var albedo = near;
+    if far > 0.0 {
+        var mean = vec3<f32>(0.0);
+        for (var k = 0u; k < 6u; k++) {
+            if w[k] > 0.0 {
+                let l = materials.entries[min(ids[k], 255u)];
+                let pm = pixel_mean(l.pattern);
+                mean += w[k] * mix(l.color_a.rgb, l.color_b.rgb, pm.x) * pm.y;
+            }
+        }
+        albedo = mix(near, mean / max(total, 1.0e-4), far);
+    }
+    let tint = 0.93 + 0.14 * value_noise2(world_pos.xz * (1.0 / 23.0));
+    return diffuse(albedo * tint);
+}
+
+// Detail normal of the layered terrain (lot 8.1): the gradient of a value
+// noise with 0.7 m features tilts the normal a few degrees up close, fading
+// out from 12 m to 35 m (`distance` is the view depth).
+fn terrain_detail_normal(n: vec3<f32>, world_pos: vec3<f32>, distance: f32) -> vec3<f32> {
+    let fade = 1.0 - smoothstep(12.0, 35.0, distance);
+    if fade <= 0.0 {
+        return n;
+    }
+    let p = world_pos.xz * 1.4;
+    let e = 0.25;
+    let h = value_noise2(p);
+    let g = vec2<f32>(value_noise2(p + vec2<f32>(e, 0.0)) - h, value_noise2(p + vec2<f32>(0.0, e)) - h);
+    let tilt = g * (0.6 * fade * max(n.y, 0.0));
+    return normalize(n - vec3<f32>(tilt.x, 0.0, tilt.y));
+}
+
 // Albedo and emission of a material at a world position. Lava glow,
 // emissive and hologram patterns emit; everything else is lit.
 //
 // `normal` is the unit world normal; `dpos` is `fwidth(world_pos)`, taken
-// by the caller in uniform control flow; `time` is in seconds.
-fn material_surface(id: u32, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3<f32>, time: f32) -> Surface {
+// by the caller in uniform control flow; `time` is in seconds; `splat` holds
+// the layer weights of a layered terrain vertex (lot 8.1), unused otherwise.
+fn material_surface(id: u32, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3<f32>, time: f32, splat: vec4<f32>) -> Surface {
     let m = materials.entries[min(id, 255u)];
     let scale = max(m.scale, 1.0e-3);
     let p = world_pos / scale;
@@ -209,6 +305,9 @@ fn material_surface(id: u32, world_pos: vec3<f32>, normal: vec3<f32>, dpos: vec3
 
     if m.pattern == PATTERN_TERRAIN {
         return terrain_surface(m, world_pos, normal, dpos, time);
+    }
+    if m.pattern == PATTERN_TERRAIN_LAYERS {
+        return terrain_layers_surface(m, world_pos, normal, dpos, time, splat);
     }
     if m.pattern >= PATTERN_PIXEL_FIRST {
         let v = pixel_surface(m.pattern, p, normal, dp, phase);

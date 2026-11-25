@@ -30,6 +30,9 @@ pub(crate) struct FrameData {
     pub uniforms: UniformRing,
     /// Per-instance data of this frame (host-visible), grown on demand.
     pub instances: Option<GpuBuffer>,
+    /// Streamed slot writes of this frame (host-visible, lot 8.1), grown on
+    /// demand.
+    pub staging: Option<GpuBuffer>,
 }
 
 impl FrameData {
@@ -73,6 +76,7 @@ impl FrameData {
                     cursor: RingCursor::new(UNIFORM_RING_SIZE),
                 },
                 instances: None,
+                staging: None,
             };
             let requirements = device.get_buffer_memory_requirements(buffer);
             let allocation = ctx.allocator.allocate(&AllocationCreateDesc {
@@ -102,6 +106,9 @@ impl FrameData {
     /// Destroys every handle. The GPU must be done with this frame.
     pub(crate) fn destroy(&mut self, ctx: &mut Context) {
         if let Some(mut b) = self.instances.take() {
+            b.destroy(ctx);
+        }
+        if let Some(mut b) = self.staging.take() {
             b.destroy(ctx);
         }
         if let Some(a) = self.uniforms.allocation.take() {

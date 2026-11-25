@@ -10,7 +10,8 @@ HEADER = """// Pine Hollow: a snowed-in alpine valley. Team map, 14 players, Rot
 // cover. The valley is closed by mountain walls of stone, ice and snow caps
 // up to 24 m: no way out. The snow is a terrain (lot 6.10): rolling fields
 // and banks rising at the foot of the mountains, flat around everything
-// built on the ground.
+// built on the ground. The valley sits in a 1 km alpine world (lot 8.1):
+// ridged peaks of 150 to 260 m all around, a low side valley to the west.
 //
 //   z=-36 ^^^^^^^^^^^^^ mountains ^^^^^^^^^^^^^^^^
 //         |  cabin W (A)  .   frozen lake   .  cabin E (B)  |
@@ -140,7 +141,62 @@ def build():
     ])
     # ---- landscape beyond the bounds (lot 6.12)
     m.set_surroundings((-64, -48, 64, 48), "Slope", "Cliff", "Slope", "Forest", "Mountains", 0.3, 7)
+    # ---- the world (lot 8.1): the valley sits in a 1 km alpine landscape ----
+    size = m.set_world((-512, -512, 512, 512), (-64, -48, 64, 48), 8, alpine_world)
+    print(f"pine-hollow world: 129 x 129 far samples, {size} bytes of heights before base64")
     return m
+
+
+def _hash(i, j, salt):
+    h = (salt * 0x9E3779B9) & 0xFFFFFFFF
+    for v in (i & 0xFFFFFFFF, j & 0xFFFFFFFF):
+        h ^= (v * 0x85EBCA6B) & 0xFFFFFFFF
+        h = (((h << 13) | (h >> 19)) & 0xFFFFFFFF) * 0xC2B2AE35 & 0xFFFFFFFF
+        h ^= h >> 16
+    return (h >> 8) / float(1 << 24)
+
+
+def _noise(x, z, salt):
+    """Smooth value noise in [-1, 1] with features of one unit."""
+    i, j = math.floor(x), math.floor(z)
+    fu, fv = smoothstep(0, 1, x - i), smoothstep(0, 1, z - j)
+    a = lambda di, dj: _hash(i + di, j + dj, salt) * 2 - 1
+    top = a(0, 0) + (a(1, 0) - a(0, 0)) * fu
+    bottom = a(0, 1) + (a(1, 1) - a(0, 1)) * fu
+    return top + (bottom - top) * fv
+
+
+def _fbm(x, z, salt, octaves=4):
+    s, amp, f, norm = 0.0, 1.0, 1.0, 0.0
+    for k in range(octaves):
+        s += amp * _noise(x * f, z * f, salt + 31 * k)
+        norm += amp
+        amp *= 0.5
+        f *= 2.03
+    return s / norm
+
+
+def alpine_world(x, z):
+    """Far heights of Pine Hollow's world (lot 8.1), metres. The valley floor
+    stays under the snow fields; behind the border walls (12 to 24 m) the
+    ground climbs to their height within 60 m, then ridged mountains rise to
+    150 to 260 m from 60 to 380 m out. To the west (the forest border) a side
+    valley stays low for 250 m before the mountains close it; a rim along
+    the world's edge hides what lies beyond. Symmetric enough to look
+    natural, not mirrored: the far landscape is scenery only."""
+    dx = max(-64 - x, 0.0, x - 64)
+    dz = max(-48 - z, 0.0, z - 48)
+    d = math.hypot(dx, dz)
+    r = max(math.hypot(x, z), 1.0)
+    west = smoothstep(0.55, 0.95, -x / r)
+    rise = smoothstep(0.0, 60.0, d)
+    ridge = 1.0 - abs(_fbm(x / 260.0 + 7.3, z / 260.0 - 3.1, 11))
+    peaks = smoothstep(40.0, 380.0, d) * (90.0 + 170.0 * ridge ** 1.5)
+    peaks *= 1.0 - 0.8 * west * (1.0 - smoothstep(250.0, 430.0, d))
+    hills = 8.0 * _fbm(x / 90.0, z / 90.0, 23) * rise
+    foot = 15.0 * rise * (1.0 - 0.5 * west)
+    rim = 70.0 * smoothstep(430.0, 505.0, max(abs(x), abs(z)))
+    return 2.0 + foot + peaks + hills + rim
 
 
 def smoothstep(a, b, x):

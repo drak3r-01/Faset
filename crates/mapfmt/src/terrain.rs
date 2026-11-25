@@ -309,7 +309,7 @@ impl Terrain {
 }
 
 /// Base64 (RFC 4648, standard alphabet, padded).
-mod base64 {
+pub(crate) mod base64 {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     pub fn encode(bytes: &[u8]) -> String {

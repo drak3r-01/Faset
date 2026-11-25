@@ -49,6 +49,8 @@ struct VertexOut {
     @location(3) prev_clip: vec4<f32>,
     @location(4) world_pos: vec3<f32>,
     @location(5) @interpolate(flat) material: u32,
+    // Normal w: the fourth layer weight of layered terrain (lot 8.1).
+    @location(6) splat_w: f32,
 }
 
 @vertex
@@ -74,10 +76,11 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VertexOut {
     out.prev_clip = prev_from_local * local;
     out.world_pos = vec3<f32>(dot(i.world0, local), dot(i.world1, local), dot(i.world2, local));
     out.material = u32(round(v.color.a * 255.0));
+    out.splat_w = max(v.normal.w, 0.0);
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> FragmentOut {
-    return shade_fragment(in.color, in.normal, in.clip, in.prev_clip, in.world_pos, in.material);
+    return shade_fragment(in.color, in.normal, in.splat_w, in.clip, in.prev_clip, in.world_pos, in.material);
 }

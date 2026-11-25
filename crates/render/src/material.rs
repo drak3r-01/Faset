@@ -74,6 +74,17 @@ pub enum Pattern {
     /// y: end); inside the band a per-texel dither picks the layer. Not in
     /// [`Pattern::ALL`], which lists the patterns with a swatch of their own.
     Terrain = 28,
+    /// Layered terrain ground (lot 8.1): six pixel materials, all ids of a
+    /// pixel pattern. `color_a` holds the palette ground, dirt and sand,
+    /// `color_b` snow (or mud), painted rock and cliff rock. The vertex colour
+    /// is not a tint but the weights of dirt (r), sand (g), snow (b) and
+    /// painted rock (normal w); the ground takes the rest. Cliff rock comes
+    /// from the slope (`1 - n_y` from 0.12 to 0.30) and is mapped on the
+    /// dominant axis plane, so cliffs do not stretch. Up close a detail
+    /// normal roughens the light. A per-texel dither picks one layer by
+    /// weight; texels below a pixel blend the layers' means. Not in
+    /// [`Pattern::ALL`].
+    TerrainLayers = 29,
 }
 
 impl Pattern {
@@ -137,8 +148,9 @@ pub enum MaterialError {
     DuplicateId(u8),
     #[error("material {0}: scale must be finite and > 0, colours and speed finite")]
     InvalidValue(u8),
-    /// A `Terrain` material whose layers are not ids of pixel materials.
-    #[error("terrain material {0}: color_a x and y must be ids of pixel-pattern materials")]
+    /// A `Terrain` or `TerrainLayers` material whose layers are not ids of
+    /// pixel materials.
+    #[error("terrain material {0}: its layers must be ids of pixel-pattern materials")]
     InvalidTerrainLayer(u8),
 }
 
@@ -180,17 +192,29 @@ impl MaterialTable {
             *slot = Some(m);
         }
         let table = Self { entries };
-        for m in table.iter().filter(|m| m.pattern == Pattern::Terrain) {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let pixel = |v: f32| {
-                v.fract() == 0.0
-                    && (0.0..=255.0).contains(&v)
-                    && table.get(v as u8).is_some_and(|l| {
-                        l.pattern as u32 >= Pattern::PixelBrick as u32
-                            && l.pattern != Pattern::Terrain
-                    })
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let pixel = |v: f32| {
+            v.fract() == 0.0
+                && (0.0..=255.0).contains(&v)
+                && table.get(v as u8).is_some_and(|l| {
+                    (Pattern::PixelBrick as u32..=Pattern::PixelLeaves as u32)
+                        .contains(&(l.pattern as u32))
+                })
+        };
+        for m in table.iter() {
+            let layers: &[f32] = match m.pattern {
+                Pattern::Terrain => &m.color_a[..2],
+                Pattern::TerrainLayers => &[
+                    m.color_a[0],
+                    m.color_a[1],
+                    m.color_a[2],
+                    m.color_b[0],
+                    m.color_b[1],
+                    m.color_b[2],
+                ],
+                _ => &[],
             };
-            if !pixel(m.color_a[0]) || !pixel(m.color_a[1]) {
+            if !layers.iter().all(|&v| pixel(v)) {
                 return Err(MaterialError::InvalidTerrainLayer(m.id));
             }
         }
@@ -333,6 +357,32 @@ mod tests {
                 matches!(bad(layer), Err(MaterialError::InvalidTerrainLayer(54))),
                 "{layer}"
             );
+        }
+    }
+
+    #[test]
+    fn layered_terrain_materials_hold_six_pixel_layers() {
+        let table = MaterialTable::builtin();
+        let sets: Vec<_> = table
+            .iter()
+            .filter(|m| m.pattern == Pattern::TerrainLayers)
+            .collect();
+        assert_eq!(sets.len(), 4);
+        for m in sets {
+            assert!((59..=62).contains(&m.id));
+        }
+        let with = |rock: f32| {
+            MaterialTable::from_ron(&format!(
+                "[(id: 16, pattern: PixelGrass, color_a: (1.0, 1.0, 1.0), color_b: (1.0, 1.0, 1.0), scale: 1.0), \
+                  (id: 59, pattern: TerrainLayers, color_a: (16.0, 16.0, 16.0), color_b: (16.0, 16.0, {rock:.1}), scale: 1.0)]"
+            ))
+        };
+        assert!(with(16.0).is_ok());
+        for rock in [0.0, 59.0, 16.5] {
+            assert!(matches!(
+                with(rock),
+                Err(MaterialError::InvalidTerrainLayer(59))
+            ));
         }
     }
 

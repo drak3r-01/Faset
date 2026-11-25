@@ -42,10 +42,16 @@ fn shade_viewmodel(albedo: vec3<f32>, emissive: vec3<f32>, n: vec3<f32>) -> vec3
 }
 
 // The G-buffer outputs of a fragment. Call it in uniform control flow: the
-// materials take screen-space derivatives.
+// materials take screen-space derivatives. `splat_w` is the vertex normal's
+// w (0 except on layered terrain, lot 8.1).
+//
+// On a layered terrain material the vertex colour holds layer weights, not
+// a tint: the surface is not multiplied by it, and up close a detail normal
+// roughens the light.
 fn shade_fragment(
-    color: vec3<f32>,
+    color_in: vec3<f32>,
     vertex_normal: vec3<f32>,
+    splat_w: f32,
     clip: vec4<f32>,
     prev_clip: vec4<f32>,
     world_pos: vec3<f32>,
@@ -53,8 +59,14 @@ fn shade_fragment(
 ) -> FragmentOut {
     // Derivatives first, in uniform control flow.
     let dpos = fwidth(world_pos);
-    let normal = normalize(vertex_normal);
-    let surface = material_surface(material, world_pos, normal, dpos, imm.time);
+    let layered = materials.entries[min(material, 255u)].pattern == PATTERN_TERRAIN_LAYERS;
+    var normal = normalize(vertex_normal);
+    var color = color_in;
+    if layered {
+        normal = terrain_detail_normal(normal, world_pos, clip.w);
+        color = vec3<f32>(1.0);
+    }
+    let surface = material_surface(material, world_pos, normal, dpos, imm.time, vec4<f32>(color_in, splat_w));
     if clip.z / clip.w >= VIEWMODEL_DEPTH_MIN {
         var held: FragmentOut;
         held.color = vec4<f32>(

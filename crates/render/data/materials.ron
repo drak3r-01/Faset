@@ -71,4 +71,11 @@
     (id: 56, pattern: Terrain, color_a: (18.0, 41.0, 0.0), color_b: (0.10, 0.24, 0.0), scale: 1.0), // stone, basalt slopes
     (id: 57, pattern: Terrain, color_a: (24.0, 18.0, 0.0), color_b: (0.10, 0.24, 0.0), scale: 1.0), // snow, stone slopes
     (id: 58, pattern: Terrain, color_a: (23.0, 18.0, 0.0), color_b: (0.10, 0.24, 0.0), scale: 1.0), // dirt, stone slopes
+    // Layered terrain sets (ids 59..=62, lot 8.1), one per palette: colour A
+    // holds the ground, dirt and sand layers, colour B snow (or mud), painted
+    // rock and cliff rock. Vertex weights blend them; the slope adds cliffs.
+    (id: 59, pattern: TerrainLayers, color_a: (16.0, 23.0, 40.0), color_b: (24.0, 32.0, 18.0), scale: 1.0), // nature: grass
+    (id: 60, pattern: TerrainLayers, color_a: (17.0, 49.0, 40.0), color_b: (24.0, 18.0, 31.0), scale: 1.0), // desert: sand, sandstone cliffs
+    (id: 61, pattern: TerrainLayers, color_a: (24.0, 23.0, 17.0), color_b: (45.0, 41.0, 18.0), scale: 1.0), // snow: snow, ice
+    (id: 62, pattern: TerrainLayers, color_a: (23.0, 49.0, 17.0), color_b: (24.0, 41.0, 18.0), scale: 1.0), // industrial: dirt, clay mud
 ]

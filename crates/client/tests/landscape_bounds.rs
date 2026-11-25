@@ -47,7 +47,8 @@ fn every_shipped_map_has_surroundings_and_keeps_its_players_inside() {
             .landscape
             .as_ref()
             .unwrap_or_else(|| panic!("{name}: no landscape"));
-        assert!(!land.indices.is_empty(), "{name}");
+        // A map with a world (lot 8.1) draws its far terrain itself.
+        assert!(!land.indices.is_empty() || loaded.world.is_some(), "{name}");
 
         // Everything the players start from lies inside the area.
         for sp in &map.spawns {

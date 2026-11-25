@@ -22,6 +22,11 @@
 //! Format version 4 (lot 6.12) adds the optional [`Surroundings`] block (the
 //! landscape beyond the playable area); version 3 files are migrated by
 //! bumping their version (they have no surroundings).
+//!
+//! Format version 5 (lot 8.1) adds the optional [`World`] block (the world
+//! extent, the playable rectangle and a coarse far height field around the
+//! playable [`Terrain`]); version 4 files are migrated by bumping their
+//! version (they have no world).
 #![forbid(unsafe_code)]
 
 mod expand;
@@ -31,6 +36,7 @@ mod schema;
 pub mod surroundings;
 pub mod terrain;
 pub mod vegetation;
+pub mod world;
 
 pub use expand::{expand_prefabs, expand_symmetry};
 pub use schema::{
@@ -41,6 +47,7 @@ pub use schema::{
 pub use surroundings::{Border, Horizon, Surroundings};
 pub use terrain::Terrain;
 pub use vegetation::{DensityRule, Plant, Species, Vegetation};
+pub use world::{FarField, World};
 
 /// Expands prefabs then symmetry: the map as built and played.
 #[must_use]
@@ -49,7 +56,7 @@ pub fn expand(map: &MapFile) -> MapFile {
 }
 
 /// Current version of the map format; [`parse`] migrates older files to it.
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 5;
 
 /// Largest accepted map file, in bytes (256 KiB).
 pub const MAX_MAP_BYTES: usize = 262_144;
@@ -189,6 +196,22 @@ fn check(map: &MapFile) -> Result<(), MapError> {
     }
     if let Some(v) = &map.vegetation {
         v.validate().map_err(MapError::Invalid)?;
+    }
+    if let Some(w) = &map.world {
+        w.validate(map.terrain.as_ref())
+            .map_err(MapError::Invalid)?;
+        if let Some(s) = &map.surroundings {
+            if w.playable
+                .iter()
+                .zip(&s.area)
+                .any(|(a, b)| (a - b).abs() > 1e-3)
+            {
+                return bad(format!(
+                    "world playable {:?} differs from the surroundings area {:?}",
+                    w.playable, s.area
+                ));
+            }
+        }
     }
     Ok(())
 }
