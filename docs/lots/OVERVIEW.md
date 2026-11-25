@@ -1,6 +1,6 @@
 # Lots overview
 
-Tableau de synthèse des 58 lots. Modèle et effort sont repris de l'en-tête de chaque fichier `docs/lots/<lot>-*.md`. Statut au moment de la rédaction : fusionnés 0.1-0.4, 1.1-1.4, 2.1-2.2 ; en cours 1.5 et 2.3 ; les autres sont à faire.
+Tableau de synthèse des 58 lots du plan, plus les lots internes (4.11, 6.6 à 6.13) et la phase 8 « monde » (8.1 à 8.12). Modèle et effort sont repris de l'en-tête de chaque fichier `docs/lots/<lot>-*.md`. Statut au moment de la rédaction : fusionnés 0.1-0.4, 1.1-1.4, 2.1-2.2 ; en cours 1.5 et 2.3 ; les autres sont à faire.
 
 | Lot | Titre | Résumé | Modèle / effort | Statut |
 |---|---|---|---|---|
@@ -64,6 +64,18 @@ Tableau de synthèse des 58 lots. Modèle et effort sont repris de l'en-tête de
 | 6.11 | Props et végétation (lot interne) | Rendu des props, végétation low-poly générée, instanciation GPU, vent, LOD. | Opus, high | À faire |
 | 6.12 | Paysage hors limites (lot interne) | Terrain et décor au-delà de la zone jouable, bordures naturelles par carte, brouillard et ciel. | Sonnet, high | À faire |
 | 6.13 | Level design (lot interne) | Trois cartes non carrées conçues sur plan puis testées avec les bots. | Opus, high | À faire |
+| 8.1 | Large terrain: format v5, chunk streaming, clipmap LOD | Terrain 1 à 2 km lisse, format v5, chunks en streaming, LOD, mélange de matières. | Opus, high | À faire |
+| 8.2 | Far landscape: LOD for vegetation and props, landmarks, atmosphere | Horizon rempli : LOD végétation/props, repères lointains, brume atmosphérique. | Opus, high | À faire |
+| 8.3 | World generator and editor sculpting tools | Générateur de relief (érosion, rivières) et outils de sculpture/pinceau végétation dans l'éditeur. | Sonnet, high | À faire |
+| 8.4 | Natural boundaries and playable zone | Zone jouable de forme libre fermée par le décor (falaise, eau, forêt), sans mur invisible. | Sonnet, high | À faire |
+| 8.5 | Organic modelling primitives for prop recipes | Nouveaux opérateurs de modélisation (tour, extrusion, chanfrein, bruit) pour des props réels. | Opus, high | À faire |
+| 8.6 | Prop library, outdoor themes | Environ 100 props extérieur (rochers, clôtures, bateaux, bancs...) avec variantes. | Sonnet, medium | À faire |
+| 8.7 | Prop library, built themes | Environ 100 props urbains/industriels/intérieur (voitures, étals, conteneurs...) avec variantes. | Sonnet, medium | À faire |
+| 8.8 | Vegetation v2 and lighting polish | Végétation plus riche, herbe suivant le sol, occlusion ambiante, étalonnage par thème. | Sonnet, high | À faire |
+| 8.9 | Rebuild Pine Hollow and Mossgate | Refaire Pine Hollow et Mossgate en vrais paysages, testés par bots. | Opus, high | À faire |
+| 8.10 | Rebuild Driftwood Cove and Rust Harbor | Refaire Driftwood Cove et Rust Harbor en vrais paysages, testés par bots. | Opus, high | À faire |
+| 8.11 | Rebuild Red Mesa, Greyfold Quarry and Nightjar Market | Refaire Red Mesa, Greyfold Quarry et Nightjar Market, testés par bots. | Opus, high | À faire |
+| 8.12 | World performance and validation | Mesurer et tenir les budgets de la phase monde sur les sept cartes. | Sonnet, medium | À faire |
 | 7.1 | Profilage et optimisation rendu et réseau | Mesurer et atteindre chaque budget de la section 20 sans changer les interfaces publiques. | Sonnet, medium | À faire |
 | 7.2 | Validation des plateformes et packaging | Vérifier que chaque cible compile et produire une archive avec sommes par cible. | Sonnet, medium | À faire |
 | 7.3 | Documentation en anglais, notes de version, tag v0.1.0 | Finaliser la documentation et publier `v0.1.0` par le pipeline de release. | Haiku, low | À faire |
