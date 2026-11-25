@@ -89,6 +89,12 @@ fn every_shipped_map_renders_with_its_look() {
             for _ in 0..3 {
                 renderer.render_frame(&world).unwrap();
             }
+            // Lot 7.1 budget: fewer than 500 draw calls (meshes plus
+            // vegetation draws) in every view of every shipped map.
+            let stats = renderer.last_frame_stats();
+            let draws = stats.draw_calls + stats.foliage_draw_calls;
+            println!("{name} {label}: {draws} draw calls ({stats:?})");
+            assert!(draws < 500, "{name} {label}: {draws} draw calls");
             let out =
                 std::env::temp_dir().join(format!("{}-{name}-{label}.png", std::process::id()));
             renderer.read_back_png(&out).unwrap();

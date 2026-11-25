@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use faset_core::{NetId, Tick, DT};
 use faset_net::{
@@ -85,6 +85,11 @@ pub struct Fleet {
     pub packets: Arc<AtomicU64>,
     now: Duration,
     next_server_tick: Duration,
+    /// Wall time in `Server::tick` and client frames, with counts (lot 7.1).
+    pub server_time: Duration,
+    pub server_ticks: u64,
+    pub client_time: Duration,
+    pub client_frames: u64,
 }
 
 impl Fleet {
@@ -126,6 +131,10 @@ impl Fleet {
             packets,
             now: Duration::ZERO,
             next_server_tick: Duration::ZERO,
+            server_time: Duration::ZERO,
+            server_ticks: 0,
+            client_time: Duration::ZERO,
+            client_frames: 0,
         };
         for _ in 0..humans {
             fleet.add_client();
@@ -164,10 +173,16 @@ impl Fleet {
         for _ in 0..frames {
             self.now += FRAME;
             for (i, c) in self.clients.iter_mut().enumerate() {
+                let start = Instant::now();
                 c.frame(FRAME, &mut |t| input(i, t));
+                self.client_time += start.elapsed();
+                self.client_frames += 1;
             }
             while self.next_server_tick <= self.now {
+                let start = Instant::now();
                 self.server.tick();
+                self.server_time += start.elapsed();
+                self.server_ticks += 1;
                 self.next_server_tick += server_dt;
             }
         }
