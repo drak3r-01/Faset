@@ -39,4 +39,4 @@ Parallel waves: 8.1 first; then 8.2, 8.3 and 8.5 together; then 8.4, 8.6, 8.7, 8
 
 Items the plan leaves unspecified are marked as decisions inside each file: record the chosen value in your report.
 
-Synthèse de tous les lots (numéro, titre, résumé, modèle, statut) : [OVERVIEW.md](OVERVIEW.md)
+Summary of all lots (number, title, summary, model, status): [OVERVIEW.md](OVERVIEW.md)

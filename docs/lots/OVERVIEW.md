@@ -1,85 +1,85 @@
 # Lots overview
 
-Tableau de synthèse des 58 lots du plan, plus les lots internes (4.11, 6.6 à 6.13) et la phase 8 « monde » (8.1 à 8.12). Modèle et effort sont repris de l'en-tête de chaque fichier `docs/lots/<lot>-*.md`. Statut au moment de la rédaction : fusionnés 0.1-0.4, 1.1-1.4, 2.1-2.2 ; en cours 1.5 et 2.3 ; les autres sont à faire.
+Summary table of the 58 lots of the plan, plus the internal lots (4.11, 6.6 to 6.13) and phase 8 "world" (8.1 to 8.12). Model and effort are taken from the header of each `docs/lots/<lot>-*.md` file. Status at the time of writing: merged 0.1-0.4, 1.1-1.4, 2.1-2.2; in progress 1.5 and 2.3; the others are to do.
 
-| Lot | Titre | Résumé | Modèle / effort | Statut |
+| Lot | Title | Summary | Model / effort | Status |
 |---|---|---|---|---|
-| 0.1 | Lire CLAUDE.md, Graphify, corriger le plan | Vérifier les règles du projet et corriger les sections 1 et 2 du plan de référence. | Opus, medium | Fusionné |
-| 0.2 | Image Docker de dev, scripts hôte, squelette de workspace | Faire passer `cargo xtask ci` sur un workspace vide, entièrement dans Docker. | Sonnet, medium | Fusionné |
-| 0.3 | Cross-targets, image lavapipe, `build` et `package` | Compiler les binaires placeholder pour les cibles Docker et packager avec sommes de contrôle. | Sonnet, medium | Fusionné |
-| 0.4 | Pipeline de release par tag, build macOS, image `server-runtime` | Produire une release complète à partir d'un tag de version. | Sonnet, medium | Fusionné |
-| 1.1 | Core et protocole : types, codec binaire, quantification | Fournir les types de base et un format de fil bit-exact, validé par tests de round-trip. | Sonnet, medium | Fusionné |
-| 1.2 | Sim : monde ECS, tick fixe, ordre des systèmes, collisions de base | Rendre la simulation déterministe, rejouable à l'identique depuis une trace d'entrées. | Opus, medium | À faire |
-| 1.3 | Net : transport, UDP, mémoire, simulateur de conditions, canaux | Fournir l'abstraction `Transport` et quatre canaux fiables ou non fiables, testés à 10 % de perte. | Sonnet, high | Fusionné |
-| 1.4 | Serveur : connexion, tampon de commandes, tick, snapshots complets | Accepter des clients et envoyer des snapshots complets pour que deux clients se voient. | Sonnet, medium | Fusionné |
-| 1.5 | Snapshots delta, accusés de réception, images de référence | Encoder les snapshots en delta par rapport au dernier acquitté, avec 64 images de référence. | Opus, medium | En cours |
-| 1.6 | Synchro d'horloge, prédiction et réconciliation côté client | Prédire le mouvement local, réconcilier avec les snapshots et lisser les corrections sans téléportation. | Opus, high | À faire |
-| 1.7 | Interpolation distante et compensation de latence | Afficher les entités distantes avec un retard délibéré et rembobiner les hitboxes côté serveur (250 ms max). | Opus, medium | À faire |
-| 1.8 | Serveur dédié : configuration, console, arrêt propre, Docker | Livrer l'exécutable `dedicated` headless, configuré par `server.toml`, dans l'image `server-runtime`. | Sonnet, medium | À faire |
-| 1.9 | Serveur intégré, ouverture LAN et découverte | Héberger une partie dans le client, l'ouvrir sur le LAN et la découvrir par broadcast UDP. | Sonnet, medium | À faire |
-| 1.10 | Endurance et robustesse réseau | Prouver que la pile réseau résiste aux entrées malformées et aux longues sessions sans fuite. | Sonnet, medium | À faire |
-| 2.1 | Instance Vulkan, swapchain, boucle de frames, cible hors écran | Créer le device Vulkan 1.2, la boucle de frames fenêtrée et une cible hors écran lue en PNG. | Opus, medium | Fusionné |
-| 2.2 | Maillages, instances, caméra reverse-Z, jitter, vecteurs de mouvement, culling | Rendre des maillages instanciés avec projection reverse-Z infinie, jitter et culling frustum. | Opus, medium | Fusionné |
-| 2.3 | Chaîne de shaders WGSL, rechargement à chaud, matériaux procéduraux | Compiler les shaders WGSL en SPIR-V et choisir les motifs de matériau par identifiant. | Sonnet, medium | En cours |
-| 2.4 | Éclairage stylisé, lumières ponctuelles, brouillard, profils d'ambiance | Implémenter l'éclairage stylisé, 32 lumières, brouillard de hauteur et neuf profils d'ambiance. | Opus, medium | À faire |
-| 2.5 | Ombres en cascade | Ajouter des ombres solaires à trois cascades, stables pendant le mouvement de caméra. | Sonnet, high | À faire |
-| 2.6 | Ciel procédural : heure, étoiles, nuages, espace | Rendre un ciel procédural piloté par l'heure et la latitude, qui éclaire aussi la scène. | Sonnet, high | À faire |
-| 2.7 | Météo : particules, abri, humidité, tempête, transitions | Rendre la météo visuelle (pluie, neige, sable, brouillard) avec particules GPU sans état. | Sonnet, high | À faire |
-| 2.8 | Surface de l'eau et milieu sous-marin | Rendre une surface d'eau par ondes de Gerstner et un milieu sous-marin avec caustiques. | Sonnet, medium | À faire |
-| 2.9 | Post-traitement : contours, bloom, tonemapping, étalonnage, FXAA | Implémenter la chaîne de post-traitement sur le buffer HDR, pilotée par le profil d'ambiance. | Sonnet, medium | À faire |
-| 2.10 | Anti-aliasing temporel, trait `Upscaler`, échelle de rendu, FSR 1 | Rendre à résolution interne réduite puis upscaler proprement, avec TAA et FSR 1. | Sonnet, high | À faire |
-| 2.11 | FSR 2/3 par chargement dynamique | Ajouter FSR 2/3 en option, chargé à l'exécution sous Windows x86_64 uniquement. | Opus, high | À faire |
-| 2.12 | DLSS via NVIDIA NGX | Ajouter DLSS derrière la feature `dlss`, actif sur cartes RTX Windows x86_64 uniquement. | Opus, high | À faire |
-| 2.13 | Assets : recettes de maillages, palettes, validateur, vignettes | Transformer les recettes RON de props en maillages, avec validateur et miniatures hors écran. | Sonnet, medium | À faire |
-| 2.14 | Bibliothèque de props par thème (environ 150 recettes) | Écrire environ 150 recettes de props validées sur neuf thèmes, sans changement de code. | Haiku, low | À faire |
-| 2.15 | Personnages, armes, animation procédurale, viewmodel | Construire les personnages et armes en blocs rigides, animés par ressorts amortis. | Sonnet, medium | À faire |
-| 2.16 | Intégration `egui`, thème, overlay de debug | Dessiner les interfaces `egui` à résolution d'affichage, avec un thème et un overlay de profilage. | Sonnet, medium | À faire |
-| 2.17 | Moteur audio : effets synthétisés, spatialisation 3D | Créer le crate `audio` avec 32 voix priorisées, effets issus de recettes RON et spatialisation 3D. | Sonnet, medium | À faire |
-| 3.1 | `mapfmt` : format de carte | Implémenter le format RON versionné, réécrit à l'identique sur l'exemple, avec empreinte BLAKE3. | Opus, medium | À faire |
-| 3.2 | Build de carte : maillages, collisions, occlusion par sommet | Transformer une carte en maillages CPU et monde de collisions, avec occlusion ambiante baked. | Sonnet, medium | À faire |
-| 3.3 | `map-tool` : validateur, rapport, vues du dessus et en perspective | Valider les cartes avec motifs de rejet précis, rapport JSON et images de vue. | Sonnet, medium | À faire |
-| 4.1 | `minigame-api`, registre, phases de match, mode course témoin | Créer le framework des mini-jeux et un mode course témoin, sans changer l'API. | Opus, medium | À faire |
-| 4.2 | Contrôleur de personnage complet | Implémenter le contrôleur de type Quake dans `sim`, déterministe et partagé client/serveur. | Opus, high | À faire |
-| 4.3 | Glissade, slide-hop, saut mural, tremplins, zones | Ajouter les techniques de mouvement et les effets de zone, validés par des traces de référence. | Opus, medium | À faire |
-| 4.4 | Armes hitscan, dispersion, recul, chaîne de dégâts, réapparition | Implémenter le pipeline de tir hitscan, prédit par le client et validé par le serveur. | Sonnet, high | À faire |
-| 4.5 | Projectiles, explosions, mêlée | Ajouter les armes à projectiles, les explosions avec recul et la mêlée au pipeline de tir. | Sonnet, medium | À faire |
-| 4.6 | Classes, équipements, armes originales, outil d'équilibrage | Définir six classes et leurs armes en données RON, avec `xtask balance` (TTK). | Sonnet medium puis Haiku (données) | À faire |
-| 4.7 | Ramassages, score, modes équipe et chacun pour soi | Implémenter ramassages, score, minuteurs et deux modes sur `minigame-api`, jouables en headless. | Sonnet, medium | À faire |
-| 4.8 | HUD de mode, caméra et sensations | Dessiner le HUD FPS via egui et implémenter la caméra et les constantes de sensation. | Sonnet, medium | À faire |
-| 4.9 | Bots : graphe de navigation et recherche de chemin | Générer le graphe de navigation depuis une carte chargée et fournir A* avec lissage. | Sonnet, high | À faire |
-| 4.10 | Bots : décision, perception, visée, quatre niveaux | Faire jouer les bots avec décisions utilitaires, perception retardée, visée balistique et quatre niveaux. | Sonnet, high | À faire |
-| 5.1 | Rotation des cartes, préchargement, transfert par empreinte | Faire changer de carte toutes les 5 minutes et télécharger par empreinte les cartes manquantes. | Sonnet, medium | À faire |
-| 5.2 | Éditeur : caméra, sélection, poignées, volumes, annulation | Permettre de construire une carte dans l'éditeur et de tout annuler pas à pas. | Sonnet, high | À faire |
-| 5.3 | Éditeur : bibliothèque, gameplay, ambiance, symétrie | Permettre de créer une carte complète dans l'éditeur sans éditer le fichier à la main. | Sonnet, medium | À faire |
-| 5.4 | Éditeur : validation continue, test immédiat, fichiers | Valider en direct, tester immédiatement, sauvegarder, exporter et importer les cartes. | Sonnet, medium | À faire |
-| 5.5 | Essais de carte par bots, statistiques, guide de conception | Faire jouer 16 bots sur une carte sans rendu, produire un rapport et un guide de conception. | Sonnet, medium | À faire |
-| 5.6 | Catalogue de douze cartes originales | Livrer douze cartes valides, testées par bots et vérifiées à la main. | Opus, medium | À faire |
-| 6.1 | États de l'application, menu principal, chargement | Donner au client une machine à états empilée et tous les écrans principaux. | Sonnet, medium | À faire |
-| 6.2 | Héberger avec bots et LAN, rejoindre, liste LAN, favoris | Permettre d'héberger (avec bots, éventuellement en LAN) et de rejoindre depuis les menus. | Sonnet, medium | À faire |
-| 6.3 | Classes et équipements, budget, aperçu, validation serveur | Construire une tenue dans un budget de points, la voir en 3D, et faire valider côté serveur. | Sonnet, medium | À faire |
-| 6.4 | Paramètres : structure, métadonnées, persistance, affichage, qualité | Une seule structure de paramètres, un menu généré par métadonnées, application sans redémarrage. | Sonnet, medium | À faire |
-| 6.5 | Paramètres : commandes, audio, réseau, accessibilité, traduction | Finir les paramètres, détecter les conflits de touches, avoir une interface FR/EN complète. | Sonnet medium puis Haiku (textes) | À faire |
-| 6.9 | Sensation de tir (lot interne) | Flash, traceurs, recul, impacts par matériau, marqueurs, sons, arme FPS sans clipping. | Sonnet, high | À faire |
-| 6.10 | Terrain avec relief (lot interne) | Heightmap lisse, mélange par pente, collisions de pente, navigation bots, sculpture dans l'éditeur. | Opus, high | À faire |
-| 6.11 | Props et végétation (lot interne) | Rendu des props, végétation low-poly générée, instanciation GPU, vent, LOD. | Opus, high | À faire |
-| 6.12 | Paysage hors limites (lot interne) | Terrain et décor au-delà de la zone jouable, bordures naturelles par carte, brouillard et ciel. | Sonnet, high | À faire |
-| 6.13 | Level design (lot interne) | Trois cartes non carrées conçues sur plan puis testées avec les bots. | Opus, high | À faire |
-| 8.1 | Large terrain: format v5, chunk streaming, clipmap LOD | Terrain 1 à 2 km lisse, format v5, chunks en streaming, LOD, mélange de matières. | Opus, high | À faire |
-| 8.2 | Far landscape: LOD for vegetation and props, landmarks, atmosphere | Horizon rempli : LOD végétation/props, repères lointains, brume atmosphérique. | Opus, high | À faire |
-| 8.3 | World generator and editor sculpting tools | Générateur de relief (érosion, rivières) et outils de sculpture/pinceau végétation dans l'éditeur. | Sonnet, high | À faire |
-| 8.4 | Natural boundaries and playable zone | Zone jouable de forme libre fermée par le décor (falaise, eau, forêt), sans mur invisible. | Sonnet, high | À faire |
-| 8.5 | Organic modelling primitives for prop recipes | Nouveaux opérateurs de modélisation (tour, extrusion, chanfrein, bruit) pour des props réels. | Opus, high | À faire |
-| 8.6 | Prop library, outdoor themes | Environ 100 props extérieur (rochers, clôtures, bateaux, bancs...) avec variantes. | Sonnet, medium | À faire |
-| 8.7 | Prop library, built themes | Environ 100 props urbains/industriels/intérieur (voitures, étals, conteneurs...) avec variantes. | Sonnet, medium | À faire |
-| 8.8 | Vegetation v2 and lighting polish | Végétation plus riche, herbe suivant le sol, occlusion ambiante, étalonnage par thème. | Sonnet, high | À faire |
-| 8.9 | Rebuild Pine Hollow and Mossgate | Refaire Pine Hollow et Mossgate en vrais paysages, testés par bots. | Opus, high | À faire |
-| 8.10 | Rebuild Driftwood Cove and Rust Harbor | Refaire Driftwood Cove et Rust Harbor en vrais paysages, testés par bots. | Opus, high | À faire |
-| 8.11 | Rebuild Red Mesa, Greyfold Quarry and Nightjar Market | Refaire Red Mesa, Greyfold Quarry et Nightjar Market, testés par bots. | Opus, high | À faire |
-| 8.12 | World performance and validation | Mesurer et tenir les budgets de la phase monde sur les sept cartes. | Sonnet, medium | À faire |
-| 7.1 | Profilage et optimisation rendu et réseau | Mesurer et atteindre chaque budget de la section 20 sans changer les interfaces publiques. | Sonnet, medium | À faire |
-| 7.2 | Validation des plateformes et packaging | Vérifier que chaque cible compile et produire une archive avec sommes par cible. | Sonnet, medium | À faire |
-| 7.3 | Documentation en anglais, notes de version, tag v0.1.0 | Finaliser la documentation et publier `v0.1.0` par le pipeline de release. | Haiku, low | À faire |
+| 0.1 | Read CLAUDE.md, Graphify, correct the plan | Check the project rules and correct sections 1 and 2 of the reference plan. | Opus, medium | Merged |
+| 0.2 | Dev Docker image, host scripts, workspace skeleton | Make `cargo xtask ci` pass on an empty workspace, entirely in Docker. | Sonnet, medium | Merged |
+| 0.3 | Cross-targets, lavapipe image, `build` and `package` | Build the placeholder binaries for the Docker targets and package them with checksums. | Sonnet, medium | Merged |
+| 0.4 | Tag release pipeline, macOS build, `server-runtime` image | Produce a complete release from a version tag. | Sonnet, medium | Merged |
+| 1.1 | Core and protocol: types, binary codec, quantisation | Provide the base types and a bit-exact wire format, checked by round-trip tests. | Sonnet, medium | Merged |
+| 1.2 | Sim: ECS world, fixed tick, system order, base collisions | Make the simulation deterministic, replayable identically from a recorded input trace. | Opus, medium | To do |
+| 1.3 | Net: transport, UDP, memory, network conditions simulator, channels | Provide the `Transport` abstraction and four reliable or unreliable channels, tested at 10 % loss. | Sonnet, high | Merged |
+| 1.4 | Server: connection, command buffer, tick, full snapshots | Accept clients and send full snapshots so that two clients see each other. | Sonnet, medium | Merged |
+| 1.5 | Delta snapshots, acknowledgements, reference frames | Encode snapshots as deltas against the last acknowledged one, with 64 reference frames. | Opus, medium | In progress |
+| 1.6 | Clock sync, prediction and reconciliation on the client | Predict local movement, reconcile with the snapshots and smooth the corrections without teleporting. | Opus, high | To do |
+| 1.7 | Remote interpolation and lag compensation | Display remote entities with a deliberate delay and rewind the hitboxes on the server (250 ms max). | Opus, medium | To do |
+| 1.8 | Dedicated server: configuration, console, clean shutdown, Docker | Deliver the headless `dedicated` executable, configured by `server.toml`, in the `server-runtime` image. | Sonnet, medium | To do |
+| 1.9 | Integrated server, LAN opening and discovery | Host a game inside the client, open it on the LAN and discover it by UDP broadcast. | Sonnet, medium | To do |
+| 1.10 | Network endurance and robustness | Prove that the network stack withstands malformed input and long sessions without leaks. | Sonnet, medium | To do |
+| 2.1 | Vulkan instance, swapchain, frame loop, offscreen target | Create the Vulkan 1.2 device, the windowed frame loop and an offscreen target read back as PNG. | Opus, medium | Merged |
+| 2.2 | Meshes, instances, reverse-Z camera, jitter, motion vectors, culling | Draw instanced meshes with an infinite reverse-Z projection, jitter and frustum culling. | Opus, medium | Merged |
+| 2.3 | WGSL shader chain, hot reload, procedural materials | Compile the WGSL shaders to SPIR-V and select material patterns by identifier. | Sonnet, medium | In progress |
+| 2.4 | Stylised lighting, point lights, fog, ambience profiles | Implement stylised lighting, 32 lights, height fog and nine ambience profiles. | Opus, medium | To do |
+| 2.5 | Cascaded shadows | Add sun shadows with three cascades, stable while the camera moves. | Sonnet, high | To do |
+| 2.6 | Procedural sky: time, stars, clouds, space | Render a procedural sky driven by the time of day and the latitude, which also lights the scene. | Sonnet, high | To do |
+| 2.7 | Weather: particles, shelter, humidity, storm, transitions | Render visual weather (rain, snow, sand, fog) with stateless GPU particles. | Sonnet, high | To do |
+| 2.8 | Water surface and underwater medium | Render a water surface from Gerstner waves and an underwater medium with caustics. | Sonnet, medium | To do |
+| 2.9 | Post-processing: contours, bloom, tonemapping, grading, FXAA | Implement the post-processing chain on the HDR buffer, driven by the ambience profile. | Sonnet, medium | To do |
+| 2.10 | Temporal anti-aliasing, `Upscaler` trait, render scale, FSR 1 | Render at a reduced internal resolution and upscale cleanly, with TAA and FSR 1. | Sonnet, high | To do |
+| 2.11 | FSR 2/3 through dynamic loading | Add FSR 2/3 as an option, loaded at run time, on Windows x86_64 only. | Opus, high | To do |
+| 2.12 | DLSS through NVIDIA NGX | Add DLSS behind the `dlss` feature, active on RTX cards on Windows x86_64 only. | Opus, high | To do |
+| 2.13 | Assets: mesh recipes, palettes, validator, thumbnails | Turn the RON prop recipes into meshes, with a validator and off-screen thumbnails. | Sonnet, medium | To do |
+| 2.14 | Prop library by theme (about 150 recipes) | Write about 150 validated prop recipes across nine themes, without code changes. | Haiku, low | To do |
+| 2.15 | Characters, weapons, procedural animation, viewmodel | Build characters and weapons from rigid blocks, animated by damped springs. | Sonnet, medium | To do |
+| 2.16 | `egui` integration, theme, debug overlay | Draw the `egui` interfaces at display resolution, with a theme and a profiling overlay. | Sonnet, medium | To do |
+| 2.17 | Audio engine: synthesised effects, 3D spatialisation | Create the `audio` crate with 32 prioritised voices, effects built from RON recipes and 3D spatialisation. | Sonnet, medium | To do |
+| 3.1 | `mapfmt`: map format | Implement the versioned RON format, rewritten identically on the example, with a BLAKE3 fingerprint. | Opus, medium | To do |
+| 3.2 | Map build: meshes, collisions, per-vertex occlusion | Turn a map into CPU meshes and a collision world, with baked ambient occlusion. | Sonnet, medium | To do |
+| 3.3 | `map-tool`: validator, report, top and perspective views | Validate maps with precise rejection reasons, a JSON report and view images. | Sonnet, medium | To do |
+| 4.1 | `minigame-api`, registry, match phases, witness race mode | Create the mini-game framework and a witness race mode, without changing the API. | Opus, medium | To do |
+| 4.2 | Full character controller | Implement the Quake-style controller in `sim`, deterministic and shared by client and server. | Opus, high | To do |
+| 4.3 | Slide, slide-hop, wall jump, trampolines, zones | Add the movement techniques and zone effects, checked by reference traces. | Opus, medium | To do |
+| 4.4 | Hitscan weapons, spread, recoil, damage chain, respawn | Implement the hitscan firing pipeline, predicted by the client and validated by the server. | Sonnet, high | To do |
+| 4.5 | Projectiles, explosions, melee | Add projectile weapons, explosions with knockback and melee to the firing pipeline. | Sonnet, medium | To do |
+| 4.6 | Classes, loadouts, quirky weapons, balance tool | Define six classes and their weapons in RON data, with `xtask balance` (TTK). | Sonnet medium, then Haiku (data) | To do |
+| 4.7 | Pickups, score, team and free-for-all modes | Implement pickups, score, timers and two modes on `minigame-api`, playable headless. | Sonnet, medium | To do |
+| 4.8 | Mode HUD, camera and feel | Draw the FPS HUD with egui and implement the camera and the feel constants. | Sonnet, medium | To do |
+| 4.9 | Bots: navigation graph and pathfinding | Build the navigation graph from a loaded map and provide A* with smoothing. | Sonnet, high | To do |
+| 4.10 | Bots: decision, perception, aim, four levels | Make the bots play with utility decisions, delayed perception, ballistic aim and four levels. | Sonnet, high | To do |
+| 5.1 | Map rotation, preloading, transfer by fingerprint | Change map every 5 minutes and download the missing maps by fingerprint. | Sonnet, medium | To do |
+| 5.2 | Editor: camera, selection, handles, volumes, undo | Let the user build a map in the editor and undo everything step by step. | Sonnet, high | To do |
+| 5.3 | Editor: library, gameplay, ambience, symmetry | Let the user create a complete map in the editor without editing the file by hand. | Sonnet, medium | To do |
+| 5.4 | Editor: continuous validation, instant test, files | Validate live, test instantly, save, export and import maps. | Sonnet, medium | To do |
+| 5.5 | Map trials by bots, statistics, design guide | Have 16 bots play a map without rendering, and produce a report and a design guide. | Sonnet, medium | To do |
+| 5.6 | Catalogue of twelve original maps | Deliver twelve valid maps, tested by bots and checked by hand. | Opus, medium | To do |
+| 6.1 | Application states, main menu, loading | Give the client a stacked state machine and all the main screens. | Sonnet, medium | To do |
+| 6.2 | Host with bots and LAN, join, LAN list, favourites | Let the user host (with bots, optionally on the LAN) and join from the menus. | Sonnet, medium | To do |
+| 6.3 | Classes and equipment, budget, preview, server validation | Build a loadout within a point budget, see it in 3D, and have the server validate it. | Sonnet, medium | To do |
+| 6.4 | Settings: structure, metadata, persistence, display, quality | A single settings structure, a menu generated from metadata, applied without restarting. | Sonnet, medium | To do |
+| 6.5 | Settings: controls, audio, network, accessibility, translation | Finish the settings, detect key conflicts, and provide a complete FR/EN interface. | Sonnet medium, then Haiku (texts) | To do |
+| 6.9 | Shooting feel (internal lot) | Muzzle flash, tracers, recoil, impacts per material, markers, sounds, FPS weapon without clipping. | Sonnet, high | To do |
+| 6.10 | Terrain with relief (internal lot) | Smooth heightmap, slope blending, slope collisions, bot navigation, sculpting in the editor. | Opus, high | To do |
+| 6.11 | Props and vegetation (internal lot) | Prop rendering, generated low-poly vegetation, GPU instancing, wind, LOD. | Opus, high | To do |
+| 6.12 | Landscape beyond bounds (internal lot) | Terrain and scenery beyond the playable area, natural borders per map, fog and sky. | Sonnet, high | To do |
+| 6.13 | Level design (internal lot) | Three non-square maps designed on paper, then tested with the bots. | Opus, high | To do |
+| 8.1 | Large terrain: format v5, chunk streaming, clipmap LOD | Smooth 1 to 2 km terrain, format v5, streamed chunks, LOD, material blending. | Opus, high | To do |
+| 8.2 | Far landscape: LOD for vegetation and props, landmarks, atmosphere | Fill the horizon: vegetation and prop LOD, distant landmarks, atmospheric haze. | Opus, high | To do |
+| 8.3 | World generator and editor sculpting tools | Terrain generator (erosion, rivers) and sculpting and vegetation brush tools in the editor. | Sonnet, high | To do |
+| 8.4 | Natural boundaries and playable zone | A free-form playable zone closed by the scenery (cliff, water, forest), without invisible walls. | Sonnet, high | To do |
+| 8.5 | Organic modelling primitives for prop recipes | New modelling operators (lathe, extrusion, bevel, noise) for realistic props. | Opus, high | To do |
+| 8.6 | Prop library, outdoor themes | About 100 outdoor props (rocks, fences, boats, benches...) with variants. | Sonnet, medium | To do |
+| 8.7 | Prop library, built themes | About 100 urban, industrial and interior props (cars, stalls, containers...) with variants. | Sonnet, medium | To do |
+| 8.8 | Vegetation v2 and lighting polish | Richer vegetation, grass following the ground, ambient occlusion, grading per theme. | Sonnet, high | To do |
+| 8.9 | Rebuild Pine Hollow and Mossgate | Rebuild Pine Hollow and Mossgate as real landscapes, tested by bots. | Opus, high | To do |
+| 8.10 | Rebuild Driftwood Cove and Rust Harbor | Rebuild Driftwood Cove and Rust Harbor as real landscapes, tested by bots. | Opus, high | To do |
+| 8.11 | Rebuild Red Mesa, Greyfold Quarry and Nightjar Market | Rebuild Red Mesa, Greyfold Quarry and Nightjar Market, tested by bots. | Opus, high | To do |
+| 8.12 | World performance and validation | Measure and hold the world-phase budgets on the seven maps. | Sonnet, medium | To do |
+| 7.1 | Profiling and optimisation of rendering and network | Measure and reach each budget of section 20 without changing the public interfaces. | Sonnet, medium | To do |
+| 7.2 | Platform validation and packaging | Check that each target builds and produce an archive with checksums per target. | Sonnet, medium | To do |
+| 7.3 | English documentation, release notes, tag v0.1.0 | Finalise the documentation and publish `v0.1.0` through the release pipeline. | Haiku, low | To do |
 
-## Jalons
+## Milestones
 
-J0 après 0.4 · J1 après 1.8 · J2 après 2.10 · J3 après 4.2 · J4 après 4.10 · J5 après 5.6 · J6 après 6.5 · J7 après 7.3 (`v0.1.0`).
+J0 after 0.4 · J1 after 1.8 · J2 after 2.10 · J3 after 4.2 · J4 after 4.10 · J5 after 5.6 · J6 after 6.5 · J7 after 7.3 (`v0.1.0`).
