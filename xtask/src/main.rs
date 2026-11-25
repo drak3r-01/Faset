@@ -11,7 +11,7 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 
 const USAGE: &str =
-    "usage: cargo xtask <check|test|render-test|build --target <t>|package|check-tag <tag>|maps validate|balance [--format text|csv]|deny|ci>";
+    "usage: cargo xtask <check|test|render-test|build --target <t>|package [--target <t>]|check-tag <tag>|maps validate|balance [--format text|csv]|deny|ci>";
 
 /// Targets built in the dev image. macOS targets are built by CI runners (lot 0.4).
 const TARGETS: [&str; 4] = [
@@ -35,7 +35,8 @@ fn run(args: &[&str]) -> Result<()> {
         ["test"] => test(),
         ["render-test"] => render_test(),
         ["build", "--target", target] => build(target),
-        ["package"] => package(),
+        ["package"] => package(None),
+        ["package", "--target", target] => package(Some(target)),
         ["check-tag", tag] => check_tag(tag),
         ["maps", "validate"] => maps_validate(),
         ["balance"] => balance(&[]),
@@ -121,15 +122,22 @@ fn is_windows(target: &str) -> bool {
     target.contains("windows")
 }
 
-fn exe_name(target: &str) -> &'static str {
+/// Executables shipped per target: (package, binary name).
+const BINARIES: [(&str, &str); 2] = [("faset-client", "faset"), ("dedicated", "dedicated")];
+
+/// Data folders and files copied next to the executables of every archive.
+const PAYLOAD: [&str; 2] = ["assets/maps", "crates/dedicated/server.toml"];
+
+fn exe_name(target: &str, bin: &str) -> String {
     if is_windows(target) {
-        "probe.exe"
+        format!("{bin}.exe")
     } else {
-        "probe"
+        bin.to_owned()
     }
 }
 
-/// Builds the placeholder binary for one target into `dist/<target>/`.
+/// Builds the client and the dedicated server for one target (a single cargo
+/// invocation, incremental) and stages them with the maps into `dist/<target>/`.
 fn build(target: &str) -> Result<()> {
     if !TARGETS.contains(&target) {
         bail!("unsupported target `{target}`; expected one of {TARGETS:?}");
@@ -139,47 +147,97 @@ fn build(target: &str) -> Result<()> {
     } else {
         vec!["build"]
     };
-    args.extend(["--release", "-p", "probe", "--target", target]);
+    args.extend(["--release", "--target", target]);
+    for (package, _) in BINARIES {
+        args.extend(["-p", package]);
+    }
     cargo(&args)?;
 
     let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_owned());
-    let exe = exe_name(target);
-    let built = Path::new(&target_dir)
-        .join(target)
-        .join("release")
-        .join(exe);
     let out_dir = Path::new(DIST).join(target);
     fs::create_dir_all(&out_dir)?;
-    fs::copy(&built, out_dir.join(exe))
-        .with_context(|| format!("failed to copy {}", built.display()))?;
-    println!("built {}", out_dir.join(exe).display());
+    for (_, bin) in BINARIES {
+        let exe = exe_name(target, bin);
+        let built = Path::new(&target_dir)
+            .join(target)
+            .join("release")
+            .join(&exe);
+        fs::copy(&built, out_dir.join(&exe))
+            .with_context(|| format!("failed to copy {}", built.display()))?;
+        println!("built {}", out_dir.join(&exe).display());
+    }
+    for item in PAYLOAD {
+        copy_payload(Path::new(item), &out_dir)?;
+    }
     Ok(())
 }
 
-/// Archives every built target and writes `dist/SHA256SUMS`.
-fn package() -> Result<()> {
+/// Copies a file into `dir`, or a folder (flat, one level) as `dir/<folder name>/`.
+fn copy_payload(src: &Path, dir: &Path) -> Result<()> {
+    let name = src.file_name().context("payload without a name")?;
+    if src.is_dir() {
+        let dest = dir.join(name);
+        fs::create_dir_all(&dest)?;
+        for entry in fs::read_dir(src)? {
+            let path = entry?.path();
+            if path.is_file() {
+                fs::copy(&path, dest.join(path.file_name().context("file name")?))
+                    .with_context(|| format!("failed to copy {}", path.display()))?;
+            }
+        }
+    } else {
+        fs::copy(src, dir.join(name))
+            .with_context(|| format!("failed to copy {}", src.display()))?;
+    }
+    Ok(())
+}
+
+fn archive_name(target: &str) -> String {
+    if is_windows(target) {
+        format!("faset-{target}.zip")
+    } else {
+        format!("faset-{target}.tar.gz")
+    }
+}
+
+/// Archives the built targets (all, or one) and writes `dist/SHA256SUMS`
+/// covering every archive present. Nothing is rebuilt here.
+fn package(only: Option<&str>) -> Result<()> {
+    if let Some(t) = only {
+        if !TARGETS.contains(&t) {
+            bail!("unsupported target `{t}`; expected one of {TARGETS:?}");
+        }
+    }
     let dist = Path::new(DIST);
-    let mut archives = Vec::new();
-    for target in TARGETS {
-        if !dist.join(target).join(exe_name(target)).is_file() {
+    let mut count = 0;
+    for target in TARGETS.iter().filter(|t| only.is_none_or(|o| o == **t)) {
+        let target = *target;
+        if !dist
+            .join(target)
+            .join(exe_name(target, BINARIES[0].1))
+            .is_file()
+        {
             println!("skipping {target}: not built");
             continue;
         }
-        let archive = if is_windows(target) {
-            let name = format!("faset-probe-{target}.zip");
-            let _ = fs::remove_file(dist.join(&name));
+        let name = archive_name(target);
+        let _ = fs::remove_file(dist.join(&name));
+        if is_windows(target) {
             run_cmd("zip", &["-r", "-q", &name, target], Some(dist))?;
-            name
         } else {
-            let name = format!("faset-probe-{target}.tar.gz");
             run_cmd("tar", &["-czf", &name, target], Some(dist))?;
-            name
-        };
-        archives.push(archive);
+        }
+        count += 1;
     }
-    if archives.is_empty() {
+    if count == 0 {
         bail!("nothing to package: run `build --target <t>` first");
     }
+    let mut archives: Vec<String> = TARGETS
+        .iter()
+        .map(|t| archive_name(t))
+        .filter(|n| dist.join(n).is_file())
+        .collect();
+    archives.sort();
     let mut sums = String::new();
     for name in &archives {
         let out = Command::new("sha256sum")
@@ -193,7 +251,10 @@ fn package() -> Result<()> {
         sums.push_str(&String::from_utf8_lossy(&out.stdout));
     }
     fs::write(dist.join("SHA256SUMS"), sums)?;
-    println!("packaged {} archive(s)", archives.len());
+    println!(
+        "packaged {count} archive(s), checksums for {}",
+        archives.len()
+    );
     Ok(())
 }
 
@@ -327,6 +388,31 @@ mod tests {
         assert!(super::verify_tag(&format!("v{version}"), manifest).is_ok());
         assert!(super::verify_tag("v9.9.9", manifest).is_err());
         assert!(super::verify_tag(&version, manifest).is_err());
+    }
+
+    #[test]
+    fn package_rejects_unknown_target() {
+        assert!(run(&["package", "--target", "aarch64-apple-darwin"]).is_err());
+    }
+
+    #[test]
+    fn archive_names_follow_the_target() {
+        assert_eq!(
+            super::archive_name("x86_64-pc-windows-msvc"),
+            "faset-x86_64-pc-windows-msvc.zip"
+        );
+        assert_eq!(
+            super::archive_name("aarch64-unknown-linux-gnu"),
+            "faset-aarch64-unknown-linux-gnu.tar.gz"
+        );
+        assert_eq!(
+            super::exe_name("x86_64-pc-windows-msvc", "faset"),
+            "faset.exe"
+        );
+        assert_eq!(
+            super::exe_name("x86_64-unknown-linux-gnu", "faset"),
+            "faset"
+        );
     }
 
     #[test]
